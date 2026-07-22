@@ -26,11 +26,20 @@ except ImportError:
 
 app = Flask(__name__, static_folder=None)
 
-PIPEDRIVE_DOMAIN = os.environ["PIPEDRIVE_DOMAIN"]
-PIPEDRIVE_API_TOKEN = os.environ["PIPEDRIVE_API_TOKEN"]
-CSV_URL = os.environ["COLABORADORES_CSV_URL"]
-PIPEDRIVE_BASE_URL = f"https://{PIPEDRIVE_DOMAIN}"
-REFRESH_SECONDS = int(os.environ.get("REFRESH_SECONDS", 1200))  # 20 min
+def env(nome, padrao=None):
+    """Le variavel de ambiente limpando aspas/espacos (o painel da Vercel e o
+    Import .env costumam trazer o valor entre aspas)."""
+    v = os.environ.get(nome, padrao)
+    if v is None:
+        raise RuntimeError(f"Variavel de ambiente {nome} nao definida")
+    return str(v).strip().strip('"').strip("'").strip()
+
+
+PIPEDRIVE_DOMAIN = env("PIPEDRIVE_DOMAIN")
+PIPEDRIVE_API_TOKEN = env("PIPEDRIVE_API_TOKEN")
+CSV_URL = env("COLABORADORES_CSV_URL")
+PIPEDRIVE_BASE_URL = "https://" + PIPEDRIVE_DOMAIN
+REFRESH_SECONDS = int(env("REFRESH_SECONDS", 1200))  # 20 min
 
 client = PipedriveClient(PIPEDRIVE_DOMAIN, PIPEDRIVE_API_TOKEN)
 
@@ -197,7 +206,7 @@ def acts_do_owner(owner_id, year, month):
 
 
 def info_dos_deals(deal_ids):
-    """{deal_id: {"pipeline_id":..., "title":...}} com cache."""
+    """{deal_id: {"pipeline_id":..., "title":...}} com cache local."""
     faltando = []
     with _lock:
         for d in deal_ids:
@@ -282,14 +291,14 @@ def build_dashboard(year, month, time_filtro=None, closer_filtro=None):
 
             c_meetings.append({
                 "deal_id": deal_id,
-                "title": info.get("title") or f"Negocio {deal_id}",
+                "title": info.get("title") or ("Negocio " + str(deal_id)),
                 "date": due,
                 "dia": d.day,
                 "hora": a.get("due_time") or "",
                 "subject": a.get("subject") or "",
                 "status": status,
                 "pipeline": pnome,
-                "url": f"{PIPEDRIVE_BASE_URL}/deal/{deal_id}",
+                "url": PIPEDRIVE_BASE_URL + "/deal/" + str(deal_id),
             })
 
         c_meetings.sort(key=lambda m: (m["date"], m["hora"]))

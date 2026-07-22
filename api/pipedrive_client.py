@@ -68,6 +68,6 @@ class PipedriveClient:
         for d in data.get("data") or []:
             out[d["id"]] = {
                 "pipeline_id": d.get("pipeline_id"),
-                "title": d.get("title") or f"Negocio {d.get('id')}",
+                "title": d.get("title") or ("Negocio " + str(d.get("id"))),
             }
         return out

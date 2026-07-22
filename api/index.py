@@ -29,6 +29,7 @@ app = Flask(__name__, static_folder=None)
 PIPEDRIVE_DOMAIN = os.environ["PIPEDRIVE_DOMAIN"]
 PIPEDRIVE_API_TOKEN = os.environ["PIPEDRIVE_API_TOKEN"]
 CSV_URL = os.environ["COLABORADORES_CSV_URL"]
+PIPEDRIVE_BASE_URL = f"https://{PIPEDRIVE_DOMAIN}"
 REFRESH_SECONDS = int(os.environ.get("REFRESH_SECONDS", 1200))  # 20 min
 
 client = PipedriveClient(PIPEDRIVE_DOMAIN, PIPEDRIVE_API_TOKEN)

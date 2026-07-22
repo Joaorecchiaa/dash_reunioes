@@ -255,7 +255,6 @@ def build_dashboard(year, month, time_filtro=None, closer_filtro=None):
         c_total = novo_contador()
         c_days = {d: novo_contador() for d in range(1, last_day + 1)}
         c_pipes = defaultdict(novo_contador)
-        c_meetings = []
 
         for a in acts:
             due = a.get("due_date")
@@ -280,35 +279,11 @@ def build_dashboard(year, month, time_filtro=None, closer_filtro=None):
             pnome = pipelines.get(pid, f"Funil {pid}") if pid else "Sem funil"
             soma_em(c_pipes[pnome], tipo, done)
 
-            if tipo == "meeting" and done:
-                status = "feita"
-            elif tipo == "no_show":
-                status = "no_show"
-            elif tipo == "nao_se_aplica":
-                status = "reagendada"
-            else:
-                status = "pendente"
-
-            c_meetings.append({
-                "deal_id": deal_id,
-                "title": info.get("title") or ("Negocio " + str(deal_id)),
-                "date": due,
-                "dia": d.day,
-                "hora": a.get("due_time") or "",
-                "subject": a.get("subject") or "",
-                "status": status,
-                "pipeline": pnome,
-                "url": PIPEDRIVE_BASE_URL + "/deal/" + str(deal_id),
-            })
-
-        c_meetings.sort(key=lambda m: (m["date"], m["hora"]))
-
         por_closer.append({
             "name": nome, "time": time_c,
             "total": c_total,
             "days": [{"dia": d, "counter": c_days[d]} for d in range(1, last_day + 1)],
             "by_pipeline": dict(c_pipes),
-            "meetings": c_meetings,
         })
 
     dias = [{"dia": d, "counter": combined_days[d]} for d in range(1, last_day + 1)]

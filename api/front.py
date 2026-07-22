@@ -49,7 +49,7 @@ HTML = r"""<!DOCTYPE html>
   .kpi.plan { border-color:var(--gold); background:var(--gold-soft); }
   .kpi .lbl { font-size:11px; color:var(--muted); text-transform:uppercase; letter-spacing:.5px; }
   .kpi .val { font-size:30px; font-weight:800; line-height:1.1; }
-  .kpi.plan .val{color:var(--gold-ink);} .kpi.done .val{color:var(--done);}
+  .kpi.plan .val{color:var(--text);} .kpi.done .val{color:var(--done);}
   .kpi.nsw .val{color:var(--nsw);} .kpi.reag .val{color:var(--reag);}
 
   .month-strip { display:flex; gap:16px; flex-wrap:wrap; align-items:center; background:var(--card);
@@ -66,7 +66,7 @@ HTML = r"""<!DOCTYPE html>
   .team-card .tc-row { display:flex; align-items:baseline; gap:10px; padding:5px 0; font-size:13px; flex-wrap:wrap; }
   .team-card .tc-row + .tc-row { border-top:1px dashed var(--border); }
   .team-card .tc-lbl { font-size:10px; color:var(--muted); text-transform:uppercase; letter-spacing:.5px; min-width:78px; font-weight:700; }
-  .team-card .tc-big { font-size:20px; font-weight:800; color:var(--gold-ink); }
+  .team-card .tc-big { font-size:20px; font-weight:800; color:var(--text); }
   .team-card .tc-sub { color:var(--muted); }
 
   .panel { background:var(--card); border:1px solid var(--border); border-radius:12px; padding:16px; margin-bottom:20px;
@@ -76,9 +76,9 @@ HTML = r"""<!DOCTYPE html>
   th, td { padding:7px 10px; text-align:center; border-bottom:1px solid var(--border); }
   th { color:var(--muted); font-weight:600; font-size:11px; text-transform:uppercase; letter-spacing:.5px; }
   td.l, th.l { text-align:left; }
-  tr.total td { font-weight:800; border-top:2px solid var(--gold); background:var(--gold-soft); color:var(--gold-ink); }
+  tr.total td { font-weight:800; border-top:2px solid var(--gold); background:var(--gold-soft); color:var(--text); }
   tr.today td { background:var(--gold-soft); }
-  .c-plan{color:var(--gold-ink); font-weight:800;} .c-done{color:var(--done);} .c-nsw{color:var(--nsw);} .c-reag{color:var(--reag);}
+  .c-plan{color:var(--text); font-weight:800;} .c-done{color:var(--done);} .c-nsw{color:var(--nsw);} .c-reag{color:var(--reag);}
   .warn { color:var(--nsw); font-size:12px; margin-bottom:16px; }
   .muted { color:var(--muted); }
 
@@ -100,10 +100,9 @@ HTML = r"""<!DOCTYPE html>
   table.matrix tbody tr:hover td, table.matrix tbody tr:hover td.closer { background:#1a1a1a; }
 
   /* drill-down por closer */
-  table.matrix td.closer .cl-link { color:var(--gold); cursor:pointer; text-decoration:underline dotted;
-                                    text-underline-offset:3px; user-select:none; }
-  table.matrix td.closer .cl-link:hover { text-decoration:underline; }
-  table.matrix td.closer .cl-arrow { color:var(--muted); font-size:10px; margin-right:4px; }
+  table.matrix td.closer .cl-link { color:var(--text); cursor:pointer; text-decoration:underline solid;
+                                    text-decoration-color:var(--text); text-underline-offset:3px; user-select:none; }
+  table.matrix td.closer .cl-link:hover { text-decoration-thickness:2px; }
   tr.drill > td { background:#080808 !important; padding:0 !important; }
   .drill-box { padding:14px 18px; white-space:normal; }
   .drill-box h3 { font-size:12px; color:var(--gold); margin:0 0 10px; text-transform:uppercase; letter-spacing:.5px; }
@@ -320,29 +319,28 @@ function render(data) {
     const nCols = 2 + tresDias.length * 4 + 4;
     data.por_closer.forEach((c, i) => {
       const cid = 'drill-' + i;
-      html += `<tr><td class="closer l"><span class="cl-link" data-drill="${cid}"><span class="cl-arrow" id="${cid}-arw">&#9656;</span>${c.name}</span></td><td class="team l">${c.time}</td>`;
+      html += `<tr><td class="closer l"><span class="cl-link" data-drill="${cid}">${c.name}</span></td><td class="team l">${c.time}</td>`;
       for (const d of tresDias) html += quatro(getDia(c.days, d.n) || zero);
       const t = c.total;
       html += `<td class="c-plan mtot">${t.planned}</td><td class="c-done">${t.done}</td><td class="c-nsw">${t.no_show}</td><td class="c-reag">${t.reagendada}</td></tr>`;
 
       // linha oculta com as reunioes do closer
       let dhtml;
-      if (c.meetings && c.meetings.length) {
-        dhtml = `<h3>${c.meetings.length} reuniões — ${data.month_label}</h3>
-          <table class="drill-tbl"><tr><th>Data</th><th>Negócio</th><th>Funil</th><th>Status</th></tr>`;
-        for (const m of c.meetings) {
-          const p = m.date.split('-');
-          const dt = p[2] + '/' + p[1];
-          const hr = m.hora ? ' ' + String(m.hora).slice(0,5) : '';
+      const doDia = (c.meetings || []).filter(m => m.dia === dSel);
+      if (doDia.length) {
+        dhtml = `<h3>${doDia.length} reuniã${doDia.length > 1 ? 'es' : 'o'} em ${dSelStr}/${mesStr}</h3>
+          <table class="drill-tbl"><tr><th>Hora</th><th>Negócio</th><th>Funil</th><th>Status</th></tr>`;
+        for (const m of doDia) {
+          const hr = m.hora ? String(m.hora).slice(0,5) : '--:--';
           dhtml += `<tr>
-            <td>${dt}${hr}</td>
+            <td>${hr}</td>
             <td><a href="${m.url}" target="_blank" rel="noopener">#${m.deal_id} — ${m.title}</a></td>
             <td class="muted">${m.pipeline}</td>
             <td><span class="badge ${m.status}">${m.status.replace('_',' ')}</span></td></tr>`;
         }
         dhtml += `</table>`;
       } else {
-        dhtml = `<div class="muted">Nenhuma reunião no período.</div>`;
+        dhtml = `<div class="muted">Nenhuma reunião em ${dSelStr}/${mesStr}.</div>`;
       }
       html += `<tr class="drill" id="${cid}" style="display:none"><td colspan="${nCols}"><div class="drill-box">${dhtml}</div></td></tr>`;
     });
@@ -378,11 +376,8 @@ function ligaDrills() {
 
 function toggleDrill(id) {
   const el = document.getElementById(id);
-  const arw = document.getElementById(id + '-arw');
   if (!el) return;
-  const aberto = el.style.display !== 'none';
-  el.style.display = aberto ? 'none' : 'table-row';
-  if (arw) arw.innerHTML = aberto ? '&#9656;' : '&#9662;';
+  el.style.display = (el.style.display !== 'none') ? 'none' : 'table-row';
 }
 
 init();

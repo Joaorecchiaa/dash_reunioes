@@ -48,8 +48,8 @@ class PipedriveClient:
                 break
         return activities
 
-    def get_deal_pipelines(self, deal_ids):
-        """{deal_id: pipeline_id}, em lotes de 100 (limite do endpoint de deals)."""
+    def get_deals_info(self, deal_ids):
+        """{deal_id: {"pipeline_id": int, "title": str}}, em lotes de 100."""
         deal_ids = [d for d in deal_ids if d]
         result = {}
         batch = []
@@ -66,5 +66,8 @@ class PipedriveClient:
         data = self._get(self.base_v2, "/deals", {"ids": ",".join(ids_batch), "limit": 100})
         out = {}
         for d in data.get("data") or []:
-            out[d["id"]] = d.get("pipeline_id")
+            out[d["id"]] = {
+                "pipeline_id": d.get("pipeline_id"),
+                "title": d.get("title") or f"Negocio {d.get('id')}",
+            }
         return out

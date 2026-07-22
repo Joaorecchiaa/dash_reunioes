@@ -8,7 +8,7 @@ import threading
 import requests
 from datetime import datetime, date, timedelta
 from collections import defaultdict
-from flask import Flask, jsonify, request, send_from_directory
+from flask import Flask, jsonify, request, Response
 
 # .env so existe localmente; na Vercel as variaveis vem do painel
 try:
@@ -19,11 +19,10 @@ except Exception:
 
 try:
     from api.pipedrive_client import PipedriveClient
+    from api.front import HTML
 except ImportError:
     from pipedrive_client import PipedriveClient
-
-BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-PUBLIC_DIR = os.path.join(BASE_DIR, "public")
+    from front import HTML
 
 app = Flask(__name__, static_folder=None)
 
@@ -369,10 +368,17 @@ def api_dashboard():
         return jsonify({"error": str(e)}), 500
 
 
-# servir o front (usado no modo local; na Vercel o /public e servido como estatico)
+# servir o front (HTML vem embutido em front.py -- garante que vai no bundle)
 @app.route("/")
 def index():
-    return send_from_directory(PUBLIC_DIR, "index.html")
+    return Response(HTML, mimetype="text/html")
+
+
+@app.errorhandler(404)
+def not_found(e):
+    if request.path.startswith("/api/"):
+        return jsonify({"error": "rota nao encontrada", "path": request.path}), 404
+    return Response(HTML, mimetype="text/html")
 
 
 if __name__ == "__main__":

@@ -196,14 +196,15 @@ def acts_do_owner(owner_id, year, month):
     return acts
 
 
-def pipeline_dos_deals(deal_ids):
+def info_dos_deals(deal_ids):
+    """{deal_id: {"pipeline_id":..., "title":...}} com cache."""
     faltando = []
     with _lock:
         for d in deal_ids:
             if d not in _cache["deals"]:
                 faltando.append(d)
     if faltando:
-        novos = client.get_deal_pipelines(faltando)
+        novos = client.get_deals_info(faltando)
         with _lock:
             _cache["deals"].update(novos)
     with _lock:
@@ -240,11 +241,12 @@ def build_dashboard(year, month, time_filtro=None, closer_filtro=None):
 
         acts = acts_do_owner(owner_id, year, month)
         deal_ids = {a["deal_id"] for a in acts if a.get("deal_id")}
-        deal_pipe = pipeline_dos_deals(deal_ids)
+        deal_info = info_dos_deals(deal_ids)
 
         c_total = novo_contador()
         c_days = {d: novo_contador() for d in range(1, last_day + 1)}
         c_pipes = defaultdict(novo_contador)
+        c_meetings = []
 
         for a in acts:
             due = a.get("due_date")
@@ -263,15 +265,41 @@ def build_dashboard(year, month, time_filtro=None, closer_filtro=None):
             soma_em(c_days[d.day], tipo, done)
             soma_em(por_time[time_c], tipo, done)
             soma_em(por_time_days[time_c][d.day], tipo, done)
-            pid = deal_pipe.get(deal_id)
+
+            info = deal_info.get(deal_id) or {}
+            pid = info.get("pipeline_id")
             pnome = pipelines.get(pid, f"Funil {pid}") if pid else "Sem funil"
             soma_em(c_pipes[pnome], tipo, done)
+
+            if tipo == "meeting" and done:
+                status = "feita"
+            elif tipo == "no_show":
+                status = "no_show"
+            elif tipo == "nao_se_aplica":
+                status = "reagendada"
+            else:
+                status = "pendente"
+
+            c_meetings.append({
+                "deal_id": deal_id,
+                "title": info.get("title") or f"Negocio {deal_id}",
+                "date": due,
+                "dia": d.day,
+                "hora": a.get("due_time") or "",
+                "subject": a.get("subject") or "",
+                "status": status,
+                "pipeline": pnome,
+                "url": f"{PIPEDRIVE_BASE_URL}/deal/{deal_id}",
+            })
+
+        c_meetings.sort(key=lambda m: (m["date"], m["hora"]))
 
         por_closer.append({
             "name": nome, "time": time_c,
             "total": c_total,
             "days": [{"dia": d, "counter": c_days[d]} for d in range(1, last_day + 1)],
             "by_pipeline": dict(c_pipes),
+            "meetings": c_meetings,
         })
 
     dias = [{"dia": d, "counter": combined_days[d]} for d in range(1, last_day + 1)]

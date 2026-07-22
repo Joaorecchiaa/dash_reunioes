@@ -320,7 +320,7 @@ function render(data) {
     const nCols = 2 + tresDias.length * 4 + 4;
     data.por_closer.forEach((c, i) => {
       const cid = 'drill-' + i;
-      html += `<tr><td class="closer l"><span class="cl-link" onclick="toggleDrill('${cid}')"><span class="cl-arrow" id="${cid}-arw">&#9656;</span>${c.name}</span></td><td class="team l">${c.time}</td>`;
+      html += `<tr><td class="closer l"><span class="cl-link" data-drill="${cid}"><span class="cl-arrow" id="${cid}-arw">&#9656;</span>${c.name}</span></td><td class="team l">${c.time}</td>`;
       for (const d of tresDias) html += quatro(getDia(c.days, d.n) || zero);
       const t = c.total;
       html += `<td class="c-plan mtot">${t.planned}</td><td class="c-done">${t.done}</td><td class="c-nsw">${t.no_show}</td><td class="c-reag">${t.reagendada}</td></tr>`;
@@ -367,6 +367,13 @@ function render(data) {
   }
 
   $('root').innerHTML = html;
+  ligaDrills();
+}
+
+function ligaDrills() {
+  document.querySelectorAll('.cl-link[data-drill]').forEach(el => {
+    el.addEventListener('click', () => toggleDrill(el.getAttribute('data-drill')));
+  });
 }
 
 function toggleDrill(id) {

@@ -99,26 +99,6 @@ HTML = r"""<!DOCTYPE html>
   table.matrix tr.foot td.closer { background:var(--gold-soft); }
   table.matrix tbody tr:hover td, table.matrix tbody tr:hover td.closer { background:#1a1a1a; }
 
-  /* drill-down por closer */
-  table.matrix td.closer .cl-link { color:var(--text); cursor:pointer; text-decoration:underline solid;
-                                    text-decoration-color:var(--text); text-underline-offset:3px; user-select:none; }
-  table.matrix td.closer .cl-link:hover { text-decoration-thickness:2px; }
-  tr.drill > td { background:#080808 !important; padding:0 !important; }
-  .drill-box { padding:14px 18px; white-space:normal; }
-  .drill-box h3 { font-size:12px; color:var(--gold); margin:0 0 10px; text-transform:uppercase; letter-spacing:.5px; }
-  table.drill-tbl { width:100%; font-size:12px; border-collapse:collapse; }
-  table.drill-tbl th { font-size:10px; color:var(--muted); text-transform:uppercase; letter-spacing:.5px;
-                       padding:5px 10px; border-bottom:1px solid var(--border); text-align:left; }
-  table.drill-tbl td { padding:6px 10px; border-bottom:1px solid #1a1a1a; text-align:left; }
-  table.drill-tbl a { color:var(--gold); text-decoration:none; }
-  table.drill-tbl a:hover { text-decoration:underline; }
-  table.drill-tbl tr:hover td { background:#111; }
-  .badge { font-size:10px; padding:2px 9px; border-radius:999px; border:1px solid var(--border); white-space:nowrap; }
-  .badge.feita { color:var(--done); border-color:var(--done); }
-  .badge.no_show { color:var(--nsw); border-color:var(--nsw); }
-  .badge.reagendada { color:var(--reag); border-color:var(--reag); }
-  .badge.pendente { color:var(--muted); }
-
   details.diaria { margin-bottom:20px; border:1px solid var(--border); border-radius:12px; background:var(--card);
                    box-shadow:none; }
   details.diaria summary { cursor:pointer; padding:14px 16px; font-size:14px; color:var(--gold-ink);
@@ -316,34 +296,13 @@ function render(data) {
     html += `<th class="c-plan mtot">P</th><th class="c-done">F</th><th class="c-nsw">NS</th><th class="c-reag">R</th>`;
     html += `</tr></thead><tbody>`;
 
-    const nCols = 2 + tresDias.length * 4 + 4;
-    data.por_closer.forEach((c, i) => {
-      const cid = 'drill-' + i;
-      html += `<tr><td class="closer l"><span class="cl-link" data-drill="${cid}">${c.name}</span></td><td class="team l">${c.time}</td>`;
+    for (const c of data.por_closer) {
+      html += `<tr><td class="closer l">${c.name}</td><td class="team l">${c.time}</td>`;
       for (const d of tresDias) html += quatro(getDia(c.days, d.n) || zero);
       const t = c.total;
       html += `<td class="c-plan mtot">${t.planned}</td><td class="c-done">${t.done}</td><td class="c-nsw">${t.no_show}</td><td class="c-reag">${t.reagendada}</td></tr>`;
 
-      // linha oculta com as reunioes do closer
-      let dhtml;
-      const doDia = (c.meetings || []).filter(m => m.dia === dSel);
-      if (doDia.length) {
-        dhtml = `<h3>${doDia.length} reuniã${doDia.length > 1 ? 'es' : 'o'} em ${dSelStr}/${mesStr}</h3>
-          <table class="drill-tbl"><tr><th>Hora</th><th>Negócio</th><th>Funil</th><th>Status</th></tr>`;
-        for (const m of doDia) {
-          const hr = m.hora ? String(m.hora).slice(0,5) : '--:--';
-          dhtml += `<tr>
-            <td>${hr}</td>
-            <td><a href="${m.url}" target="_blank" rel="noopener">#${m.deal_id} — ${m.title}</a></td>
-            <td class="muted">${m.pipeline}</td>
-            <td><span class="badge ${m.status}">${m.status.replace('_',' ')}</span></td></tr>`;
-        }
-        dhtml += `</table>`;
-      } else {
-        dhtml = `<div class="muted">Nenhuma reunião em ${dSelStr}/${mesStr}.</div>`;
-      }
-      html += `<tr class="drill" id="${cid}" style="display:none"><td colspan="${nCols}"><div class="drill-box">${dhtml}</div></td></tr>`;
-    });
+    }
 
     html += `<tr class="foot"><td class="closer l">TOTAL</td><td class="team l"></td>`;
     for (const d of tresDias) html += quatro(getDia(data.days, d.n) || zero);
@@ -365,19 +324,6 @@ function render(data) {
   }
 
   $('root').innerHTML = html;
-  ligaDrills();
-}
-
-function ligaDrills() {
-  document.querySelectorAll('.cl-link[data-drill]').forEach(el => {
-    el.addEventListener('click', () => toggleDrill(el.getAttribute('data-drill')));
-  });
-}
-
-function toggleDrill(id) {
-  const el = document.getElementById(id);
-  if (!el) return;
-  el.style.display = (el.style.display !== 'none') ? 'none' : 'table-row';
 }
 
 init();

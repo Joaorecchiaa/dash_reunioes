@@ -86,7 +86,7 @@ def soma_em(counter, tipo, done):
         counter["done"] += 1
     elif tipo == "no_show":
         counter["no_show"] += 1
-    elif tipo == "nao_se_aplica":
+    elif tipo == "reagendamento":
         counter["reagendada"] += 1
 
 

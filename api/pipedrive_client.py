@@ -28,9 +28,9 @@ class PipedriveClient:
         return {p["id"]: p["name"] for p in (data.get("data") or [])}
 
     def get_meeting_activities(self, owner_id, updated_since=None):
-        """Pagina por cursor no v2/activities; mantem tipos meeting/no_show/nao_se_aplica
+        """Pagina por cursor no v2/activities; mantem tipos meeting/no_show/reagendamento
         com deal_id preenchido (v2 nao filtra type/due_date, filtramos aqui)."""
-        tipos = {"meeting", "no_show", "nao_se_aplica"}
+        tipos = {"meeting", "no_show", "reagendamento"}
         activities = []
         cursor = None
         while True:

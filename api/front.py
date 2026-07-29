@@ -105,7 +105,8 @@ HTML = r"""<!DOCTYPE html>
                          border:1px solid var(--border); border-radius:4px; padding:1px 5px; line-height:1.4; }
   td.closer .cl-toggle:hover { color:var(--gold); border-color:var(--gold); }
   tr.creator-row > td { background:#080808 !important; padding:6px 12px 10px !important; }
-  .creator-wrap { display:flex; gap:40px; flex-wrap:wrap; padding-left:6px; }
+  .creator-wrap { display:flex; gap:28px; flex-wrap:wrap; align-items:stretch; padding-left:6px; }
+  .creator-sep { width:1px; background:var(--border); align-self:stretch; }
   .creator-col .cc-title { font-size:10px; color:var(--gold); text-transform:uppercase; letter-spacing:.5px; margin-bottom:6px; font-weight:700; }
   .creator-box { display:flex; gap:22px; flex-wrap:wrap; font-size:12px; }
   .creator-box .ci-lbl { color:var(--muted); text-transform:uppercase; letter-spacing:.5px; font-size:10px; }
@@ -329,8 +330,10 @@ function render(data) {
               <div class="ci-item"><span class="ci-lbl">Total</span><span class="ci-val">${cc.proprio + cc.outro}</span></div>
             </div>
           </div>`;
-      let blocos = blocoCriador('Dia ' + dSelStr + '/' + mesStr, crHoje);
-      if (dAnt >= 1) blocos += blocoCriador('Dia anterior ' + String(dAnt).padStart(2,'0') + '/' + mesStr, crGet(dAnt));
+      const sep = '<div class="creator-sep"></div>';
+      let blocos = '';
+      if (dAnt >= 1) blocos += blocoCriador('Dia anterior ' + String(dAnt).padStart(2,'0') + '/' + mesStr, crGet(dAnt)) + sep;
+      blocos += blocoCriador('Dia ' + dSelStr + '/' + mesStr, crHoje);
       html += `<tr class="creator-row" id="${cid}" style="display:none"><td colspan="${nCols}">
         <div class="creator-wrap">${blocos}</div></td></tr>`;
     });

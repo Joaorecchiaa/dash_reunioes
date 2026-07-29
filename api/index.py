@@ -389,14 +389,22 @@ def api_dashboard():
 
 
 # servir o front (HTML vem embutido em front.py -- garante que vai no bundle)
+# "/" = local; "/api/index" = destino do rewrite da Vercel (vercel.json)
 @app.route("/")
+@app.route("/api/index")
 def index():
     return Response(HTML, mimetype="text/html")
 
 
+# rotas de API "de verdade" que existem
+_API_ROTAS = ("/api/init", "/api/closers", "/api/dashboard")
+
+
 @app.errorhandler(404)
 def not_found(e):
-    if request.path.startswith("/api/"):
+    # so devolve erro JSON quando bate numa rota de API conhecida com metodo/params errados;
+    # qualquer outro path desconhecido cai no front (SPA-like)
+    if request.path in _API_ROTAS:
         return jsonify({"error": "rota nao encontrada", "path": request.path}), 404
     return Response(HTML, mimetype="text/html")
 

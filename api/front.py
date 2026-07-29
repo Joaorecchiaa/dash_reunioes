@@ -105,7 +105,9 @@ HTML = r"""<!DOCTYPE html>
                          border:1px solid var(--border); border-radius:4px; padding:1px 5px; line-height:1.4; }
   td.closer .cl-toggle:hover { color:var(--gold); border-color:var(--gold); }
   tr.creator-row > td { background:#080808 !important; padding:6px 12px 10px !important; }
-  .creator-box { display:flex; gap:22px; flex-wrap:wrap; font-size:12px; padding-left:6px; }
+  .creator-wrap { display:flex; gap:40px; flex-wrap:wrap; padding-left:6px; }
+  .creator-col .cc-title { font-size:10px; color:var(--gold); text-transform:uppercase; letter-spacing:.5px; margin-bottom:6px; font-weight:700; }
+  .creator-box { display:flex; gap:22px; flex-wrap:wrap; font-size:12px; }
   .creator-box .ci-lbl { color:var(--muted); text-transform:uppercase; letter-spacing:.5px; font-size:10px; }
   .creator-box .ci-val { font-size:18px; font-weight:800; color:var(--text); }
   .creator-box .ci-item { display:flex; flex-direction:column; gap:2px; }
@@ -316,11 +318,25 @@ function render(data) {
       html += `<td class="c-plan mtot">${t.planned}</td><td class="c-done">${t.done}</td><td class="c-nsw">${t.no_show}</td><td class="c-reag">${t.reagendada}</td></tr>`;
 
       const cr = c.criadas || {proprio:0, outro:0};
+      const crd = ((c.criadas_days || []).find(x => x.dia === dSel) || {}).c || {proprio:0, outro:0};
       html += `<tr class="creator-row" id="${cid}" style="display:none"><td colspan="${nCols}">
-        <div class="creator-box">
-          <div class="ci-item"><span class="ci-lbl">Criadas pelo próprio closer</span><span class="ci-val">${cr.proprio}</span></div>
-          <div class="ci-item"><span class="ci-lbl">Criadas por outro proprietário</span><span class="ci-val">${cr.outro}</span></div>
-          <div class="ci-item"><span class="ci-lbl">Total no mês</span><span class="ci-val">${cr.proprio + cr.outro}</span></div>
+        <div class="creator-wrap">
+          <div class="creator-col">
+            <div class="cc-title">Dia ${dSelStr}/${mesStr}</div>
+            <div class="creator-box">
+              <div class="ci-item"><span class="ci-lbl">Criadas pelo próprio</span><span class="ci-val">${crd.proprio}</span></div>
+              <div class="ci-item"><span class="ci-lbl">Criadas por outro</span><span class="ci-val">${crd.outro}</span></div>
+              <div class="ci-item"><span class="ci-lbl">Total do dia</span><span class="ci-val">${crd.proprio + crd.outro}</span></div>
+            </div>
+          </div>
+          <div class="creator-col">
+            <div class="cc-title">Mês — ${data.month_label}</div>
+            <div class="creator-box">
+              <div class="ci-item"><span class="ci-lbl">Criadas pelo próprio</span><span class="ci-val">${cr.proprio}</span></div>
+              <div class="ci-item"><span class="ci-lbl">Criadas por outro</span><span class="ci-val">${cr.outro}</span></div>
+              <div class="ci-item"><span class="ci-lbl">Total do mês</span><span class="ci-val">${cr.proprio + cr.outro}</span></div>
+            </div>
+          </div>
         </div></td></tr>`;
     });
 

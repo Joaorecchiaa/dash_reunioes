@@ -255,6 +255,7 @@ def build_dashboard(year, month, time_filtro=None, closer_filtro=None):
         c_total = novo_contador()
         c_days = {d: novo_contador() for d in range(1, last_day + 1)}
         c_pipes = defaultdict(novo_contador)
+        c_criadas = {"proprio": 0, "outro": 0}
 
         for a in acts:
             due = a.get("due_date")
@@ -279,11 +280,17 @@ def build_dashboard(year, month, time_filtro=None, closer_filtro=None):
             pnome = pipelines.get(pid, f"Funil {pid}") if pid else "Sem funil"
             soma_em(c_pipes[pnome], tipo, done)
 
+            if a.get("creator_user_id") == owner_id:
+                c_criadas["proprio"] += 1
+            else:
+                c_criadas["outro"] += 1
+
         por_closer.append({
             "name": nome, "time": time_c,
             "total": c_total,
             "days": [{"dia": d, "counter": c_days[d]} for d in range(1, last_day + 1)],
             "by_pipeline": dict(c_pipes),
+            "criadas": c_criadas,
         })
 
     dias = [{"dia": d, "counter": combined_days[d]} for d in range(1, last_day + 1)]

@@ -317,27 +317,22 @@ function render(data) {
       const t = c.total;
       html += `<td class="c-plan mtot">${t.planned}</td><td class="c-done">${t.done}</td><td class="c-nsw">${t.no_show}</td><td class="c-reag">${t.reagendada}</td></tr>`;
 
-      const cr = c.criadas || {proprio:0, outro:0};
-      const crd = ((c.criadas_days || []).find(x => x.dia === dSel) || {}).c || {proprio:0, outro:0};
+      const crGet = (dia) => ((c.criadas_days || []).find(x => x.dia === dia) || {}).c || {proprio:0, outro:0};
+      const crHoje = crGet(dSel);
+      const dAnt = dSel - 1;
+      const blocoCriador = (titulo, cc) => `
+          <div class="creator-col">
+            <div class="cc-title">${titulo}</div>
+            <div class="creator-box">
+              <div class="ci-item"><span class="ci-lbl">Criadas pelo próprio</span><span class="ci-val">${cc.proprio}</span></div>
+              <div class="ci-item"><span class="ci-lbl">Criadas por outro</span><span class="ci-val">${cc.outro}</span></div>
+              <div class="ci-item"><span class="ci-lbl">Total</span><span class="ci-val">${cc.proprio + cc.outro}</span></div>
+            </div>
+          </div>`;
+      let blocos = blocoCriador('Dia ' + dSelStr + '/' + mesStr, crHoje);
+      if (dAnt >= 1) blocos += blocoCriador('Dia anterior ' + String(dAnt).padStart(2,'0') + '/' + mesStr, crGet(dAnt));
       html += `<tr class="creator-row" id="${cid}" style="display:none"><td colspan="${nCols}">
-        <div class="creator-wrap">
-          <div class="creator-col">
-            <div class="cc-title">Dia ${dSelStr}/${mesStr}</div>
-            <div class="creator-box">
-              <div class="ci-item"><span class="ci-lbl">Criadas pelo próprio</span><span class="ci-val">${crd.proprio}</span></div>
-              <div class="ci-item"><span class="ci-lbl">Criadas por outro</span><span class="ci-val">${crd.outro}</span></div>
-              <div class="ci-item"><span class="ci-lbl">Total do dia</span><span class="ci-val">${crd.proprio + crd.outro}</span></div>
-            </div>
-          </div>
-          <div class="creator-col">
-            <div class="cc-title">Mês — ${data.month_label}</div>
-            <div class="creator-box">
-              <div class="ci-item"><span class="ci-lbl">Criadas pelo próprio</span><span class="ci-val">${cr.proprio}</span></div>
-              <div class="ci-item"><span class="ci-lbl">Criadas por outro</span><span class="ci-val">${cr.outro}</span></div>
-              <div class="ci-item"><span class="ci-lbl">Total do mês</span><span class="ci-val">${cr.proprio + cr.outro}</span></div>
-            </div>
-          </div>
-        </div></td></tr>`;
+        <div class="creator-wrap">${blocos}</div></td></tr>`;
     });
 
     html += `<tr class="foot"><td class="closer l">TOTAL</td><td class="team l"></td>`;

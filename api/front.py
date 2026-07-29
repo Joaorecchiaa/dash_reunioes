@@ -99,6 +99,17 @@ HTML = r"""<!DOCTYPE html>
   table.matrix tr.foot td.closer { background:var(--gold-soft); }
   table.matrix tbody tr:hover td, table.matrix tbody tr:hover td.closer { background:#1a1a1a; }
 
+  /* dropdown criador por closer */
+  td.closer .cl-wrap { display:flex; align-items:center; gap:6px; }
+  td.closer .cl-toggle { cursor:pointer; user-select:none; color:var(--muted); font-size:10px;
+                         border:1px solid var(--border); border-radius:4px; padding:1px 5px; line-height:1.4; }
+  td.closer .cl-toggle:hover { color:var(--gold); border-color:var(--gold); }
+  tr.creator-row > td { background:#080808 !important; padding:6px 12px 10px !important; }
+  .creator-box { display:flex; gap:22px; flex-wrap:wrap; font-size:12px; padding-left:6px; }
+  .creator-box .ci-lbl { color:var(--muted); text-transform:uppercase; letter-spacing:.5px; font-size:10px; }
+  .creator-box .ci-val { font-size:18px; font-weight:800; color:var(--text); }
+  .creator-box .ci-item { display:flex; flex-direction:column; gap:2px; }
+
   details.diaria { margin-bottom:20px; border:1px solid var(--border); border-radius:12px; background:var(--card);
                    box-shadow:none; }
   details.diaria summary { cursor:pointer; padding:14px 16px; font-size:14px; color:var(--gold-ink);
@@ -296,13 +307,22 @@ function render(data) {
     html += `<th class="c-plan mtot">P</th><th class="c-done">F</th><th class="c-nsw">NS</th><th class="c-reag">R</th>`;
     html += `</tr></thead><tbody>`;
 
-    for (const c of data.por_closer) {
-      html += `<tr><td class="closer l">${c.name}</td><td class="team l">${c.time}</td>`;
+    const nCols = 2 + tresDias.length * 4 + 4;
+    data.por_closer.forEach((c, i) => {
+      const cid = 'cr-' + i;
+      html += `<tr><td class="closer l"><span class="cl-wrap"><span class="cl-toggle" data-cr="${cid}" id="${cid}-t">▸ criador</span>${c.name}</span></td><td class="team l">${c.time}</td>`;
       for (const d of tresDias) html += quatro(getDia(c.days, d.n) || zero);
       const t = c.total;
       html += `<td class="c-plan mtot">${t.planned}</td><td class="c-done">${t.done}</td><td class="c-nsw">${t.no_show}</td><td class="c-reag">${t.reagendada}</td></tr>`;
 
-    }
+      const cr = c.criadas || {proprio:0, outro:0};
+      html += `<tr class="creator-row" id="${cid}" style="display:none"><td colspan="${nCols}">
+        <div class="creator-box">
+          <div class="ci-item"><span class="ci-lbl">Criadas pelo próprio closer</span><span class="ci-val">${cr.proprio}</span></div>
+          <div class="ci-item"><span class="ci-lbl">Criadas por outro proprietário</span><span class="ci-val">${cr.outro}</span></div>
+          <div class="ci-item"><span class="ci-lbl">Total no mês</span><span class="ci-val">${cr.proprio + cr.outro}</span></div>
+        </div></td></tr>`;
+    });
 
     html += `<tr class="foot"><td class="closer l">TOTAL</td><td class="team l"></td>`;
     for (const d of tresDias) html += quatro(getDia(data.days, d.n) || zero);
@@ -324,6 +344,20 @@ function render(data) {
   }
 
   $('root').innerHTML = html;
+  ligaCriador();
+}
+
+function ligaCriador() {
+  document.querySelectorAll('.cl-toggle[data-cr]').forEach(el => {
+    el.addEventListener('click', () => {
+      const id = el.getAttribute('data-cr');
+      const row = document.getElementById(id);
+      if (!row) return;
+      const aberto = row.style.display !== 'none';
+      row.style.display = aberto ? 'none' : 'table-row';
+      el.textContent = (aberto ? '▸' : '▾') + ' criador';
+    });
+  });
 }
 
 init();

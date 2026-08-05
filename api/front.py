@@ -126,17 +126,17 @@ HTML = r"""<!DOCTYPE html>
   .modal-bg { position:fixed; inset:0; background:rgba(0,0,0,.7); display:none; align-items:center;
               justify-content:center; z-index:100; }
   .modal-bg.show { display:flex; }
-  .modal { background:var(--card); border:1px solid var(--border); border-radius:14px; padding:24px;
-           width:320px; max-width:90vw; }
-  .modal h3 { margin:0 0 16px; font-size:15px; color:var(--gold-ink); text-transform:uppercase; letter-spacing:.5px; }
-  .modal label { display:block; font-size:11px; color:var(--muted); text-transform:uppercase; letter-spacing:.5px; margin:10px 0 4px; }
-  .modal input { width:100%; background:var(--card2); color:var(--text); border:1px solid var(--border);
+  .modal { background:#0d0d0d; color:#f2f2f2; border:1px solid #2a2a2a; border-top:3px solid var(--gold);
+           border-radius:14px; padding:24px; width:320px; max-width:90vw; box-shadow:0 10px 40px rgba(0,0,0,.5); }
+  .modal h3 { margin:0 0 16px; font-size:15px; color:var(--gold); text-transform:uppercase; letter-spacing:.5px; }
+  .modal label { display:block; font-size:11px; color:#9a9a9a; text-transform:uppercase; letter-spacing:.5px; margin:10px 0 4px; }
+  .modal input { width:100%; background:#1a1a1a; color:#f2f2f2; border:1px solid #2a2a2a;
                  border-radius:8px; padding:9px 10px; font-size:14px; }
   .modal input:focus { outline:none; border-color:var(--gold); }
   .modal .m-actions { display:flex; gap:10px; margin-top:18px; }
   .modal .m-actions button { flex:1; padding:9px; border-radius:8px; font-size:13px; font-weight:700; cursor:pointer; border:none; }
   .modal .m-ok { background:var(--gold); color:#1a1a1a; }
-  .modal .m-cancel { background:var(--card2); color:var(--text); border:1px solid var(--border); }
+  .modal .m-cancel { background:#1a1a1a; color:#f2f2f2; border:1px solid #2a2a2a; }
   .modal .m-erro { color:var(--nsw); font-size:12px; margin-top:10px; min-height:14px; }
 
   .neg-box { margin-top:12px; padding-top:10px; border-top:1px dashed var(--border); }

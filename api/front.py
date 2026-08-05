@@ -52,8 +52,8 @@ HTML = r"""<!DOCTYPE html>
   .kpi.plan { border-color:var(--gold); background:var(--gold-soft); }
   .kpi .lbl { font-size:11px; color:var(--muted); text-transform:uppercase; letter-spacing:.5px; }
   .kpi .val { font-size:30px; font-weight:800; line-height:1.1; }
-  .kpi.plan .val{color:var(--text);} .kpi.done .val{color:var(--done);}
-  .kpi.nsw .val{color:var(--nsw);} .kpi.reag .val{color:var(--reag);}
+  .kpi.plan .val{color:var(--text);} .kpi.done .val{color:var(--text);}
+  .kpi.nsw .val{color:var(--text);} .kpi.reag .val{color:var(--text);}
 
   .month-strip { display:flex; gap:16px; flex-wrap:wrap; align-items:center; background:var(--card);
                  border:1px solid var(--border); border-left:4px solid var(--gold); border-radius:10px;
@@ -93,9 +93,11 @@ HTML = r"""<!DOCTYPE html>
   table.matrix th.team, table.matrix td.team { text-align:left; color:var(--muted); }
   table.matrix td, table.matrix th { border-left:1px solid #1e1e1e; }
   table.matrix thead tr.grp th.grp-day, table.matrix thead tr.grp th.grp-tot {
-    border-bottom:1px solid var(--border); border-left:1px solid var(--border);
-    color:var(--gold-ink); font-size:11px; letter-spacing:.5px; background:var(--card2); }
-  table.matrix thead tr.grp th.today { background:var(--gold-soft); }
+    border-bottom:1px solid #3a3a3a; border-left:1px solid #3a3a3a;
+    color:#f2f2f2; font-size:11px; letter-spacing:.5px; background:#2a2d33; }
+  table.matrix thead tr.grp th.grp-day .muted { color:#c9c9c9; }
+  table.matrix thead tr.grp th.today { background:var(--gold); color:#1a1a1a; }
+  table.matrix thead tr.grp th.today .muted { color:#5a4a00; }
   table.matrix tr.sub th { font-size:10px; padding:4px 8px; }
   table.matrix th.today, table.matrix td.today { background:var(--gold-soft); }
   table.matrix .mtot { border-left:2px solid var(--gold) !important; }

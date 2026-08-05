@@ -140,15 +140,19 @@ HTML = r"""<!DOCTYPE html>
   .modal .m-erro { color:var(--nsw); font-size:12px; margin-top:10px; min-height:14px; }
 
   .neg-box { margin-top:12px; padding-top:10px; border-top:1px dashed var(--border); }
-  .neg-box .nb-title { font-size:10px; color:var(--gold); text-transform:uppercase; letter-spacing:.5px; margin-bottom:6px; font-weight:700; }
+  .neg-box .nb-title { font-size:10px; color:var(--text); text-transform:uppercase; letter-spacing:.5px; margin-bottom:6px; font-weight:700; }
   table.neg-tbl { width:100%; font-size:12px; border-collapse:collapse; }
+  table.neg-tbl { table-layout:fixed; }
   table.neg-tbl th { font-size:10px; color:var(--muted); text-transform:uppercase; letter-spacing:.5px;
                      text-align:left; padding:4px 10px; border-bottom:1px solid var(--border); }
   table.neg-tbl td { padding:5px 10px; border-bottom:1px solid var(--border); text-align:left; }
   table.neg-tbl a { color:var(--text); text-decoration:none; }
   table.neg-tbl a:hover { text-decoration:underline; color:var(--gold); }
   table.neg-tbl tr:hover td { background:#eef0f3; }
-  table.neg-tbl td.neg-hora { color:var(--muted); font-size:10px; white-space:nowrap; width:44px; }
+  table.neg-tbl td.neg-hora { color:var(--muted); font-size:10px; white-space:nowrap; }
+  table.neg-tbl td, table.neg-tbl th { overflow:hidden; text-overflow:ellipsis; }
+  table.neg-tbl col.c-hora { width:60px; }
+  table.neg-tbl col.c-id { width:110px; }
   tr.dd-click { cursor:pointer; }
   tr.dd-click:hover td { background:#eef0f3; }
   td.dd-arrow { color:var(--muted); font-size:10px; text-align:center; width:24px; }
@@ -432,7 +436,7 @@ function render(data) {
         const nd = ((c.negocios_dia || []).find(x => x.dia === dSel) || {}).itens || [];
         negHtml += `<div class="neg-box"><div class="nb-title">Negócios do dia ${dSelStr}/${mesStr} (${nd.length}) — clique para abrir no Pipedrive</div>`;
         if (nd.length) {
-          negHtml += `<table class="neg-tbl"><tr><th>Hora</th><th>ID</th><th>Negócio</th></tr>`;
+          negHtml += `<table class="neg-tbl"><colgroup><col class="c-hora"><col class="c-id"><col></colgroup><tr><th>Hora</th><th>ID</th><th>Negócio</th></tr>`;
           for (const n of nd) {
             negHtml += `<tr><td class="neg-hora">${n.hora || '--:--'}</td>
               <td><a href="${n.url}" target="_blank" rel="noopener">#${n.id}</a></td>
@@ -448,7 +452,7 @@ function render(data) {
         const nm = c.negocios || [];
         negHtml += `<div class="neg-box"><div class="nb-title">Negócios do mês (${nm.length})</div>`;
         if (nm.length) {
-          negHtml += `<table class="neg-tbl"><tr><th>ID</th><th>Negócio</th></tr>`;
+          negHtml += `<table class="neg-tbl"><colgroup><col class="c-id"><col></colgroup><tr><th>ID</th><th>Negócio</th></tr>`;
           for (const n of nm) {
             negHtml += `<tr><td><a href="${n.url}" target="_blank" rel="noopener">#${n.id}</a></td>
               <td><a href="${n.url}" target="_blank" rel="noopener">${n.title}</a></td></tr>`;

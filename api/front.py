@@ -113,7 +113,7 @@ HTML = r"""<!DOCTYPE html>
   tr.creator-row > td { background:#f7f8fa !important; padding:6px 12px 10px !important; }
   .creator-wrap { display:flex; gap:28px; flex-wrap:wrap; align-items:stretch; padding-left:6px; }
   .creator-sep { width:1px; background:var(--border); align-self:stretch; }
-  .creator-col .cc-title { font-size:10px; color:var(--gold); text-transform:uppercase; letter-spacing:.5px; margin-bottom:6px; font-weight:700; }
+  .creator-col .cc-title { font-size:10px; color:var(--text); text-transform:uppercase; letter-spacing:.5px; margin-bottom:6px; font-weight:700; }
   .creator-box { display:flex; gap:22px; flex-wrap:wrap; font-size:12px; }
   .creator-box .ci-lbl { color:var(--muted); text-transform:uppercase; letter-spacing:.5px; font-size:10px; }
   .creator-box .ci-val { font-size:18px; font-weight:800; color:var(--text); }

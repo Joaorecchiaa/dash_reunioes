@@ -141,8 +141,8 @@ HTML = r"""<!DOCTYPE html>
   table.neg-tbl th { font-size:10px; color:var(--muted); text-transform:uppercase; letter-spacing:.5px;
                      text-align:left; padding:4px 10px; border-bottom:1px solid var(--border); }
   table.neg-tbl td { padding:5px 10px; border-bottom:1px solid #1a1a1a; text-align:left; }
-  table.neg-tbl a { color:var(--gold); text-decoration:none; }
-  table.neg-tbl a:hover { text-decoration:underline; }
+  table.neg-tbl a { color:var(--text); text-decoration:none; }
+  table.neg-tbl a:hover { text-decoration:underline; color:var(--gold); }
   table.neg-tbl tr:hover td { background:#111; }
 
   details.diaria { margin-bottom:20px; border:1px solid var(--border); border-radius:12px; background:var(--card);

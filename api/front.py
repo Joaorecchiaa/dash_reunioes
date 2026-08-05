@@ -63,7 +63,7 @@ HTML = r"""<!DOCTYPE html>
 
   /* cards de time */
   .team-cards { display:flex; gap:14px; flex-wrap:wrap; margin-bottom:22px; }
-  .team-card { background:rgba(40,42,48,.92); color:#f2f2f2; border:1px solid rgba(255,255,255,.10);
+  .team-card { background:rgba(74,78,86,.95); color:#f2f2f2; border:1px solid rgba(255,255,255,.10);
                border-left:4px solid var(--gold); border-radius:12px; padding:14px 18px; min-width:290px;
                box-shadow:0 3px 12px rgba(0,0,0,.14); }
   .team-card .tc-name { font-size:15px; font-weight:800; letter-spacing:1px; color:var(--gold); margin-bottom:10px; }
@@ -140,7 +140,7 @@ HTML = r"""<!DOCTYPE html>
   .modal .m-erro { color:var(--nsw); font-size:12px; margin-top:10px; min-height:14px; }
 
   .neg-box { margin-top:12px; padding-top:10px; border-top:1px dashed var(--border); }
-  .neg-box .nb-title { font-size:10px; color:var(--text); text-transform:uppercase; letter-spacing:.5px; margin-bottom:6px; font-weight:700; }
+  .neg-box .nb-title { font-size:10px; color:#141414 !important; text-transform:uppercase; letter-spacing:.5px; margin-bottom:6px; font-weight:700; }
   table.neg-tbl { width:100%; font-size:12px; border-collapse:collapse; }
   table.neg-tbl { table-layout:fixed; }
   table.neg-tbl th { font-size:10px; color:var(--muted); text-transform:uppercase; letter-spacing:.5px;
@@ -152,7 +152,9 @@ HTML = r"""<!DOCTYPE html>
   table.neg-tbl td.neg-hora { color:var(--muted); font-size:10px; white-space:nowrap; }
   table.neg-tbl td, table.neg-tbl th { overflow:hidden; text-overflow:ellipsis; }
   table.neg-tbl col.c-hora { width:60px; }
-  table.neg-tbl col.c-id { width:110px; }
+  table.neg-tbl col.c-id { width:120px; }
+  /* linha vertical separando ID do Negocio (2a coluna), alinhada nas duas tabelas */
+  table.neg-tbl th:nth-child(2), table.neg-tbl td:nth-child(2) { border-right:1px solid var(--border); }
   tr.dd-click { cursor:pointer; }
   tr.dd-click:hover td { background:#eef0f3; }
   td.dd-arrow { color:var(--muted); font-size:10px; text-align:center; width:24px; }
@@ -452,9 +454,9 @@ function render(data) {
         const nm = c.negocios || [];
         negHtml += `<div class="neg-box"><div class="nb-title">Negócios do mês (${nm.length})</div>`;
         if (nm.length) {
-          negHtml += `<table class="neg-tbl"><colgroup><col class="c-id"><col></colgroup><tr><th>ID</th><th>Negócio</th></tr>`;
+          negHtml += `<table class="neg-tbl"><colgroup><col class="c-hora"><col class="c-id"><col></colgroup><tr><th></th><th>ID</th><th>Negócio</th></tr>`;
           for (const n of nm) {
-            negHtml += `<tr><td><a href="${n.url}" target="_blank" rel="noopener">#${n.id}</a></td>
+            negHtml += `<tr><td class="neg-hora"></td><td><a href="${n.url}" target="_blank" rel="noopener">#${n.id}</a></td>
               <td><a href="${n.url}" target="_blank" rel="noopener">${n.title}</a></td></tr>`;
           }
           negHtml += `</table>`;

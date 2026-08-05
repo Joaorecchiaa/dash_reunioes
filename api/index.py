@@ -2,6 +2,10 @@ import os
 import csv
 import io
 import time
+import json
+import hmac
+import base64
+import hashlib
 import calendar
 import unicodedata
 import threading
@@ -41,6 +45,64 @@ CSV_URL = env("COLABORADORES_CSV_URL")
 PIPEDRIVE_BASE_URL = "https://" + PIPEDRIVE_DOMAIN
 REFRESH_SECONDS = int(env("REFRESH_SECONDS", 1200))  # 20 min
 
+# ---- autenticacao do acesso privilegiado ----
+# USUARIOS_PRIVILEGIADOS = "usuario1:hash_sha256,usuario2:hash_sha256"
+#   (hash da senha em sha256 hex; gere com gerar_hash.py)
+# AUTH_SECRET = string aleatoria longa para assinar o token
+def _carrega_usuarios():
+    raw = os.environ.get("USUARIOS_PRIVILEGIADOS", "") or ""
+    raw = raw.strip().strip('"').strip("'").strip()
+    users = {}
+    for par in raw.split(","):
+        par = par.strip()
+        if not par or ":" not in par:
+            continue
+        u, h = par.split(":", 1)
+        users[u.strip().lower()] = h.strip().lower()
+    return users
+
+USUARIOS_PRIV = _carrega_usuarios()
+AUTH_SECRET = (os.environ.get("AUTH_SECRET", "") or "troque-este-segredo").encode()
+TOKEN_HORAS = 12  # validade do login
+
+
+def _sha256(txt):
+    return hashlib.sha256(txt.encode("utf-8")).hexdigest()
+
+
+def gera_token(usuario):
+    exp = int(time.time()) + TOKEN_HORAS * 3600
+    corpo = f"{usuario}|{exp}"
+    assinatura = hmac.new(AUTH_SECRET, corpo.encode(), hashlib.sha256).hexdigest()
+    bruto = f"{corpo}|{assinatura}"
+    return base64.urlsafe_b64encode(bruto.encode()).decode()
+
+
+def valida_token(token):
+    """Retorna o usuario se o token for valido e nao expirado; senao None."""
+    if not token:
+        return None
+    try:
+        bruto = base64.urlsafe_b64decode(token.encode()).decode()
+        usuario, exp, assinatura = bruto.rsplit("|", 2)
+        corpo = f"{usuario}|{exp}"
+        esperado = hmac.new(AUTH_SECRET, corpo.encode(), hashlib.sha256).hexdigest()
+        if not hmac.compare_digest(esperado, assinatura):
+            return None
+        if int(exp) < int(time.time()):
+            return None
+        return usuario
+    except Exception:
+        return None
+
+
+def eh_privilegiado(req):
+    """Le o token do header Authorization: Bearer <token>."""
+    auth = req.headers.get("Authorization", "")
+    if auth.startswith("Bearer "):
+        return valida_token(auth[7:]) is not None
+    return False
+
 client = PipedriveClient(PIPEDRIVE_DOMAIN, PIPEDRIVE_API_TOKEN)
 
 TIMES_VALIDOS = {"SNIPER", "OLYMPUS", "ELITE"}
@@ -54,7 +116,7 @@ for i, nome in enumerate(MESES_NOME, start=1):
     MES_TO_NUM[nome[:3]] = i
 
 TTL = 300
-_cache = {"csv": None, "meta": None, "acts": {}, "deals": {}, "current": None}
+_cache = {"csv": None, "meta": None, "acts": {}, "deals": {}, "current": {}}
 _lock = threading.Lock()
 
 
@@ -222,7 +284,7 @@ def info_dos_deals(deal_ids):
 
 # ---------- construcao ----------
 
-def build_dashboard(year, month, time_filtro=None, closer_filtro=None):
+def build_dashboard(year, month, time_filtro=None, closer_filtro=None, privilegiado=False):
     users, pipelines = carrega_meta()
     closers = closers_do_mes(year, month)
 
@@ -257,6 +319,7 @@ def build_dashboard(year, month, time_filtro=None, closer_filtro=None):
         c_pipes = defaultdict(novo_contador)
         c_criadas = {"proprio": 0, "outro": 0}
         c_criadas_days = {d: {"proprio": 0, "outro": 0} for d in range(1, last_day + 1)}
+        c_negocios = {}  # deal_id -> {id, title, url}  (so preenchido se privilegiado)
 
         for a in acts:
             due = a.get("due_date")
@@ -285,6 +348,13 @@ def build_dashboard(year, month, time_filtro=None, closer_filtro=None):
             c_criadas[chave] += 1
             c_criadas_days[d.day][chave] += 1
 
+            if privilegiado and deal_id not in c_negocios:
+                c_negocios[deal_id] = {
+                    "id": deal_id,
+                    "title": info.get("title") or ("Negocio " + str(deal_id)),
+                    "url": PIPEDRIVE_BASE_URL + "/deal/" + str(deal_id),
+                }
+
         por_closer.append({
             "name": nome, "time": time_c,
             "total": c_total,
@@ -292,6 +362,7 @@ def build_dashboard(year, month, time_filtro=None, closer_filtro=None):
             "by_pipeline": dict(c_pipes),
             "criadas": c_criadas,
             "criadas_days": [{"dia": d, "c": c_criadas_days[d]} for d in range(1, last_day + 1)],
+            "negocios": sorted(c_negocios.values(), key=lambda x: x["id"]) if privilegiado else [],
         })
 
     dias = [{"dia": d, "counter": combined_days[d]} for d in range(1, last_day + 1)]
@@ -328,9 +399,13 @@ def refresh_current_loop():
     while True:
         try:
             hoje = date.today()
-            data = build_dashboard(hoje.year, hoje.month)
+            data_comum = build_dashboard(hoje.year, hoje.month, privilegiado=False)
+            data_priv = build_dashboard(hoje.year, hoje.month, privilegiado=True)
             with _lock:
-                _cache["current"] = {"ts": time.time(), "key": (hoje.year, hoje.month), "data": data}
+                _cache["current"] = {
+                    "ts": time.time(), "key": (hoje.year, hoje.month),
+                    "data": {False: data_comum, True: data_priv},
+                }
             print(f"[auto] mes atual atualizado {datetime.now():%H:%M:%S}")
         except Exception as e:
             import traceback
@@ -374,19 +449,39 @@ def api_dashboard():
         year, month = hoje.year, hoje.month
     team = request.args.get("team")
     closer = request.args.get("closer")
+    priv = eh_privilegiado(request)
 
     if eh_default(year, month, team, closer):
         with _lock:
             c = _cache["current"]
-            if c and c["key"] == (year, month):
-                return jsonify(c["data"])
+            if c and c.get("key") == (year, month) and priv in c["data"]:
+                return jsonify(c["data"][priv])
 
     try:
-        return jsonify(build_dashboard(year, month, team, closer))
+        return jsonify(build_dashboard(year, month, team, closer, privilegiado=priv))
     except Exception as e:
         import traceback
         traceback.print_exc()
         return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/login", methods=["POST"])
+def api_login():
+    dados = request.get_json(silent=True) or {}
+    usuario = str(dados.get("usuario", "")).strip().lower()
+    senha = str(dados.get("senha", ""))
+    hash_ok = USUARIOS_PRIV.get(usuario)
+    if hash_ok and hmac.compare_digest(hash_ok, _sha256(senha)):
+        return jsonify({"token": gera_token(usuario), "usuario": usuario})
+    return jsonify({"error": "usuario ou senha invalidos"}), 401
+
+
+@app.route("/api/me")
+def api_me():
+    auth = request.headers.get("Authorization", "")
+    tok = auth[7:] if auth.startswith("Bearer ") else ""
+    u = valida_token(tok)
+    return jsonify({"privilegiado": bool(u), "usuario": u})
 
 
 # servir o front (HTML vem embutido em front.py -- garante que vai no bundle)
@@ -398,7 +493,7 @@ def index():
 
 
 # rotas de API "de verdade" que existem
-_API_ROTAS = ("/api/init", "/api/closers", "/api/dashboard")
+_API_ROTAS = ("/api/init", "/api/closers", "/api/dashboard", "/api/login", "/api/me")
 
 
 @app.errorhandler(404)

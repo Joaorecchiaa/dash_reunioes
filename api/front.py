@@ -13,17 +13,21 @@ HTML = r"""<!DOCTYPE html>
 <title>REUNIÕES - CLOSERS</title>
 <style>
   :root {
-    --bg:#000000; --card:#0d0d0d; --card2:#161616; --border:#2a2a2a;
-    --text:#f2f2f2; --muted:#9a9a9a;
-    --gold:#FFD700; --gold-ink:#FFD700; --gold-soft:rgba(255,215,0,.12);
-    --done:#37d399; --nsw:#f97066; --reag:#f5b544;
+    --bg:#f4f5f7; --card:#ffffff; --card2:#f0f1f3; --border:#dfe1e5;
+    --text:#141414; --muted:#6b7280;
+    --gold:#FFD700; --gold-ink:#8a6d00; --gold-soft:#fff8db;
+    --done:#0f8a4d; --nsw:#c62828; --reag:#b26a00;
+    --head:#0d0d0d; --head-text:#f2f2f2; --head-muted:#9a9a9a; --head-border:#2a2a2a;
   }
   * { box-sizing:border-box; }
-  body { font-family:'Segoe UI',Arial,sans-serif; background:var(--bg); color:var(--text); margin:0; padding:24px; }
+  body { font-family:'Segoe UI',Arial,sans-serif; background:var(--bg); color:var(--text); margin:0; padding:0; }
+  .page { padding:24px; max-width:1500px; margin:0 auto; }
 
-  .brand { font-size:13px; font-weight:800; letter-spacing:3px; color:var(--gold-ink); text-transform:uppercase; margin-bottom:4px; }
-  .brand::after { content:''; display:block; width:52px; height:3px; background:var(--gold); margin-top:5px; border-radius:2px; }
-  h1 { font-size:24px; margin:12px 0 18px; font-weight:700; letter-spacing:1px; color:var(--text); }
+  .site-header { background:var(--head); color:var(--head-text); padding:18px 24px 16px; border-bottom:3px solid var(--gold); }
+  .site-header .hdr-top { display:flex; align-items:flex-start; justify-content:space-between; flex-wrap:wrap; gap:12px; }
+  .brand { font-size:13px; font-weight:800; letter-spacing:3px; color:var(--gold); text-transform:uppercase; margin-bottom:4px; }
+  h1 { font-size:23px; margin:6px 0 14px; font-weight:700; letter-spacing:1px; color:var(--head-text); }
+  h1 .sep { color:var(--gold); }
   h1 .sep { color:var(--gold-ink); }
 
   .filters { display:flex; gap:12px; align-items:flex-end; flex-wrap:wrap; background:var(--card);
@@ -39,7 +43,7 @@ HTML = r"""<!DOCTYPE html>
            padding:9px 22px; font-size:14px; font-weight:800; cursor:pointer; letter-spacing:.5px; }
   button:hover { background:#e6c200; }
   button:disabled { opacity:.5; cursor:wait; }
-  .updated { color:var(--muted); font-size:12px; margin-left:auto; align-self:center; text-align:right; }
+  .updated { color:var(--head-muted); font-size:12px; margin-left:auto; align-self:center; text-align:right; }
   .auto { color:var(--gold-ink); font-size:11px; }
 
   .kpi-head { font-size:13px; color:var(--muted); text-transform:uppercase; letter-spacing:.5px; margin:0 0 8px; font-weight:600; }
@@ -60,14 +64,15 @@ HTML = r"""<!DOCTYPE html>
 
   /* cards de time */
   .team-cards { display:flex; gap:14px; flex-wrap:wrap; margin-bottom:22px; }
-  .team-card { background:var(--card); border:1px solid var(--border); border-left:4px solid var(--gold);
-               border-radius:12px; padding:14px 18px; min-width:290px; box-shadow:none; }
-  .team-card .tc-name { font-size:15px; font-weight:800; letter-spacing:1px; color:var(--gold-ink); margin-bottom:10px; }
+  .team-card { background:rgba(13,13,13,.86); color:#f2f2f2; border:1px solid rgba(255,255,255,.08);
+               border-left:4px solid var(--gold); border-radius:12px; padding:14px 18px; min-width:290px;
+               backdrop-filter:blur(2px); box-shadow:0 4px 14px rgba(0,0,0,.18); }
+  .team-card .tc-name { font-size:15px; font-weight:800; letter-spacing:1px; color:var(--gold); margin-bottom:10px; }
   .team-card .tc-row { display:flex; align-items:baseline; gap:10px; padding:5px 0; font-size:13px; flex-wrap:wrap; }
-  .team-card .tc-row + .tc-row { border-top:1px dashed var(--border); }
-  .team-card .tc-lbl { font-size:10px; color:var(--muted); text-transform:uppercase; letter-spacing:.5px; min-width:78px; font-weight:700; }
-  .team-card .tc-big { font-size:20px; font-weight:800; color:var(--text); }
-  .team-card .tc-sub { color:var(--muted); }
+  .team-card .tc-row + .tc-row { border-top:1px dashed rgba(255,255,255,.12); }
+  .team-card .tc-lbl { font-size:10px; color:#9a9a9a; text-transform:uppercase; letter-spacing:.5px; min-width:78px; font-weight:700; }
+  .team-card .tc-big { font-size:20px; font-weight:800; color:#ffffff; }
+  .team-card .tc-sub { color:#9a9a9a; }
 
   .panel { background:var(--card); border:1px solid var(--border); border-radius:12px; padding:16px; margin-bottom:20px;
            box-shadow:none; }
@@ -97,14 +102,14 @@ HTML = r"""<!DOCTYPE html>
   table.matrix .mtot { border-left:2px solid var(--gold) !important; }
   table.matrix tr.foot td { border-top:2px solid var(--gold); background:var(--gold-soft); font-weight:800; }
   table.matrix tr.foot td.closer { background:var(--gold-soft); }
-  table.matrix tbody tr:hover td, table.matrix tbody tr:hover td.closer { background:#1a1a1a; }
+  table.matrix tbody tr:hover td, table.matrix tbody tr:hover td.closer { background:#f7f8fa; }
 
   /* dropdown criador por closer */
   td.closer .cl-wrap { display:flex; align-items:center; gap:6px; }
   td.closer .cl-toggle { cursor:pointer; user-select:none; color:var(--muted); font-size:10px;
                          border:1px solid var(--border); border-radius:4px; padding:1px 5px; line-height:1.4; }
   td.closer .cl-toggle:hover { color:var(--gold); border-color:var(--gold); }
-  tr.creator-row > td { background:#080808 !important; padding:6px 12px 10px !important; }
+  tr.creator-row > td { background:#f7f8fa !important; padding:6px 12px 10px !important; }
   .creator-wrap { display:flex; gap:28px; flex-wrap:wrap; align-items:stretch; padding-left:6px; }
   .creator-sep { width:1px; background:var(--border); align-self:stretch; }
   .creator-col .cc-title { font-size:10px; color:var(--gold); text-transform:uppercase; letter-spacing:.5px; margin-bottom:6px; font-weight:700; }
@@ -114,9 +119,9 @@ HTML = r"""<!DOCTYPE html>
   .creator-box .ci-item { display:flex; flex-direction:column; gap:2px; }
 
   /* login / acesso privilegiado */
-  .authbar { position:absolute; top:24px; right:24px; display:flex; align-items:center; gap:10px; font-size:12px; }
+  .authbar { display:flex; align-items:center; gap:10px; font-size:12px; }
   .authbar .who { color:var(--gold); }
-  .btn-auth { background:transparent; color:var(--muted); border:1px solid var(--border); border-radius:8px;
+  .btn-auth { background:transparent; color:var(--head-muted); border:1px solid var(--head-border); border-radius:8px;
               padding:6px 14px; font-size:12px; font-weight:600; cursor:pointer; letter-spacing:.3px; }
   .btn-auth:hover { color:var(--gold); border-color:var(--gold); }
   .modal-bg { position:fixed; inset:0; background:rgba(0,0,0,.7); display:none; align-items:center;
@@ -124,7 +129,7 @@ HTML = r"""<!DOCTYPE html>
   .modal-bg.show { display:flex; }
   .modal { background:var(--card); border:1px solid var(--border); border-radius:14px; padding:24px;
            width:320px; max-width:90vw; }
-  .modal h3 { margin:0 0 16px; font-size:15px; color:var(--gold); text-transform:uppercase; letter-spacing:.5px; }
+  .modal h3 { margin:0 0 16px; font-size:15px; color:var(--gold-ink); text-transform:uppercase; letter-spacing:.5px; }
   .modal label { display:block; font-size:11px; color:var(--muted); text-transform:uppercase; letter-spacing:.5px; margin:10px 0 4px; }
   .modal input { width:100%; background:var(--card2); color:var(--text); border:1px solid var(--border);
                  border-radius:8px; padding:9px 10px; font-size:14px; }
@@ -140,10 +145,23 @@ HTML = r"""<!DOCTYPE html>
   table.neg-tbl { width:100%; font-size:12px; border-collapse:collapse; }
   table.neg-tbl th { font-size:10px; color:var(--muted); text-transform:uppercase; letter-spacing:.5px;
                      text-align:left; padding:4px 10px; border-bottom:1px solid var(--border); }
-  table.neg-tbl td { padding:5px 10px; border-bottom:1px solid #1a1a1a; text-align:left; }
+  table.neg-tbl td { padding:5px 10px; border-bottom:1px solid var(--border); text-align:left; }
   table.neg-tbl a { color:var(--text); text-decoration:none; }
   table.neg-tbl a:hover { text-decoration:underline; color:var(--gold); }
-  table.neg-tbl tr:hover td { background:#111; }
+  table.neg-tbl tr:hover td { background:#eef0f3; }
+  table.neg-tbl td.neg-hora { color:var(--muted); font-size:10px; white-space:nowrap; width:44px; }
+  tr.dd-click { cursor:pointer; }
+  tr.dd-click:hover td { background:#eef0f3; }
+  td.dd-arrow { color:var(--muted); font-size:10px; text-align:center; width:24px; }
+  tr.dd-detail > td { background:#f7f8fa !important; padding:4px 10px 12px !important; }
+  .dd-box { padding-left:6px; }
+  table.dd-tbl { width:100%; font-size:12px; border-collapse:collapse; }
+  table.dd-tbl th { font-size:10px; color:var(--muted); text-transform:uppercase; letter-spacing:.5px; text-align:left; padding:4px 10px; border-bottom:1px solid var(--border); }
+  table.dd-tbl td { padding:4px 10px; border-bottom:1px solid var(--border); text-align:left; }
+  table.dd-tbl td.neg-hora { color:var(--muted); font-size:10px; white-space:nowrap; }
+  table.dd-tbl a { color:var(--text); text-decoration:none; }
+  table.dd-tbl a:hover { text-decoration:underline; color:var(--gold-ink); }
+  table.dd-tbl tr:hover td { background:#eef0f3; }
 
   details.diaria { margin-bottom:20px; border:1px solid var(--border); border-radius:12px; background:var(--card);
                    box-shadow:none; }
@@ -156,11 +174,6 @@ HTML = r"""<!DOCTYPE html>
 </style>
 </head>
 <body>
-  <div class="authbar">
-    <span class="who" id="authWho"></span>
-    <button class="btn-auth" id="btnAuth">Entrar</button>
-  </div>
-
   <div class="modal-bg" id="loginModal">
     <div class="modal">
       <h3>Acesso restrito</h3>
@@ -176,19 +189,30 @@ HTML = r"""<!DOCTYPE html>
     </div>
   </div>
 
-  <div class="brand">BOARD ACADEMY</div>
-  <h1>REUNIÕES <span class="sep">-</span> CLOSERS</h1>
+  <header class="site-header">
+    <div class="hdr-top">
+      <div>
+        <div class="brand">BOARD ACADEMY</div>
+        <h1>REUNIÕES <span class="sep">-</span> CLOSERS</h1>
+      </div>
+      <div class="authbar">
+        <span class="who" id="authWho"></span>
+        <button class="btn-auth" id="btnAuth">Entrar</button>
+      </div>
+    </div>
+    <div class="filters">
+      <div class="field"><label>Mês</label><select id="f-mes"></select></div>
+      <div class="field"><label>Dia</label><select id="f-dia"></select></div>
+      <div class="field"><label>Time</label><select id="f-time"></select></div>
+      <div class="field"><label>Closer</label><select id="f-closer"></select></div>
+      <button id="btn">Pesquisar</button>
+      <div class="updated"><div id="updated"></div><div class="auto" id="auto"></div></div>
+    </div>
+  </header>
 
-  <div class="filters">
-    <div class="field"><label>Mês</label><select id="f-mes"></select></div>
-    <div class="field"><label>Dia</label><select id="f-dia"></select></div>
-    <div class="field"><label>Time</label><select id="f-time"></select></div>
-    <div class="field"><label>Closer</label><select id="f-closer"></select></div>
-    <button id="btn">Pesquisar</button>
-    <div class="updated"><div id="updated"></div><div class="auto" id="auto"></div></div>
+  <div class="page">
+    <div id="root"><div class="muted">Carregando filtros…</div></div>
   </div>
-
-  <div id="root"><div class="muted">Carregando filtros…</div></div>
 
 <script>
 const $ = id => document.getElementById(id);
@@ -404,14 +428,37 @@ function render(data) {
       if (dAnt >= 1) blocos += blocoCriador('Dia anterior ' + String(dAnt).padStart(2,'0') + '/' + mesStr, crGet(dAnt)) + sep;
       blocos += blocoCriador('Dia ' + dSelStr + '/' + mesStr, crHoje);
       let negHtml = '';
-      if (ehPriv() && c.negocios && c.negocios.length) {
-        negHtml = `<div class="neg-box"><div class="nb-title">Negócios do mês (${c.negocios.length}) — clique para abrir no Pipedrive</div>
-          <table class="neg-tbl"><tr><th>ID</th><th>Negócio</th></tr>`;
-        for (const n of c.negocios) {
-          negHtml += `<tr><td><a href="${n.url}" target="_blank" rel="noopener">#${n.id}</a></td>
-            <td><a href="${n.url}" target="_blank" rel="noopener">${n.title}</a></td></tr>`;
+      if (ehPriv()) {
+        // --- negocios do DIA selecionado (com hora) ---
+        const nd = ((c.negocios_dia || []).find(x => x.dia === dSel) || {}).itens || [];
+        negHtml += `<div class="neg-box"><div class="nb-title">Negócios do dia ${dSelStr}/${mesStr} (${nd.length}) — clique para abrir no Pipedrive</div>`;
+        if (nd.length) {
+          negHtml += `<table class="neg-tbl"><tr><th>Hora</th><th>ID</th><th>Negócio</th></tr>`;
+          for (const n of nd) {
+            negHtml += `<tr><td class="neg-hora">${n.hora || '--:--'}</td>
+              <td><a href="${n.url}" target="_blank" rel="noopener">#${n.id}</a></td>
+              <td><a href="${n.url}" target="_blank" rel="noopener">${n.title}</a></td></tr>`;
+          }
+          negHtml += `</table>`;
+        } else {
+          negHtml += `<div class="muted" style="font-size:12px">Nenhum negócio nesse dia.</div>`;
         }
-        negHtml += `</table></div>`;
+        negHtml += `</div>`;
+
+        // --- negocios do MES (dedupe) ---
+        const nm = c.negocios || [];
+        negHtml += `<div class="neg-box"><div class="nb-title">Negócios do mês (${nm.length})</div>`;
+        if (nm.length) {
+          negHtml += `<table class="neg-tbl"><tr><th>ID</th><th>Negócio</th></tr>`;
+          for (const n of nm) {
+            negHtml += `<tr><td><a href="${n.url}" target="_blank" rel="noopener">#${n.id}</a></td>
+              <td><a href="${n.url}" target="_blank" rel="noopener">${n.title}</a></td></tr>`;
+          }
+          negHtml += `</table>`;
+        } else {
+          negHtml += `<div class="muted" style="font-size:12px">Nenhum negócio no mês.</div>`;
+        }
+        negHtml += `</div>`;
       }
       html += `<tr class="creator-row" id="${cid}" style="display:none"><td colspan="${nCols}">
         <div class="creator-wrap">${blocos}</div>${negHtml}</td></tr>`;
@@ -424,13 +471,33 @@ function render(data) {
       <div class="muted" style="font-size:11px;margin-top:8px">P = planejadas · F = feitas · NS = no-show · R = reagendadas</div></div>`;
   }
 
-  html += `<details class="diaria"><summary>Dia a dia — todos os times (${data.month_label})</summary><div class="inner">
-    <table><tr><th class="l">Dia</th><th>Planejado</th><th>Feitas</th><th>No Show</th><th>Reagendadas</th></tr>`;
+  const priv = ehPriv();
+  const gdMap = {};
+  if (priv) for (const g of (data.geral_dia || [])) gdMap[g.dia] = g.itens || [];
+  html += `<details class="diaria"><summary>Dia a dia — todos os times (${data.month_label})${priv ? ' · clique num dia para ver as reuniões' : ''}</summary><div class="inner">
+    <table><tr>${priv ? '<th style="width:24px"></th>' : ''}<th class="l">Dia</th><th>Planejado</th><th>Feitas</th><th>No Show</th><th>Reagendadas</th></tr>`;
   for (const row of data.days) {
     const cls = (row.dia === dSel) ? ' class="today"' : '';
-    html += `<tr${cls}><td class="l">${String(row.dia).padStart(2,'0')}</td>${cols(row.counter)}</tr>`;
+    const itens = priv ? (gdMap[row.dia] || []) : [];
+    const temItens = itens.length > 0;
+    const arrow = priv ? `<td class="dd-arrow">${temItens ? '▸' : ''}</td>` : '';
+    const clickable = (priv && temItens) ? ` class="dd-click${cls ? ' today' : ''}" data-dd="ddrow-${row.dia}"` : cls;
+    html += `<tr${clickable}>${arrow}<td class="l">${String(row.dia).padStart(2,'0')}</td>${cols(row.counter)}</tr>`;
+    if (priv && temItens) {
+      let sub = `<table class="dd-tbl"><tr><th>Hora</th><th>Closer</th><th>Time</th><th>ID</th><th>Negócio</th></tr>`;
+      for (const it of itens) {
+        sub += `<tr><td class="neg-hora">${it.hora || '--:--'}</td>
+          <td>${it.closer}</td><td class="muted">${it.time}</td>
+          <td><a href="${it.url}" target="_blank" rel="noopener">#${it.id}</a></td>
+          <td><a href="${it.url}" target="_blank" rel="noopener">${it.title}</a></td></tr>`;
+      }
+      sub += `</table>`;
+      const colspan = 5 + 1; // arrow + Dia + 4
+      html += `<tr class="dd-detail" id="ddrow-${row.dia}" style="display:none"><td colspan="${colspan}"><div class="dd-box">${sub}</div></td></tr>`;
+    }
   }
-  html += `<tr class="total"><td class="l">TOTAL</td>${cols(mt)}</tr></table></div></details>`;
+  const totLead = priv ? '<td></td>' : '';
+  html += `<tr class="total">${totLead}<td class="l">TOTAL</td>${cols(mt)}</tr></table></div></details>`;
 
   if (data.nao_encontrados && data.nao_encontrados.length) {
     html += `<div class="warn">⚠ Sem correspondência no Pipedrive: ${data.nao_encontrados.join(', ')}</div>`;
@@ -438,6 +505,7 @@ function render(data) {
 
   $('root').innerHTML = html;
   ligaCriador();
+  ligaDiaADia();
 }
 
 function ligaCriador() {
@@ -449,6 +517,19 @@ function ligaCriador() {
       const aberto = row.style.display !== 'none';
       row.style.display = aberto ? 'none' : 'table-row';
       el.textContent = (aberto ? '▸' : '▾') + ' criador';
+    });
+  });
+}
+
+function ligaDiaADia() {
+  document.querySelectorAll('tr.dd-click[data-dd]').forEach(el => {
+    el.addEventListener('click', () => {
+      const row = document.getElementById(el.getAttribute('data-dd'));
+      if (!row) return;
+      const aberto = row.style.display !== 'none';
+      row.style.display = aberto ? 'none' : 'table-row';
+      const arw = el.querySelector('.dd-arrow');
+      if (arw) arw.textContent = aberto ? '▸' : '▾';
     });
   });
 }

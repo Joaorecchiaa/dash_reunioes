@@ -1,510 +1,516 @@
-import os
-import csv
-import io
-import time
-import json
-import hmac
-import base64
-import hashlib
-import calendar
-import unicodedata
-import threading
-import requests
-from datetime import datetime, date, timedelta
-from collections import defaultdict
-from flask import Flask, jsonify, request, Response
-
-# .env so existe localmente; na Vercel as variaveis vem do painel
-try:
-    from dotenv import load_dotenv
-    load_dotenv(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", ".env"))
-except Exception:
-    pass
-
-try:
-    from api.pipedrive_client import PipedriveClient
-    from api.front import HTML
-except ImportError:
-    from pipedrive_client import PipedriveClient
-    from front import HTML
-
-app = Flask(__name__, static_folder=None)
-
-def env(nome, padrao=None):
-    """Le variavel de ambiente limpando aspas/espacos (o painel da Vercel e o
-    Import .env costumam trazer o valor entre aspas)."""
-    v = os.environ.get(nome, padrao)
-    if v is None:
-        raise RuntimeError(f"Variavel de ambiente {nome} nao definida")
-    return str(v).strip().strip('"').strip("'").strip()
-
-
-PIPEDRIVE_DOMAIN = env("PIPEDRIVE_DOMAIN")
-PIPEDRIVE_API_TOKEN = env("PIPEDRIVE_API_TOKEN")
-CSV_URL = env("COLABORADORES_CSV_URL")
-PIPEDRIVE_BASE_URL = "https://" + PIPEDRIVE_DOMAIN
-REFRESH_SECONDS = int(env("REFRESH_SECONDS", 1200))  # 20 min
-
-# ---- autenticacao do acesso privilegiado ----
-# USUARIOS_PRIVILEGIADOS = "usuario1:hash_sha256,usuario2:hash_sha256"
-#   (hash da senha em sha256 hex; gere com gerar_hash.py)
-# AUTH_SECRET = string aleatoria longa para assinar o token
-def _carrega_usuarios():
-    raw = os.environ.get("USUARIOS_PRIVILEGIADOS", "") or ""
-    raw = raw.strip().strip('"').strip("'").strip()
-    users = {}
-    for par in raw.split(","):
-        par = par.strip()
-        if not par or ":" not in par:
-            continue
-        u, h = par.split(":", 1)
-        users[u.strip().lower()] = h.strip().lower()
-    return users
-
-USUARIOS_PRIV = _carrega_usuarios()
-AUTH_SECRET = (os.environ.get("AUTH_SECRET", "") or "troque-este-segredo").encode()
-TOKEN_HORAS = 12  # validade do login
-
-
-def _sha256(txt):
-    return hashlib.sha256(txt.encode("utf-8")).hexdigest()
-
-
-def gera_token(usuario):
-    exp = int(time.time()) + TOKEN_HORAS * 3600
-    corpo = f"{usuario}|{exp}"
-    assinatura = hmac.new(AUTH_SECRET, corpo.encode(), hashlib.sha256).hexdigest()
-    bruto = f"{corpo}|{assinatura}"
-    return base64.urlsafe_b64encode(bruto.encode()).decode()
-
-
-def valida_token(token):
-    """Retorna o usuario se o token for valido e nao expirado; senao None."""
-    if not token:
-        return None
-    try:
-        bruto = base64.urlsafe_b64decode(token.encode()).decode()
-        usuario, exp, assinatura = bruto.rsplit("|", 2)
-        corpo = f"{usuario}|{exp}"
-        esperado = hmac.new(AUTH_SECRET, corpo.encode(), hashlib.sha256).hexdigest()
-        if not hmac.compare_digest(esperado, assinatura):
-            return None
-        if int(exp) < int(time.time()):
-            return None
-        return usuario
-    except Exception:
-        return None
-
-
-def eh_privilegiado(req):
-    """Le o token do header Authorization: Bearer <token>."""
-    auth = req.headers.get("Authorization", "")
-    if auth.startswith("Bearer "):
-        return valida_token(auth[7:]) is not None
-    return False
-
-client = PipedriveClient(PIPEDRIVE_DOMAIN, PIPEDRIVE_API_TOKEN)
-
-TIMES_VALIDOS = {"SNIPER", "OLYMPUS", "ELITE"}
-SUBAREA_ALIAS = {"MGM": "OLYMPUS"}  # so MGM vira OLYMPUS; o resto passa igual
-
-MESES_NOME = ["janeiro", "fevereiro", "março", "abril", "maio", "junho",
-              "julho", "agosto", "setembro", "outubro", "novembro", "dezembro"]
-MES_TO_NUM = {}
-for i, nome in enumerate(MESES_NOME, start=1):
-    MES_TO_NUM[nome] = i
-    MES_TO_NUM[nome[:3]] = i
-
-TTL = 300
-_cache = {"csv": None, "meta": None, "acts": {}, "deals": {}, "current": {}}
-_lock = threading.Lock()
-
-
-# ---------- utilidades ----------
-
-def sem_acento(s):
-    s = unicodedata.normalize("NFKD", str(s or ""))
-    return "".join(c for c in s if not unicodedata.combining(c))
-
-
-def norm(s):
-    return sem_acento(s).strip().lower()
-
-
-def parse_mes(v):
-    v = norm(v)
-    if v.isdigit():
-        return int(v)
-    return MES_TO_NUM.get(v) or MES_TO_NUM.get(v[:3])
-
-
-def novo_contador():
-    return {"planned": 0, "done": 0, "no_show": 0, "reagendada": 0}
-
-
-def soma_em(counter, tipo, done):
-    counter["planned"] += 1
-    if tipo == "meeting" and done:
-        counter["done"] += 1
-    elif tipo == "no_show":
-        counter["no_show"] += 1
-    elif tipo == "reagendamento":
-        counter["reagendada"] += 1
-
-
-def soma_contadores(dest, src):
-    for k in dest:
-        dest[k] += src[k]
-
-
-# ---------- CSV de colaboradores ----------
-
-def carrega_csv():
-    with _lock:
-        c = _cache["csv"]
-        if c and time.time() - c["ts"] < TTL:
-            return c["rows"]
-    resp = requests.get(CSV_URL, timeout=30, allow_redirects=True,
-                        headers={"User-Agent": "Mozilla/5.0"})
-    if resp.status_code != 200:
-        print(f"[CSV] {resp.status_code} ao baixar. URL: {CSV_URL[:120]}...")
-        print(f"[CSV] resposta: {resp.text[:200]}")
-        resp.raise_for_status()
-    resp.encoding = "utf-8"
-    reader = csv.DictReader(io.StringIO(resp.text))
-
-    def achar(*nomes):
-        for col in nomes:
-            alvo = norm(col)
-            for h in reader.fieldnames:
-                if norm(h) == alvo:
-                    return h
-        return None
-
-    col_nome = achar("Nome", "NOME")
-    col_sub = achar("Subarea", "SUBAREA")
-    col_cargo = achar("Cargo", "CARGO")
-    col_mes = achar("Mês Referencia", "Mes Referencia", "MÊS REFERIDO")
-    col_ano = achar("Ano Referencia", "ANO REFERIDO")
-    faltando = [n for n, c in [("Nome", col_nome), ("Subarea", col_sub),
-                ("Cargo", col_cargo), ("Mês Referencia", col_mes),
-                ("Ano Referencia", col_ano)] if not c]
-    if faltando:
-        print("[CSV] Colunas nao encontradas:", faltando, "| Cabecalhos:", reader.fieldnames)
-
-    rows = []
-    for r in reader:
-        subarea = (r.get(col_sub) or "").strip().upper()
-        subarea = SUBAREA_ALIAS.get(subarea, subarea)
-        cargo = norm(r.get(col_cargo))
-        mes = parse_mes(r.get(col_mes))
-        ano = norm(r.get(col_ano))
-        ano = int(ano) if ano.isdigit() else None
-        rows.append({
-            "nome": (r.get(col_nome) or "").strip(),
-            "time": subarea,
-            "cargo": cargo,
-            "mes": mes,
-            "ano": ano,
-        })
-    with _lock:
-        _cache["csv"] = {"ts": time.time(), "rows": rows}
-    return rows
-
-
-def closers_do_mes(year, month):
-    """{nome: time} dos closers ativos naquele mes/ano, so times validos."""
-    out = {}
-    for r in carrega_csv():
-        if not r["cargo"].startswith("closer"):   # "closer 1", "closer 2"...
-            continue
-        if r["mes"] != month or r["ano"] != year:
-            continue
-        if r["time"] not in TIMES_VALIDOS:
-            continue
-        if r["nome"]:
-            out[r["nome"]] = r["time"]
-    return out
-
-
-def meses_disponiveis():
-    pares = set()
-    for r in carrega_csv():
-        if r["mes"] and r["ano"]:
-            pares.add((r["ano"], r["mes"]))
-    hoje = date.today()
-    pares.add((hoje.year, hoje.month))
-    saida = []
-    for ano, mes in sorted(pares, reverse=True):
-        saida.append({"value": f"{ano}-{mes:02d}", "label": f"{MESES_NOME[mes-1]}/{ano}"})
-    return saida
-
-
-# ---------- meta Pipedrive ----------
-
-def carrega_meta():
-    with _lock:
-        m = _cache["meta"]
-        if m and time.time() - m["ts"] < TTL:
-            return m["users"], m["pipelines"]
-    users = client.get_users_map()
-    pipelines = client.get_pipelines_map()
-    with _lock:
-        _cache["meta"] = {"ts": time.time(), "users": users, "pipelines": pipelines}
-    return users, pipelines
-
-
-def acts_do_owner(owner_id, year, month):
-    key = (owner_id, year, month)
-    with _lock:
-        c = _cache["acts"].get(key)
-        if c and time.time() - c["ts"] < TTL:
-            return c["acts"]
-    inicio = (date(year, month, 1) - timedelta(days=31)).strftime("%Y-%m-%dT00:00:00Z")
-    acts = client.get_meeting_activities(owner_id, updated_since=inicio)
-    with _lock:
-        _cache["acts"][key] = {"ts": time.time(), "acts": acts}
-    return acts
-
-
-def info_dos_deals(deal_ids):
-    """{deal_id: {"pipeline_id":..., "title":...}} com cache local."""
-    faltando = []
-    with _lock:
-        for d in deal_ids:
-            if d not in _cache["deals"]:
-                faltando.append(d)
-    if faltando:
-        novos = client.get_deals_info(faltando)
-        with _lock:
-            _cache["deals"].update(novos)
-    with _lock:
-        return {d: _cache["deals"].get(d) for d in deal_ids}
-
-
-# ---------- construcao ----------
-
-def build_dashboard(year, month, time_filtro=None, closer_filtro=None, privilegiado=False):
-    users, pipelines = carrega_meta()
-    closers = closers_do_mes(year, month)
-
-    if time_filtro and time_filtro.upper() != "TODOS":
-        closers = {n: t for n, t in closers.items() if t == time_filtro.upper()}
-    if closer_filtro and closer_filtro.upper() != "TODOS":
-        closers = {n: t for n, t in closers.items() if n == closer_filtro}
-
-    last_day = calendar.monthrange(year, month)[1]
-    combined_days = {d: novo_contador() for d in range(1, last_day + 1)}
-    month_total = novo_contador()
-    por_closer = []
-    por_time = defaultdict(novo_contador)
-    por_time_days = {}          # time -> {dia: contador}
-    nao_encontrados = []
-
-    for nome, time_c in sorted(closers.items()):
-        if time_c not in por_time_days:
-            por_time_days[time_c] = {d: novo_contador() for d in range(1, last_day + 1)}
-
-        owner_id = users.get(nome.strip().lower())
-        if not owner_id:
-            nao_encontrados.append(nome)
-            continue
-
-        acts = acts_do_owner(owner_id, year, month)
-        deal_ids = {a["deal_id"] for a in acts if a.get("deal_id")}
-        deal_info = info_dos_deals(deal_ids)
-
-        c_total = novo_contador()
-        c_days = {d: novo_contador() for d in range(1, last_day + 1)}
-        c_pipes = defaultdict(novo_contador)
-        c_criadas = {"proprio": 0, "outro": 0}
-        c_criadas_days = {d: {"proprio": 0, "outro": 0} for d in range(1, last_day + 1)}
-        c_negocios = {}  # deal_id -> {id, title, url}  (so preenchido se privilegiado)
-
-        for a in acts:
-            due = a.get("due_date")
-            deal_id = a.get("deal_id")
-            tipo = a.get("type")
-            done = a.get("done")
-            if not due or not deal_id:
-                continue
-            d = datetime.strptime(due, "%Y-%m-%d").date()
-            if d.year != year or d.month != month:
-                continue
-
-            soma_em(combined_days[d.day], tipo, done)
-            soma_em(month_total, tipo, done)
-            soma_em(c_total, tipo, done)
-            soma_em(c_days[d.day], tipo, done)
-            soma_em(por_time[time_c], tipo, done)
-            soma_em(por_time_days[time_c][d.day], tipo, done)
-
-            info = deal_info.get(deal_id) or {}
-            pid = info.get("pipeline_id")
-            pnome = pipelines.get(pid, f"Funil {pid}") if pid else "Sem funil"
-            soma_em(c_pipes[pnome], tipo, done)
-
-            chave = "proprio" if a.get("creator_user_id") == owner_id else "outro"
-            c_criadas[chave] += 1
-            c_criadas_days[d.day][chave] += 1
-
-            if privilegiado and deal_id not in c_negocios:
-                c_negocios[deal_id] = {
-                    "id": deal_id,
-                    "title": info.get("title") or ("Negocio " + str(deal_id)),
-                    "url": PIPEDRIVE_BASE_URL + "/deal/" + str(deal_id),
-                }
-
-        por_closer.append({
-            "name": nome, "time": time_c,
-            "total": c_total,
-            "days": [{"dia": d, "counter": c_days[d]} for d in range(1, last_day + 1)],
-            "by_pipeline": dict(c_pipes),
-            "criadas": c_criadas,
-            "criadas_days": [{"dia": d, "c": c_criadas_days[d]} for d in range(1, last_day + 1)],
-            "negocios": sorted(c_negocios.values(), key=lambda x: x["id"]) if privilegiado else [],
-        })
-
-    dias = [{"dia": d, "counter": combined_days[d]} for d in range(1, last_day + 1)]
-    por_closer.sort(key=lambda x: (-x["total"]["planned"], x["name"]))
-
-    por_time_days_out = {
-        t: [{"dia": d, "counter": dd[d]} for d in range(1, last_day + 1)]
-        for t, dd in por_time_days.items()
+# -*- coding: utf-8 -*-
+"""Front-end do dashboard embutido como string.
+
+O HTML mora aqui dentro (e nao como arquivo .html solto) porque o bundler
+da Vercel so empacota os .py na funcao serverless.
+"""
+
+HTML = r"""<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>REUNIÕES - CLOSERS</title>
+<style>
+  :root {
+    --bg:#000000; --card:#0d0d0d; --card2:#161616; --border:#2a2a2a;
+    --text:#f2f2f2; --muted:#9a9a9a;
+    --gold:#FFD700; --gold-ink:#FFD700; --gold-soft:rgba(255,215,0,.12);
+    --done:#37d399; --nsw:#f97066; --reag:#f5b544;
+  }
+  * { box-sizing:border-box; }
+  body { font-family:'Segoe UI',Arial,sans-serif; background:var(--bg); color:var(--text); margin:0; padding:24px; }
+
+  .brand { font-size:13px; font-weight:800; letter-spacing:3px; color:var(--gold-ink); text-transform:uppercase; margin-bottom:4px; }
+  .brand::after { content:''; display:block; width:52px; height:3px; background:var(--gold); margin-top:5px; border-radius:2px; }
+  h1 { font-size:24px; margin:12px 0 18px; font-weight:700; letter-spacing:1px; color:var(--text); }
+  h1 .sep { color:var(--gold-ink); }
+
+  .filters { display:flex; gap:12px; align-items:flex-end; flex-wrap:wrap; background:var(--card);
+             border:1px solid var(--border); border-radius:12px; padding:16px; margin-bottom:20px;
+             box-shadow:none; }
+  .field { display:flex; flex-direction:column; gap:4px; }
+  .field label { font-size:11px; color:var(--muted); text-transform:uppercase; letter-spacing:.5px; }
+  select { background:var(--card2); color:var(--text); border:1px solid var(--border);
+           border-radius:8px; padding:8px 10px; font-size:14px; min-width:160px; }
+  select#f-dia { min-width:110px; }
+  select:focus { outline:none; border-color:var(--gold); box-shadow:0 0 0 3px rgba(255,215,0,.18); }
+  button { background:var(--gold); color:#1a1a1a; border:none; border-radius:8px;
+           padding:9px 22px; font-size:14px; font-weight:800; cursor:pointer; letter-spacing:.5px; }
+  button:hover { background:#e6c200; }
+  button:disabled { opacity:.5; cursor:wait; }
+  .updated { color:var(--muted); font-size:12px; margin-left:auto; align-self:center; text-align:right; }
+  .auto { color:var(--gold-ink); font-size:11px; }
+
+  .kpi-head { font-size:13px; color:var(--muted); text-transform:uppercase; letter-spacing:.5px; margin:0 0 8px; font-weight:600; }
+  .kpis { display:flex; gap:12px; flex-wrap:wrap; margin-bottom:20px; }
+  .kpi { background:var(--card); border:1px solid var(--border); border-radius:12px; padding:14px 20px; min-width:130px;
+         box-shadow:none; }
+  .kpi.plan { border-color:var(--gold); background:var(--gold-soft); }
+  .kpi .lbl { font-size:11px; color:var(--muted); text-transform:uppercase; letter-spacing:.5px; }
+  .kpi .val { font-size:30px; font-weight:800; line-height:1.1; }
+  .kpi.plan .val{color:var(--text);} .kpi.done .val{color:var(--done);}
+  .kpi.nsw .val{color:var(--nsw);} .kpi.reag .val{color:var(--reag);}
+
+  .month-strip { display:flex; gap:16px; flex-wrap:wrap; align-items:center; background:var(--card);
+                 border:1px solid var(--border); border-left:4px solid var(--gold); border-radius:10px;
+                 padding:10px 16px; margin-bottom:20px; font-size:13px; box-shadow:none; }
+  .month-strip .ms-title { color:var(--gold-ink); text-transform:uppercase; letter-spacing:.5px; font-size:11px; font-weight:700; }
+  .month-strip .ms-item b { font-weight:700; }
+
+  /* cards de time */
+  .team-cards { display:flex; gap:14px; flex-wrap:wrap; margin-bottom:22px; }
+  .team-card { background:var(--card); border:1px solid var(--border); border-left:4px solid var(--gold);
+               border-radius:12px; padding:14px 18px; min-width:290px; box-shadow:none; }
+  .team-card .tc-name { font-size:15px; font-weight:800; letter-spacing:1px; color:var(--gold-ink); margin-bottom:10px; }
+  .team-card .tc-row { display:flex; align-items:baseline; gap:10px; padding:5px 0; font-size:13px; flex-wrap:wrap; }
+  .team-card .tc-row + .tc-row { border-top:1px dashed var(--border); }
+  .team-card .tc-lbl { font-size:10px; color:var(--muted); text-transform:uppercase; letter-spacing:.5px; min-width:78px; font-weight:700; }
+  .team-card .tc-big { font-size:20px; font-weight:800; color:var(--text); }
+  .team-card .tc-sub { color:var(--muted); }
+
+  .panel { background:var(--card); border:1px solid var(--border); border-radius:12px; padding:16px; margin-bottom:20px;
+           box-shadow:none; }
+  .panel h2 { font-size:14px; margin:0 0 12px; color:var(--gold-ink); text-transform:uppercase; letter-spacing:.5px; font-weight:700; }
+  table { width:100%; border-collapse:collapse; font-size:13px; }
+  th, td { padding:7px 10px; text-align:center; border-bottom:1px solid var(--border); }
+  th { color:var(--muted); font-weight:600; font-size:11px; text-transform:uppercase; letter-spacing:.5px; }
+  td.l, th.l { text-align:left; }
+  tr.total td { font-weight:800; border-top:2px solid var(--gold); background:var(--gold-soft); color:var(--text); }
+  tr.today td { background:var(--gold-soft); }
+  .c-plan{color:var(--text); font-weight:800;} .c-done{color:var(--done);} .c-nsw{color:var(--nsw);} .c-reag{color:var(--reag);}
+  .warn { color:var(--nsw); font-size:12px; margin-bottom:16px; }
+  .muted { color:var(--muted); }
+
+  .matrix-wrap { overflow-x:auto; }
+  table.matrix { border-collapse:collapse; font-size:12px; white-space:nowrap; min-width:100%; }
+  table.matrix th, table.matrix td { padding:8px 12px; border-bottom:1px solid var(--border); text-align:center; }
+  table.matrix th.closer, table.matrix td.closer { position:sticky; left:0; background:var(--card); text-align:left; z-index:2; min-width:150px; font-weight:600; }
+  table.matrix th.team, table.matrix td.team { text-align:left; color:var(--muted); }
+  table.matrix td, table.matrix th { border-left:1px solid #1e1e1e; }
+  table.matrix thead tr.grp th.grp-day, table.matrix thead tr.grp th.grp-tot {
+    border-bottom:1px solid var(--border); border-left:1px solid var(--border);
+    color:var(--gold-ink); font-size:11px; letter-spacing:.5px; background:var(--card2); }
+  table.matrix thead tr.grp th.today { background:var(--gold-soft); }
+  table.matrix tr.sub th { font-size:10px; padding:4px 8px; }
+  table.matrix th.today, table.matrix td.today { background:var(--gold-soft); }
+  table.matrix .mtot { border-left:2px solid var(--gold) !important; }
+  table.matrix tr.foot td { border-top:2px solid var(--gold); background:var(--gold-soft); font-weight:800; }
+  table.matrix tr.foot td.closer { background:var(--gold-soft); }
+  table.matrix tbody tr:hover td, table.matrix tbody tr:hover td.closer { background:#1a1a1a; }
+
+  /* dropdown criador por closer */
+  td.closer .cl-wrap { display:flex; align-items:center; gap:6px; }
+  td.closer .cl-toggle { cursor:pointer; user-select:none; color:var(--muted); font-size:10px;
+                         border:1px solid var(--border); border-radius:4px; padding:1px 5px; line-height:1.4; }
+  td.closer .cl-toggle:hover { color:var(--gold); border-color:var(--gold); }
+  tr.creator-row > td { background:#080808 !important; padding:6px 12px 10px !important; }
+  .creator-wrap { display:flex; gap:28px; flex-wrap:wrap; align-items:stretch; padding-left:6px; }
+  .creator-sep { width:1px; background:var(--border); align-self:stretch; }
+  .creator-col .cc-title { font-size:10px; color:var(--gold); text-transform:uppercase; letter-spacing:.5px; margin-bottom:6px; font-weight:700; }
+  .creator-box { display:flex; gap:22px; flex-wrap:wrap; font-size:12px; }
+  .creator-box .ci-lbl { color:var(--muted); text-transform:uppercase; letter-spacing:.5px; font-size:10px; }
+  .creator-box .ci-val { font-size:18px; font-weight:800; color:var(--text); }
+  .creator-box .ci-item { display:flex; flex-direction:column; gap:2px; }
+
+  /* login / acesso privilegiado */
+  .authbar { position:absolute; top:24px; right:24px; display:flex; align-items:center; gap:10px; font-size:12px; }
+  .authbar .who { color:var(--gold); }
+  .btn-auth { background:transparent; color:var(--muted); border:1px solid var(--border); border-radius:8px;
+              padding:6px 14px; font-size:12px; font-weight:600; cursor:pointer; letter-spacing:.3px; }
+  .btn-auth:hover { color:var(--gold); border-color:var(--gold); }
+  .modal-bg { position:fixed; inset:0; background:rgba(0,0,0,.7); display:none; align-items:center;
+              justify-content:center; z-index:100; }
+  .modal-bg.show { display:flex; }
+  .modal { background:var(--card); border:1px solid var(--border); border-radius:14px; padding:24px;
+           width:320px; max-width:90vw; }
+  .modal h3 { margin:0 0 16px; font-size:15px; color:var(--gold); text-transform:uppercase; letter-spacing:.5px; }
+  .modal label { display:block; font-size:11px; color:var(--muted); text-transform:uppercase; letter-spacing:.5px; margin:10px 0 4px; }
+  .modal input { width:100%; background:var(--card2); color:var(--text); border:1px solid var(--border);
+                 border-radius:8px; padding:9px 10px; font-size:14px; }
+  .modal input:focus { outline:none; border-color:var(--gold); }
+  .modal .m-actions { display:flex; gap:10px; margin-top:18px; }
+  .modal .m-actions button { flex:1; padding:9px; border-radius:8px; font-size:13px; font-weight:700; cursor:pointer; border:none; }
+  .modal .m-ok { background:var(--gold); color:#1a1a1a; }
+  .modal .m-cancel { background:var(--card2); color:var(--text); border:1px solid var(--border); }
+  .modal .m-erro { color:var(--nsw); font-size:12px; margin-top:10px; min-height:14px; }
+
+  .neg-box { margin-top:12px; padding-top:10px; border-top:1px dashed var(--border); }
+  .neg-box .nb-title { font-size:10px; color:var(--gold); text-transform:uppercase; letter-spacing:.5px; margin-bottom:6px; font-weight:700; }
+  table.neg-tbl { width:100%; font-size:12px; border-collapse:collapse; }
+  table.neg-tbl th { font-size:10px; color:var(--muted); text-transform:uppercase; letter-spacing:.5px;
+                     text-align:left; padding:4px 10px; border-bottom:1px solid var(--border); }
+  table.neg-tbl td { padding:5px 10px; border-bottom:1px solid #1a1a1a; text-align:left; }
+  table.neg-tbl a { color:var(--gold); text-decoration:none; }
+  table.neg-tbl a:hover { text-decoration:underline; }
+  table.neg-tbl tr:hover td { background:#111; }
+
+  details.diaria { margin-bottom:20px; border:1px solid var(--border); border-radius:12px; background:var(--card);
+                   box-shadow:none; }
+  details.diaria summary { cursor:pointer; padding:14px 16px; font-size:14px; color:var(--gold-ink);
+                           text-transform:uppercase; letter-spacing:.5px; font-weight:700; list-style:none; }
+  details.diaria summary::-webkit-details-marker { display:none; }
+  details.diaria summary::before { content:'▸ '; }
+  details.diaria[open] summary::before { content:'▾ '; }
+  details.diaria .inner { padding:0 16px 16px; }
+</style>
+</head>
+<body>
+  <div class="authbar">
+    <span class="who" id="authWho"></span>
+    <button class="btn-auth" id="btnAuth">Entrar</button>
+  </div>
+
+  <div class="modal-bg" id="loginModal">
+    <div class="modal">
+      <h3>Acesso restrito</h3>
+      <label>Usuário</label>
+      <input id="in-user" autocomplete="username" />
+      <label>Senha</label>
+      <input id="in-pass" type="password" autocomplete="current-password" />
+      <div class="m-erro" id="loginErro"></div>
+      <div class="m-actions">
+        <button class="m-cancel" id="loginCancel">Cancelar</button>
+        <button class="m-ok" id="loginOk">Entrar</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="brand">BOARD ACADEMY</div>
+  <h1>REUNIÕES <span class="sep">-</span> CLOSERS</h1>
+
+  <div class="filters">
+    <div class="field"><label>Mês</label><select id="f-mes"></select></div>
+    <div class="field"><label>Dia</label><select id="f-dia"></select></div>
+    <div class="field"><label>Time</label><select id="f-time"></select></div>
+    <div class="field"><label>Closer</label><select id="f-closer"></select></div>
+    <button id="btn">Pesquisar</button>
+    <div class="updated"><div id="updated"></div><div class="auto" id="auto"></div></div>
+  </div>
+
+  <div id="root"><div class="muted">Carregando filtros…</div></div>
+
+<script>
+const $ = id => document.getElementById(id);
+const hoje = new Date();
+let TOKEN = sessionStorage.getItem('dash_token') || null;
+let USUARIO = sessionStorage.getItem('dash_user') || null;
+
+function authHeaders() {
+  return TOKEN ? { 'Authorization': 'Bearer ' + TOKEN } : {};
+}
+function ehPriv() { return !!TOKEN; }
+const diaHojeNum = hoje.getDate();
+let CURRENT_MONTH = null;
+let REFRESH_MS = 1200000;
+let LAST_DATA = null;
+
+function opt(sel, arr, getV, getL) {
+  sel.innerHTML = '';
+  for (const item of arr) {
+    const o = document.createElement('option');
+    o.value = getV(item); o.textContent = getL(item);
+    sel.appendChild(o);
+  }
+}
+
+function ehDefaultAtual() {
+  return $('f-mes').value === CURRENT_MONTH
+      && $('f-time').value === 'Todos'
+      && $('f-closer').value === 'Todos';
+}
+
+function diasNoMes(valorMes) {
+  const [y, m] = valorMes.split('-').map(Number);
+  return new Date(y, m, 0).getDate();
+}
+
+function preencheDias() {
+  const mes = $('f-mes').value;
+  const n = diasNoMes(mes);
+  const arr = [];
+  for (let d = 1; d <= n; d++) arr.push(d);
+  opt($('f-dia'), arr, x=>x, x=>String(x).padStart(2,'0'));
+  $('f-dia').value = (mes === CURRENT_MONTH && diaHojeNum <= n) ? diaHojeNum : 1;
+}
+
+function diaSelecionado() { return parseInt($('f-dia').value, 10); }
+
+async function init() {
+  // valida token salvo (pode ter expirado)
+  if (TOKEN) {
+    try {
+      const me = await (await fetch('/api/me', { headers: authHeaders() })).json();
+      if (!me.privilegiado) { TOKEN = null; USUARIO = null;
+        sessionStorage.removeItem('dash_token'); sessionStorage.removeItem('dash_user'); }
+      else { USUARIO = me.usuario; }
+    } catch (e) {}
+    atualizaAuthUI();
+  }
+  const d = await (await fetch('/api/init')).json();
+  CURRENT_MONTH = d.current;
+  REFRESH_MS = (d.refresh_seconds || 1200) * 1000;
+  opt($('f-mes'), d.months, x=>x.value, x=>x.label);
+  $('f-mes').value = d.current;
+  opt($('f-time'), d.teams, x=>x, x=>x);
+  preencheDias();
+  await carregaClosers();
+  buscar(false);
+  setInterval(() => { if (ehDefaultAtual()) buscar(true); }, REFRESH_MS);
+}
+
+async function carregaClosers() {
+  const d = await (await fetch('/api/closers?month=' + $('f-mes').value)).json();
+  opt($('f-closer'), d.closers, x=>x, x=>x);
+}
+
+$('f-mes').addEventListener('change', async () => { preencheDias(); await carregaClosers(); });
+// dia e so recorte visual: re-renderiza na hora, sem nova requisicao
+$('f-dia').addEventListener('change', () => { if (LAST_DATA) render(LAST_DATA); });
+$('btn').addEventListener('click', () => buscar(false));
+
+async function buscar(isAuto) {
+  // virada de dia: se a data mudou desde que a pagina abriu, recarrega
+  if (isAuto) {
+    const agora = new Date();
+    if (agora.getDate() !== diaHojeNum && $('f-mes').value === CURRENT_MONTH) {
+      location.reload();
+      return;
     }
+  }
+  if (!isAuto) {
+    $('btn').disabled = true;
+    $('root').innerHTML = '<div class="muted">Buscando no Pipedrive… (pode levar alguns segundos)</div>';
+  }
+  const p = new URLSearchParams({
+    month: $('f-mes').value, team: $('f-time').value, closer: $('f-closer').value,
+  });
+  try {
+    const res = await fetch('/api/dashboard?' + p.toString(), { headers: authHeaders() });
+    const data = await res.json();
+    if (data.error) $('root').innerHTML = '<div class="warn">Erro: ' + data.error + '</div>';
+    else { LAST_DATA = data; render(data); }
+  } catch (e) {
+    if (!isAuto) $('root').innerHTML = '<div class="warn">Falha na requisição: ' + e + '</div>';
+  } finally {
+    $('btn').disabled = false;
+  }
+}
 
-    return {
-        "generated_at": datetime.now().isoformat(),
-        "year": year, "month": month,
-        "month_label": f"{MESES_NOME[month-1]}/{year}",
-        "days": dias,
-        "month_total": month_total,
-        "por_time": dict(por_time),
-        "por_time_days": por_time_days_out,
-        "por_closer": por_closer,
-        "nao_encontrados": nao_encontrados,
+function cols(c) {
+  return `<td class="c-plan">${c.planned}</td><td class="c-done">${c.done}</td>`
+       + `<td class="c-nsw">${c.no_show}</td><td class="c-reag">${c.reagendada}</td>`;
+}
+
+function render(data) {
+  $('updated').innerText = 'Atualizado: ' + new Date(data.generated_at).toLocaleString('pt-BR');
+  $('auto').innerText = ehDefaultAtual() ? '● atualiza sozinho a cada ' + Math.round(REFRESH_MS/60000) + ' min' : '';
+  const mt = data.month_total;
+  const nDays = data.days.length;
+  const dSel = Math.min(diaSelecionado() || 1, nDays);
+  const dSelStr = String(dSel).padStart(2,'0');
+  const mesStr = String(data.month).padStart(2,'0');
+  const zero = {planned:0, done:0, no_show:0, reagendada:0};
+  const getDia = (lista, n) => { const r = (lista||[]).find(x => x.dia === n); return r ? r.counter : null; };
+
+  const tresDias = [];
+  if (dSel - 1 >= 1)      tresDias.push({n: dSel-1, rot: 'Anterior'});
+  tresDias.push({n: dSel, rot: 'Dia ' + dSelStr});
+  if (dSel + 1 <= nDays)  tresDias.push({n: dSel+1, rot: 'Seguinte'});
+
+  const quatro = c => `<td class="c-plan">${c.planned}</td><td class="c-done">${c.done}</td>`
+                    + `<td class="c-nsw">${c.no_show}</td><td class="c-reag">${c.reagendada}</td>`;
+  const subHead = extra => `<th class="c-plan${extra||''}">P</th><th class="c-done">F</th><th class="c-nsw">NS</th><th class="c-reag">R</th>`;
+
+  const diaCounter = getDia(data.days, dSel) || zero;
+
+  let html = '';
+
+  html += `<div class="kpi-head">Dia ${dSelStr}/${mesStr}</div>`;
+  html += `<div class="kpis">
+    <div class="kpi plan"><div class="lbl">Planejadas</div><div class="val">${diaCounter.planned}</div></div>
+    <div class="kpi done"><div class="lbl">Feitas</div><div class="val">${diaCounter.done}</div></div>
+    <div class="kpi nsw"><div class="lbl">No Show</div><div class="val">${diaCounter.no_show}</div></div>
+    <div class="kpi reag"><div class="lbl">Reagendadas</div><div class="val">${diaCounter.reagendada}</div></div>
+  </div>`;
+
+  html += `<div class="month-strip">
+    <span class="ms-title">Total do mês — ${data.month_label}</span>
+    <span class="ms-item c-plan">Planejadas <b>${mt.planned}</b></span>
+    <span class="ms-item c-done">Feitas <b>${mt.done}</b></span>
+    <span class="ms-item c-nsw">No Show <b>${mt.no_show}</b></span>
+    <span class="ms-item c-reag">Reagendadas <b>${mt.reagendada}</b></span>
+  </div>`;
+
+  const times = Object.keys(data.por_time).sort();
+  if (times.length) {
+    html += '<div class="team-cards">';
+    for (const t of times) {
+      const cd = getDia((data.por_time_days || {})[t], dSel) || zero;
+      const cm = data.por_time[t];
+      html += `<div class="team-card">
+        <div class="tc-name">${t}</div>
+        <div class="tc-row">
+          <span class="tc-lbl">Total dia ${dSelStr}</span>
+          <span class="tc-big">${cd.planned}</span>
+          <span class="tc-sub">plan · <span class="c-done">${cd.done}</span> feitas · <span class="c-nsw">${cd.no_show}</span> NS · <span class="c-reag">${cd.reagendada}</span> reag</span>
+        </div>
+        <div class="tc-row">
+          <span class="tc-lbl">Total mês</span>
+          <span class="tc-big">${cm.planned}</span>
+          <span class="tc-sub">plan · <span class="c-done">${cm.done}</span> feitas · <span class="c-nsw">${cm.no_show}</span> NS · <span class="c-reag">${cm.reagendada}</span> reag</span>
+        </div>
+      </div>`;
     }
+    html += '</div>';
+  }
 
+  if (data.por_closer.length) {
+    html += `<div class="panel"><h2>Por closer</h2><div class="matrix-wrap"><table class="matrix">`;
+    html += `<thead><tr class="grp">
+      <th class="closer l" rowspan="2">Closer</th><th class="team l" rowspan="2">Time</th>`;
+    for (const d of tresDias) {
+      const cls = (d.n === dSel) ? ' today' : '';
+      html += `<th colspan="4" class="grp-day${cls}">${d.rot} <span class="muted">${String(d.n).padStart(2,'0')}</span></th>`;
+    }
+    html += `<th colspan="4" class="grp-tot mtot">Total do mês</th></tr>`;
+    html += `<tr class="sub">`;
+    for (const d of tresDias) html += subHead((d.n === dSel) ? ' today' : '');
+    html += `<th class="c-plan mtot">P</th><th class="c-done">F</th><th class="c-nsw">NS</th><th class="c-reag">R</th>`;
+    html += `</tr></thead><tbody>`;
 
-def eh_default(year, month, team, closer):
-    hoje = date.today()
-    return (year == hoje.year and month == hoje.month
-            and (not team or team.upper() == "TODOS")
-            and (not closer or closer.upper() == "TODOS"))
+    const nCols = 2 + tresDias.length * 4 + 4;
+    data.por_closer.forEach((c, i) => {
+      const cid = 'cr-' + i;
+      html += `<tr><td class="closer l"><span class="cl-wrap"><span class="cl-toggle" data-cr="${cid}" id="${cid}-t">▸ criador</span>${c.name}</span></td><td class="team l">${c.time}</td>`;
+      for (const d of tresDias) html += quatro(getDia(c.days, d.n) || zero);
+      const t = c.total;
+      html += `<td class="c-plan mtot">${t.planned}</td><td class="c-done">${t.done}</td><td class="c-nsw">${t.no_show}</td><td class="c-reag">${t.reagendada}</td></tr>`;
 
+      const crGet = (dia) => ((c.criadas_days || []).find(x => x.dia === dia) || {}).c || {proprio:0, outro:0};
+      const crHoje = crGet(dSel);
+      const dAnt = dSel - 1;
+      const blocoCriador = (titulo, cc) => `
+          <div class="creator-col">
+            <div class="cc-title">${titulo}</div>
+            <div class="creator-box">
+              <div class="ci-item"><span class="ci-lbl">Criadas pelo próprio</span><span class="ci-val">${cc.proprio}</span></div>
+              <div class="ci-item"><span class="ci-lbl">Criadas por outro</span><span class="ci-val">${cc.outro}</span></div>
+              <div class="ci-item"><span class="ci-lbl">Total</span><span class="ci-val">${cc.proprio + cc.outro}</span></div>
+            </div>
+          </div>`;
+      const sep = '<div class="creator-sep"></div>';
+      let blocos = '';
+      if (dAnt >= 1) blocos += blocoCriador('Dia anterior ' + String(dAnt).padStart(2,'0') + '/' + mesStr, crGet(dAnt)) + sep;
+      blocos += blocoCriador('Dia ' + dSelStr + '/' + mesStr, crHoje);
+      let negHtml = '';
+      if (ehPriv() && c.negocios && c.negocios.length) {
+        negHtml = `<div class="neg-box"><div class="nb-title">Negócios do mês (${c.negocios.length}) — clique para abrir no Pipedrive</div>
+          <table class="neg-tbl"><tr><th>ID</th><th>Negócio</th></tr>`;
+        for (const n of c.negocios) {
+          negHtml += `<tr><td><a href="${n.url}" target="_blank" rel="noopener">#${n.id}</a></td>
+            <td><a href="${n.url}" target="_blank" rel="noopener">${n.title}</a></td></tr>`;
+        }
+        negHtml += `</table></div>`;
+      }
+      html += `<tr class="creator-row" id="${cid}" style="display:none"><td colspan="${nCols}">
+        <div class="creator-wrap">${blocos}</div>${negHtml}</td></tr>`;
+    });
 
-def refresh_current_loop():
-    """Reconstroi o mes atual a cada REFRESH_SECONDS. So roda LOCAL --
-    na Vercel (serverless) nao existe processo de fundo; o refresh vem do navegador."""
-    while True:
-        try:
-            hoje = date.today()
-            data_comum = build_dashboard(hoje.year, hoje.month, privilegiado=False)
-            data_priv = build_dashboard(hoje.year, hoje.month, privilegiado=True)
-            with _lock:
-                _cache["current"] = {
-                    "ts": time.time(), "key": (hoje.year, hoje.month),
-                    "data": {False: data_comum, True: data_priv},
-                }
-            print(f"[auto] mes atual atualizado {datetime.now():%H:%M:%S}")
-        except Exception as e:
-            import traceback
-            traceback.print_exc()
-            print("Erro no refresh automatico:", e)
-        time.sleep(REFRESH_SECONDS)
+    html += `<tr class="foot"><td class="closer l">TOTAL</td><td class="team l"></td>`;
+    for (const d of tresDias) html += quatro(getDia(data.days, d.n) || zero);
+    html += `<td class="c-plan mtot">${mt.planned}</td><td class="c-done">${mt.done}</td><td class="c-nsw">${mt.no_show}</td><td class="c-reag">${mt.reagendada}</td></tr>`;
+    html += `</tbody></table></div>
+      <div class="muted" style="font-size:11px;margin-top:8px">P = planejadas · F = feitas · NS = no-show · R = reagendadas</div></div>`;
+  }
 
+  html += `<details class="diaria"><summary>Dia a dia — todos os times (${data.month_label})</summary><div class="inner">
+    <table><tr><th class="l">Dia</th><th>Planejado</th><th>Feitas</th><th>No Show</th><th>Reagendadas</th></tr>`;
+  for (const row of data.days) {
+    const cls = (row.dia === dSel) ? ' class="today"' : '';
+    html += `<tr${cls}><td class="l">${String(row.dia).padStart(2,'0')}</td>${cols(row.counter)}</tr>`;
+  }
+  html += `<tr class="total"><td class="l">TOTAL</td>${cols(mt)}</tr></table></div></details>`;
 
-# ---------- rotas ----------
+  if (data.nao_encontrados && data.nao_encontrados.length) {
+    html += `<div class="warn">⚠ Sem correspondência no Pipedrive: ${data.nao_encontrados.join(', ')}</div>`;
+  }
 
-@app.route("/api/init")
-def api_init():
-    hoje = date.today()
-    return jsonify({
-        "months": meses_disponiveis(),
-        "current": f"{hoje.year}-{hoje.month:02d}",
-        "teams": ["Todos"] + sorted(TIMES_VALIDOS),
-        "refresh_seconds": REFRESH_SECONDS,
-    })
+  $('root').innerHTML = html;
+  ligaCriador();
+}
 
+function ligaCriador() {
+  document.querySelectorAll('.cl-toggle[data-cr]').forEach(el => {
+    el.addEventListener('click', () => {
+      const id = el.getAttribute('data-cr');
+      const row = document.getElementById(id);
+      if (!row) return;
+      const aberto = row.style.display !== 'none';
+      row.style.display = aberto ? 'none' : 'table-row';
+      el.textContent = (aberto ? '▸' : '▾') + ' criador';
+    });
+  });
+}
 
-@app.route("/api/closers")
-def api_closers():
-    mes = request.args.get("month", "")
-    try:
-        year, month = map(int, mes.split("-"))
-    except Exception:
-        hoje = date.today()
-        year, month = hoje.year, hoje.month
-    closers = closers_do_mes(year, month)
-    return jsonify({"closers": ["Todos"] + sorted(closers.keys())})
+// ---- login ----
+function abreLogin() {
+  $('loginErro').textContent = '';
+  $('in-user').value = ''; $('in-pass').value = '';
+  $('loginModal').classList.add('show');
+  $('in-user').focus();
+}
+function fechaLogin() { $('loginModal').classList.remove('show'); }
 
+async function fazLogin() {
+  const usuario = $('in-user').value.trim();
+  const senha = $('in-pass').value;
+  $('loginErro').textContent = '';
+  try {
+    const res = await fetch('/api/login', {
+      method: 'POST', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({usuario, senha}),
+    });
+    const d = await res.json();
+    if (!res.ok) { $('loginErro').textContent = d.error || 'Falha no login'; return; }
+    TOKEN = d.token; USUARIO = d.usuario;
+    sessionStorage.setItem('dash_token', TOKEN);
+    sessionStorage.setItem('dash_user', USUARIO);
+    fechaLogin();
+    atualizaAuthUI();
+    buscar(false);  // recarrega ja com os negocios
+  } catch (e) {
+    $('loginErro').textContent = 'Erro de conexão';
+  }
+}
 
-@app.route("/api/dashboard")
-def api_dashboard():
-    mes = request.args.get("month", "")
-    try:
-        year, month = map(int, mes.split("-"))
-    except Exception:
-        hoje = date.today()
-        year, month = hoje.year, hoje.month
-    team = request.args.get("team")
-    closer = request.args.get("closer")
-    priv = eh_privilegiado(request)
+function logout() {
+  TOKEN = null; USUARIO = null;
+  sessionStorage.removeItem('dash_token');
+  sessionStorage.removeItem('dash_user');
+  atualizaAuthUI();
+  buscar(false);
+}
 
-    if eh_default(year, month, team, closer):
-        with _lock:
-            c = _cache["current"]
-            if c and c.get("key") == (year, month) and priv in c["data"]:
-                return jsonify(c["data"][priv])
+function atualizaAuthUI() {
+  if (ehPriv()) {
+    $('authWho').textContent = USUARIO ? ('● ' + USUARIO) : '● conectado';
+    $('btnAuth').textContent = 'Sair';
+  } else {
+    $('authWho').textContent = '';
+    $('btnAuth').textContent = 'Entrar';
+  }
+}
 
-    try:
-        return jsonify(build_dashboard(year, month, team, closer, privilegiado=priv))
-    except Exception as e:
-        import traceback
-        traceback.print_exc()
-        return jsonify({"error": str(e)}), 500
+$('btnAuth').addEventListener('click', () => { ehPriv() ? logout() : abreLogin(); });
+$('loginCancel').addEventListener('click', fechaLogin);
+$('loginOk').addEventListener('click', fazLogin);
+$('in-pass').addEventListener('keydown', e => { if (e.key === 'Enter') fazLogin(); });
+$('loginModal').addEventListener('click', e => { if (e.target.id === 'loginModal') fechaLogin(); });
 
-
-@app.route("/api/login", methods=["POST"])
-def api_login():
-    dados = request.get_json(silent=True) or {}
-    usuario = str(dados.get("usuario", "")).strip().lower()
-    senha = str(dados.get("senha", ""))
-    hash_ok = USUARIOS_PRIV.get(usuario)
-    if hash_ok and hmac.compare_digest(hash_ok, _sha256(senha)):
-        return jsonify({"token": gera_token(usuario), "usuario": usuario})
-    return jsonify({"error": "usuario ou senha invalidos"}), 401
-
-
-@app.route("/api/me")
-def api_me():
-    auth = request.headers.get("Authorization", "")
-    tok = auth[7:] if auth.startswith("Bearer ") else ""
-    u = valida_token(tok)
-    return jsonify({"privilegiado": bool(u), "usuario": u})
-
-
-# servir o front (HTML vem embutido em front.py -- garante que vai no bundle)
-# "/" = local; "/api/index" = destino do rewrite da Vercel (vercel.json)
-@app.route("/")
-@app.route("/api/index")
-def index():
-    return Response(HTML, mimetype="text/html")
-
-
-# rotas de API "de verdade" que existem
-_API_ROTAS = ("/api/init", "/api/closers", "/api/dashboard", "/api/login", "/api/me")
-
-
-@app.errorhandler(404)
-def not_found(e):
-    # so devolve erro JSON quando bate numa rota de API conhecida com metodo/params errados;
-    # qualquer outro path desconhecido cai no front (SPA-like)
-    if request.path in _API_ROTAS:
-        return jsonify({"error": "rota nao encontrada", "path": request.path}), 404
-    return Response(HTML, mimetype="text/html")
-
-
-if __name__ == "__main__":
-    threading.Thread(target=refresh_current_loop, daemon=True).start()
-    app.run(debug=True, port=5000, use_reloader=False)
+atualizaAuthUI();
+init();
+</script>
+</body>
+</html>
+"""

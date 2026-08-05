@@ -113,6 +113,38 @@ HTML = r"""<!DOCTYPE html>
   .creator-box .ci-val { font-size:18px; font-weight:800; color:var(--text); }
   .creator-box .ci-item { display:flex; flex-direction:column; gap:2px; }
 
+  /* login / acesso privilegiado */
+  .authbar { position:absolute; top:24px; right:24px; display:flex; align-items:center; gap:10px; font-size:12px; }
+  .authbar .who { color:var(--gold); }
+  .btn-auth { background:transparent; color:var(--muted); border:1px solid var(--border); border-radius:8px;
+              padding:6px 14px; font-size:12px; font-weight:600; cursor:pointer; letter-spacing:.3px; }
+  .btn-auth:hover { color:var(--gold); border-color:var(--gold); }
+  .modal-bg { position:fixed; inset:0; background:rgba(0,0,0,.7); display:none; align-items:center;
+              justify-content:center; z-index:100; }
+  .modal-bg.show { display:flex; }
+  .modal { background:var(--card); border:1px solid var(--border); border-radius:14px; padding:24px;
+           width:320px; max-width:90vw; }
+  .modal h3 { margin:0 0 16px; font-size:15px; color:var(--gold); text-transform:uppercase; letter-spacing:.5px; }
+  .modal label { display:block; font-size:11px; color:var(--muted); text-transform:uppercase; letter-spacing:.5px; margin:10px 0 4px; }
+  .modal input { width:100%; background:var(--card2); color:var(--text); border:1px solid var(--border);
+                 border-radius:8px; padding:9px 10px; font-size:14px; }
+  .modal input:focus { outline:none; border-color:var(--gold); }
+  .modal .m-actions { display:flex; gap:10px; margin-top:18px; }
+  .modal .m-actions button { flex:1; padding:9px; border-radius:8px; font-size:13px; font-weight:700; cursor:pointer; border:none; }
+  .modal .m-ok { background:var(--gold); color:#1a1a1a; }
+  .modal .m-cancel { background:var(--card2); color:var(--text); border:1px solid var(--border); }
+  .modal .m-erro { color:var(--nsw); font-size:12px; margin-top:10px; min-height:14px; }
+
+  .neg-box { margin-top:12px; padding-top:10px; border-top:1px dashed var(--border); }
+  .neg-box .nb-title { font-size:10px; color:var(--gold); text-transform:uppercase; letter-spacing:.5px; margin-bottom:6px; font-weight:700; }
+  table.neg-tbl { width:100%; font-size:12px; border-collapse:collapse; }
+  table.neg-tbl th { font-size:10px; color:var(--muted); text-transform:uppercase; letter-spacing:.5px;
+                     text-align:left; padding:4px 10px; border-bottom:1px solid var(--border); }
+  table.neg-tbl td { padding:5px 10px; border-bottom:1px solid #1a1a1a; text-align:left; }
+  table.neg-tbl a { color:var(--gold); text-decoration:none; }
+  table.neg-tbl a:hover { text-decoration:underline; }
+  table.neg-tbl tr:hover td { background:#111; }
+
   details.diaria { margin-bottom:20px; border:1px solid var(--border); border-radius:12px; background:var(--card);
                    box-shadow:none; }
   details.diaria summary { cursor:pointer; padding:14px 16px; font-size:14px; color:var(--gold-ink);
@@ -124,6 +156,26 @@ HTML = r"""<!DOCTYPE html>
 </style>
 </head>
 <body>
+  <div class="authbar">
+    <span class="who" id="authWho"></span>
+    <button class="btn-auth" id="btnAuth">Entrar</button>
+  </div>
+
+  <div class="modal-bg" id="loginModal">
+    <div class="modal">
+      <h3>Acesso restrito</h3>
+      <label>Usuário</label>
+      <input id="in-user" autocomplete="username" />
+      <label>Senha</label>
+      <input id="in-pass" type="password" autocomplete="current-password" />
+      <div class="m-erro" id="loginErro"></div>
+      <div class="m-actions">
+        <button class="m-cancel" id="loginCancel">Cancelar</button>
+        <button class="m-ok" id="loginOk">Entrar</button>
+      </div>
+    </div>
+  </div>
+
   <div class="brand">BOARD ACADEMY</div>
   <h1>REUNIÕES <span class="sep">-</span> CLOSERS</h1>
 
@@ -141,6 +193,13 @@ HTML = r"""<!DOCTYPE html>
 <script>
 const $ = id => document.getElementById(id);
 const hoje = new Date();
+let TOKEN = sessionStorage.getItem('dash_token') || null;
+let USUARIO = sessionStorage.getItem('dash_user') || null;
+
+function authHeaders() {
+  return TOKEN ? { 'Authorization': 'Bearer ' + TOKEN } : {};
+}
+function ehPriv() { return !!TOKEN; }
 const diaHojeNum = hoje.getDate();
 let CURRENT_MONTH = null;
 let REFRESH_MS = 1200000;
@@ -178,6 +237,16 @@ function preencheDias() {
 function diaSelecionado() { return parseInt($('f-dia').value, 10); }
 
 async function init() {
+  // valida token salvo (pode ter expirado)
+  if (TOKEN) {
+    try {
+      const me = await (await fetch('/api/me', { headers: authHeaders() })).json();
+      if (!me.privilegiado) { TOKEN = null; USUARIO = null;
+        sessionStorage.removeItem('dash_token'); sessionStorage.removeItem('dash_user'); }
+      else { USUARIO = me.usuario; }
+    } catch (e) {}
+    atualizaAuthUI();
+  }
   const d = await (await fetch('/api/init')).json();
   CURRENT_MONTH = d.current;
   REFRESH_MS = (d.refresh_seconds || 1200) * 1000;
@@ -217,7 +286,7 @@ async function buscar(isAuto) {
     month: $('f-mes').value, team: $('f-time').value, closer: $('f-closer').value,
   });
   try {
-    const res = await fetch('/api/dashboard?' + p.toString());
+    const res = await fetch('/api/dashboard?' + p.toString(), { headers: authHeaders() });
     const data = await res.json();
     if (data.error) $('root').innerHTML = '<div class="warn">Erro: ' + data.error + '</div>';
     else { LAST_DATA = data; render(data); }
@@ -334,8 +403,18 @@ function render(data) {
       let blocos = '';
       if (dAnt >= 1) blocos += blocoCriador('Dia anterior ' + String(dAnt).padStart(2,'0') + '/' + mesStr, crGet(dAnt)) + sep;
       blocos += blocoCriador('Dia ' + dSelStr + '/' + mesStr, crHoje);
+      let negHtml = '';
+      if (ehPriv() && c.negocios && c.negocios.length) {
+        negHtml = `<div class="neg-box"><div class="nb-title">Negócios do mês (${c.negocios.length}) — clique para abrir no Pipedrive</div>
+          <table class="neg-tbl"><tr><th>ID</th><th>Negócio</th></tr>`;
+        for (const n of c.negocios) {
+          negHtml += `<tr><td><a href="${n.url}" target="_blank" rel="noopener">#${n.id}</a></td>
+            <td><a href="${n.url}" target="_blank" rel="noopener">${n.title}</a></td></tr>`;
+        }
+        negHtml += `</table></div>`;
+      }
       html += `<tr class="creator-row" id="${cid}" style="display:none"><td colspan="${nCols}">
-        <div class="creator-wrap">${blocos}</div></td></tr>`;
+        <div class="creator-wrap">${blocos}</div>${negHtml}</td></tr>`;
     });
 
     html += `<tr class="foot"><td class="closer l">TOTAL</td><td class="team l"></td>`;
@@ -374,6 +453,62 @@ function ligaCriador() {
   });
 }
 
+// ---- login ----
+function abreLogin() {
+  $('loginErro').textContent = '';
+  $('in-user').value = ''; $('in-pass').value = '';
+  $('loginModal').classList.add('show');
+  $('in-user').focus();
+}
+function fechaLogin() { $('loginModal').classList.remove('show'); }
+
+async function fazLogin() {
+  const usuario = $('in-user').value.trim();
+  const senha = $('in-pass').value;
+  $('loginErro').textContent = '';
+  try {
+    const res = await fetch('/api/login', {
+      method: 'POST', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({usuario, senha}),
+    });
+    const d = await res.json();
+    if (!res.ok) { $('loginErro').textContent = d.error || 'Falha no login'; return; }
+    TOKEN = d.token; USUARIO = d.usuario;
+    sessionStorage.setItem('dash_token', TOKEN);
+    sessionStorage.setItem('dash_user', USUARIO);
+    fechaLogin();
+    atualizaAuthUI();
+    buscar(false);  // recarrega ja com os negocios
+  } catch (e) {
+    $('loginErro').textContent = 'Erro de conexão';
+  }
+}
+
+function logout() {
+  TOKEN = null; USUARIO = null;
+  sessionStorage.removeItem('dash_token');
+  sessionStorage.removeItem('dash_user');
+  atualizaAuthUI();
+  buscar(false);
+}
+
+function atualizaAuthUI() {
+  if (ehPriv()) {
+    $('authWho').textContent = USUARIO ? ('● ' + USUARIO) : '● conectado';
+    $('btnAuth').textContent = 'Sair';
+  } else {
+    $('authWho').textContent = '';
+    $('btnAuth').textContent = 'Entrar';
+  }
+}
+
+$('btnAuth').addEventListener('click', () => { ehPriv() ? logout() : abreLogin(); });
+$('loginCancel').addEventListener('click', fechaLogin);
+$('loginOk').addEventListener('click', fazLogin);
+$('in-pass').addEventListener('keydown', e => { if (e.key === 'Enter') fazLogin(); });
+$('loginModal').addEventListener('click', e => { if (e.target.id === 'loginModal') fechaLogin(); });
+
+atualizaAuthUI();
 init();
 </script>
 </body>

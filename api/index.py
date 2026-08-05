@@ -295,6 +295,7 @@ def build_dashboard(year, month, time_filtro=None, closer_filtro=None, privilegi
 
     last_day = calendar.monthrange(year, month)[1]
     combined_days = {d: novo_contador() for d in range(1, last_day + 1)}
+    geral_dia = {d: [] for d in range(1, last_day + 1)}  # dia -> reunioes de todos os closers (so priv)
     month_total = novo_contador()
     por_closer = []
     por_time = defaultdict(novo_contador)
@@ -319,7 +320,8 @@ def build_dashboard(year, month, time_filtro=None, closer_filtro=None, privilegi
         c_pipes = defaultdict(novo_contador)
         c_criadas = {"proprio": 0, "outro": 0}
         c_criadas_days = {d: {"proprio": 0, "outro": 0} for d in range(1, last_day + 1)}
-        c_negocios = {}  # deal_id -> {id, title, url}  (so preenchido se privilegiado)
+        c_negocios_mes = {}   # deal_id -> {id,title,url}  (dedupe do mes)
+        c_negocios_dia = {d: [] for d in range(1, last_day + 1)}  # dia -> lista de reunioes com negocio
 
         for a in acts:
             due = a.get("due_date")
@@ -348,12 +350,21 @@ def build_dashboard(year, month, time_filtro=None, closer_filtro=None, privilegi
             c_criadas[chave] += 1
             c_criadas_days[d.day][chave] += 1
 
-            if privilegiado and deal_id not in c_negocios:
-                c_negocios[deal_id] = {
-                    "id": deal_id,
-                    "title": info.get("title") or ("Negocio " + str(deal_id)),
-                    "url": PIPEDRIVE_BASE_URL + "/deal/" + str(deal_id),
+            if privilegiado:
+                titulo = info.get("title") or ("Negocio " + str(deal_id))
+                url = PIPEDRIVE_BASE_URL + "/deal/" + str(deal_id)
+                hora = (a.get("due_time") or "")[:5]  # HH:MM
+                # dedupe do mes (por negocio)
+                if deal_id not in c_negocios_mes:
+                    c_negocios_mes[deal_id] = {"id": deal_id, "title": titulo, "url": url}
+                # lista do dia (uma linha por reuniao, com hora)
+                item_dia = {
+                    "id": deal_id, "title": titulo, "url": url,
+                    "hora": hora, "tipo": tipo, "done": bool(done),
                 }
+                c_negocios_dia[d.day].append(item_dia)
+                # lista geral (todos os closers) para a secao "dia a dia"
+                geral_dia[d.day].append({**item_dia, "closer": nome, "time": time_c})
 
         por_closer.append({
             "name": nome, "time": time_c,
@@ -362,10 +373,14 @@ def build_dashboard(year, month, time_filtro=None, closer_filtro=None, privilegi
             "by_pipeline": dict(c_pipes),
             "criadas": c_criadas,
             "criadas_days": [{"dia": d, "c": c_criadas_days[d]} for d in range(1, last_day + 1)],
-            "negocios": sorted(c_negocios.values(), key=lambda x: x["id"]) if privilegiado else [],
+            "negocios": sorted(c_negocios_mes.values(), key=lambda x: x["id"]) if privilegiado else [],
+            "negocios_dia": ([{"dia": d, "itens": sorted(c_negocios_dia[d], key=lambda x: x["hora"])}
+                              for d in range(1, last_day + 1)] if privilegiado else []),
         })
 
     dias = [{"dia": d, "counter": combined_days[d]} for d in range(1, last_day + 1)]
+    geral_dia_out = ([{"dia": d, "itens": sorted(geral_dia[d], key=lambda x: (x["hora"], x["closer"]))}
+                      for d in range(1, last_day + 1)] if privilegiado else [])
     por_closer.sort(key=lambda x: (-x["total"]["planned"], x["name"]))
 
     por_time_days_out = {
@@ -382,6 +397,7 @@ def build_dashboard(year, month, time_filtro=None, closer_filtro=None, privilegi
         "por_time": dict(por_time),
         "por_time_days": por_time_days_out,
         "por_closer": por_closer,
+        "geral_dia": geral_dia_out,
         "nao_encontrados": nao_encontrados,
     }
 
@@ -513,7 +529,3 @@ handler = app
 if __name__ == "__main__":
     threading.Thread(target=refresh_current_loop, daemon=True).start()
     app.run(debug=True, port=5000, use_reloader=False)
-    
-
-
-

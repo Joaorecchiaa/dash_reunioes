@@ -30,9 +30,8 @@ HTML = r"""<!DOCTYPE html>
   h1 .sep { color:var(--gold); }
   h1 .sep { color:var(--gold-ink); }
 
-  .filters { display:flex; gap:12px; align-items:flex-end; flex-wrap:wrap; background:var(--card);
-             border:1px solid var(--border); border-radius:12px; padding:16px; margin-bottom:20px;
-             box-shadow:none; }
+  .filters { display:flex; gap:12px; align-items:flex-end; flex-wrap:wrap; background:transparent;
+             border:none; padding:0; margin:0; box-shadow:none; }
   .field { display:flex; flex-direction:column; gap:4px; }
   .field label { font-size:11px; color:var(--muted); text-transform:uppercase; letter-spacing:.5px; }
   select { background:var(--card2); color:var(--text); border:1px solid var(--border);
@@ -44,7 +43,7 @@ HTML = r"""<!DOCTYPE html>
   button:hover { background:#e6c200; }
   button:disabled { opacity:.5; cursor:wait; }
   .updated { color:var(--head-muted); font-size:12px; margin-left:auto; align-self:center; text-align:right; }
-  .auto { color:var(--gold-ink); font-size:11px; }
+  .auto { color:var(--gold); font-size:11px; }
 
   .kpi-head { font-size:13px; color:var(--muted); text-transform:uppercase; letter-spacing:.5px; margin:0 0 8px; font-weight:600; }
   .kpis { display:flex; gap:12px; flex-wrap:wrap; margin-bottom:20px; }
@@ -64,9 +63,9 @@ HTML = r"""<!DOCTYPE html>
 
   /* cards de time */
   .team-cards { display:flex; gap:14px; flex-wrap:wrap; margin-bottom:22px; }
-  .team-card { background:rgba(13,13,13,.86); color:#f2f2f2; border:1px solid rgba(255,255,255,.08);
+  .team-card { background:rgba(40,42,48,.92); color:#f2f2f2; border:1px solid rgba(255,255,255,.10);
                border-left:4px solid var(--gold); border-radius:12px; padding:14px 18px; min-width:290px;
-               backdrop-filter:blur(2px); box-shadow:0 4px 14px rgba(0,0,0,.18); }
+               box-shadow:0 3px 12px rgba(0,0,0,.14); }
   .team-card .tc-name { font-size:15px; font-weight:800; letter-spacing:1px; color:var(--gold); margin-bottom:10px; }
   .team-card .tc-row { display:flex; align-items:baseline; gap:10px; padding:5px 0; font-size:13px; flex-wrap:wrap; }
   .team-card .tc-row + .tc-row { border-top:1px dashed rgba(255,255,255,.12); }

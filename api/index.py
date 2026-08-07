@@ -139,13 +139,64 @@ def parse_mes(v):
 
 
 def novo_contador():
-    return {"planned": 0, "done": 0, "no_show": 0, "reagendada": 0}
+    return {"planned": 0, "done": 0, "validada": 0, "no_show": 0, "reagendada": 0}
 
 
-def soma_em(counter, tipo, done):
+# campo customizado "Reuniao Validada?" no Pipedrive (id fixo do campo)
+CAMPO_VALIDADA_ID = "7299bf170c5deab9b4fd8c2275f55faf51984dea"
+
+
+def _campo_bruto(a, campo_id):
+    """Le o valor cru de um campo customizado da activity, cobrindo os dois
+    formatos que a API do Pipedrive costuma usar (custom_fields aninhado,
+    ou chave direta no nivel raiz)."""
+    cf = a.get("custom_fields")
+    if isinstance(cf, dict) and campo_id in cf:
+        return cf[campo_id]
+    if campo_id in a:
+        return a[campo_id]
+    return None
+
+
+def _label_do_campo(valor):
+    """Extrai o texto de exibicao de um campo de selecao, cobrindo os
+    formatos comuns: string direta, dict {"label":...}/{"value":...}/{"name":...},
+    ou lista (campo de multipla escolha)."""
+    if valor is None:
+        return None
+    if isinstance(valor, dict):
+        return valor.get("label") or valor.get("value") or valor.get("name")
+    if isinstance(valor, list):
+        for item in valor:
+            lbl = _label_do_campo(item)
+            if lbl:
+                return lbl
+        return None
+    return valor
+
+
+def campo_validado_sim(a):
+    """True se o campo "Reuniao Validada?" da activity esta como 'Sim'."""
+    valor = _label_do_campo(_campo_bruto(a, CAMPO_VALIDADA_ID))
+    if valor is None:
+        return False
+    return str(valor).strip().lower() == "sim"
+
+
+def eh_validada(a):
+    """Reuniao VALIDADA = feita (type=meeting, done=true) E
+    campo "Reuniao Validada?" = Sim."""
+    return a.get("type") == "meeting" and bool(a.get("done")) and campo_validado_sim(a)
+
+
+def soma_em(counter, a):
+    tipo = a.get("type")
+    done = a.get("done")
     counter["planned"] += 1
     if tipo == "meeting" and done:
         counter["done"] += 1
+        if eh_validada(a):
+            counter["validada"] += 1
     elif tipo == "no_show":
         counter["no_show"] += 1
     elif tipo == "reagendamento":
@@ -310,8 +361,9 @@ def acts_do_owner(owner_id, year, month):
 
 def _ranking_por_criador(auditados, year, month):
     """Para cada pessoa em `auditados` ({nome: label}): ranking de closers
-    pra quem ela marcou reunioes no mes. Conta SO reunioes FEITAS/concluidas
-    (type=meeting e done=true) -- no-show e reagendada nao contam aqui.
+    pra quem ela marcou reunioes no mes. Conta SO reunioes VALIDADAS
+    (feita + campo "Reuniao Validada?" = Sim) -- no-show, reagendada e
+    reuniao feita mas nao validada nao contam aqui.
     Funciona pra SDR, Team Leader, Head -- qualquer um que tenha usuario no
     Pipedrive e apareca como creator_user_id de uma atividade de algum closer.
 
@@ -342,8 +394,8 @@ def _ranking_por_criador(auditados, year, month):
             due = a.get("due_date")
             if not due:
                 continue
-            if a.get("type") != "meeting" or not a.get("done"):
-                continue  # so conta reuniao FEITA (concluida)
+            if not eh_validada(a):
+                continue  # so conta reuniao VALIDADA (feita + campo "Reuniao Validada?" = Sim)
             d = datetime.strptime(due, "%Y-%m-%d").date()
             if d.year != year or d.month != month:
                 continue
@@ -446,17 +498,17 @@ def build_dashboard(year, month, time_filtro=None, closer_filtro=None, privilegi
             if d.year != year or d.month != month:
                 continue
 
-            soma_em(combined_days[d.day], tipo, done)
-            soma_em(month_total, tipo, done)
-            soma_em(c_total, tipo, done)
-            soma_em(c_days[d.day], tipo, done)
-            soma_em(por_time[time_c], tipo, done)
-            soma_em(por_time_days[time_c][d.day], tipo, done)
+            soma_em(combined_days[d.day], a)
+            soma_em(month_total, a)
+            soma_em(c_total, a)
+            soma_em(c_days[d.day], a)
+            soma_em(por_time[time_c], a)
+            soma_em(por_time_days[time_c][d.day], a)
 
             info = deal_info.get(deal_id) or {}
             pid = info.get("pipeline_id")
             pnome = pipelines.get(pid, f"Funil {pid}") if pid else "Sem funil"
-            soma_em(c_pipes[pnome], tipo, done)
+            soma_em(c_pipes[pnome], a)
 
             chave = "proprio" if a.get("creator_user_id") == owner_id else "outro"
             c_criadas[chave] += 1

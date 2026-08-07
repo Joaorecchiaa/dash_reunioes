@@ -170,6 +170,34 @@ HTML = r"""<!DOCTYPE html>
   table.dd-tbl a:hover { text-decoration:underline; color:var(--gold-ink); }
   table.dd-tbl tr:hover td { background:#eef0f3; }
 
+  /* abas */
+  .tabs { display:flex; gap:6px; margin-bottom:18px; border-bottom:2px solid var(--border); }
+  .tab { padding:9px 18px; font-size:13px; font-weight:700; cursor:pointer; color:var(--muted);
+         border:none; background:transparent; border-bottom:3px solid transparent; margin-bottom:-2px;
+         letter-spacing:.3px; }
+  .tab:hover { color:var(--text); }
+  .tab.active { color:var(--text); border-bottom-color:var(--gold); }
+  .tab.locked { opacity:.5; }
+
+  /* auditoria SDR */
+  .aud-sdr { background:var(--card); border:1px solid var(--border); border-radius:12px; margin-bottom:12px; overflow:hidden; }
+  .aud-head { display:flex; align-items:center; gap:12px; padding:14px 18px; cursor:pointer; user-select:none; }
+  .aud-head:hover { background:#f7f8fa; }
+  .aud-arrow { color:var(--muted); font-size:11px; width:14px; }
+  .aud-name { font-weight:700; font-size:15px; }
+  .aud-team { font-size:11px; color:var(--muted); text-transform:uppercase; letter-spacing:.5px; }
+  .aud-total { margin-left:auto; font-size:13px; color:var(--muted); }
+  .aud-total b { color:var(--text); font-size:16px; }
+  .aud-body { display:none; padding:0 18px 14px; }
+  .aud-body.open { display:block; }
+  table.aud-tbl { width:100%; border-collapse:collapse; font-size:13px; }
+  table.aud-tbl th { font-size:10px; color:var(--muted); text-transform:uppercase; letter-spacing:.5px; text-align:left; padding:6px 10px; border-bottom:1px solid var(--border); }
+  table.aud-tbl td { padding:7px 10px; border-bottom:1px solid var(--border); }
+  table.aud-tbl td.qtd { font-weight:800; width:70px; }
+  table.aud-tbl .barcell { width:45%; }
+  .aud-bar { height:10px; background:var(--gold); border-radius:6px; }
+  .aud-empty { color:var(--muted); font-size:13px; padding:8px 0; }
+
   details.diaria { margin-bottom:20px; border:1px solid var(--border); border-radius:12px; background:var(--card);
                    box-shadow:none; }
   details.diaria summary { cursor:pointer; padding:14px 16px; font-size:14px; color:var(--gold-ink);
@@ -218,7 +246,12 @@ HTML = r"""<!DOCTYPE html>
   </header>
 
   <div class="page">
+    <div class="tabs" id="tabs">
+      <button class="tab active" id="tab-reunioes" data-tab="reunioes">Reuniões</button>
+      <button class="tab" id="tab-auditoria" data-tab="auditoria">Auditoria SDR</button>
+    </div>
     <div id="root"><div class="muted">Carregando filtros…</div></div>
+    <div id="root-aud" style="display:none"><div class="muted">Carregando auditoria…</div></div>
   </div>
 
 <script>
@@ -584,9 +617,13 @@ function atualizaAuthUI() {
   if (ehPriv()) {
     $('authWho').textContent = USUARIO ? ('● ' + USUARIO) : '● conectado';
     $('btnAuth').textContent = 'Sair';
+    $('tab-auditoria').style.display = '';
   } else {
     $('authWho').textContent = '';
     $('btnAuth').textContent = 'Entrar';
+    $('tab-auditoria').style.display = 'none';
+    // se estava na aba auditoria e deslogou, volta pra reunioes
+    if (ABA === 'auditoria') trocaAba('reunioes');
   }
 }
 
@@ -595,6 +632,89 @@ $('loginCancel').addEventListener('click', fechaLogin);
 $('loginOk').addEventListener('click', fazLogin);
 $('in-pass').addEventListener('keydown', e => { if (e.key === 'Enter') fazLogin(); });
 $('loginModal').addEventListener('click', e => { if (e.target.id === 'loginModal') fechaLogin(); });
+
+// ---- abas ----
+let ABA = 'reunioes';
+let AUD_CARREGADA_MES = null;
+
+function trocaAba(nome) {
+  if (nome === 'auditoria' && !ehPriv()) return;
+  ABA = nome;
+  $('tab-reunioes').classList.toggle('active', nome === 'reunioes');
+  $('tab-auditoria').classList.toggle('active', nome === 'auditoria');
+  $('root').style.display = (nome === 'reunioes') ? '' : 'none';
+  $('root-aud').style.display = (nome === 'auditoria') ? '' : 'none';
+  if (nome === 'auditoria') carregaAuditoria();
+}
+
+$('tab-reunioes').addEventListener('click', () => trocaAba('reunioes'));
+$('tab-auditoria').addEventListener('click', () => trocaAba('auditoria'));
+
+async function carregaAuditoria(forcar) {
+  const mes = $('f-mes').value;
+  if (!forcar && AUD_CARREGADA_MES === mes) return;  // ja carregada p/ esse mes
+  $('root-aud').innerHTML = '<div class="muted">Buscando no Pipedrive… (pode levar alguns segundos)</div>';
+  try {
+    const res = await fetch('/api/auditoria_sdr?month=' + mes, { headers: authHeaders() });
+    const data = await res.json();
+    if (data.error) { $('root-aud').innerHTML = '<div class="warn">Erro: ' + data.error + '</div>'; return; }
+    AUD_CARREGADA_MES = mes;
+    renderAuditoria(data);
+  } catch (e) {
+    $('root-aud').innerHTML = '<div class="warn">Falha na requisição: ' + e + '</div>';
+  }
+}
+
+function renderAuditoria(data) {
+  let html = `<div class="kpi-head">Auditoria de SDR — pra quais closers cada SDR marcou reuniões · ${data.month_label}</div>`;
+  if (!data.sdrs || !data.sdrs.length) {
+    html += '<div class="aud-empty">Nenhum SDR encontrado no CSV para esse mês.</div>';
+    $('root-aud').innerHTML = html;
+    return;
+  }
+  // ordena SDRs por total (desc)
+  const sdrs = data.sdrs.slice().sort((a,b) => b.total - a.total);
+  sdrs.forEach((s, i) => {
+    const aid = 'aud-' + i;
+    const maxq = s.closers.length ? s.closers[0].qtd : 1;
+    let linhas = '';
+    if (s.closers.length) {
+      linhas = `<table class="aud-tbl"><tr><th>Closer</th><th>Reuniões marcadas</th><th class="barcell"></th></tr>`;
+      for (const c of s.closers) {
+        const pct = Math.round((c.qtd / maxq) * 100);
+        linhas += `<tr><td>${c.closer}</td><td class="qtd">${c.qtd}</td>
+          <td class="barcell"><div class="aud-bar" style="width:${pct}%"></div></td></tr>`;
+      }
+      linhas += `</table>`;
+    } else if (!s.encontrado) {
+      linhas = `<div class="aud-empty">SDR sem correspondência no Pipedrive (nome não bateu).</div>`;
+    } else {
+      linhas = `<div class="aud-empty">Nenhuma reunião marcada para closers nesse mês.</div>`;
+    }
+    html += `<div class="aud-sdr">
+      <div class="aud-head" data-aud="${aid}">
+        <span class="aud-arrow" id="${aid}-arw">▸</span>
+        <span class="aud-name">${s.sdr}</span>
+        <span class="aud-team">${s.time}</span>
+        <span class="aud-total"><b>${s.total}</b> reuniões</span>
+      </div>
+      <div class="aud-body" id="${aid}">${linhas}</div>
+    </div>`;
+  });
+  $('root-aud').innerHTML = html;
+  document.querySelectorAll('.aud-head[data-aud]').forEach(el => {
+    el.addEventListener('click', () => {
+      const body = document.getElementById(el.getAttribute('data-aud'));
+      const arw = document.getElementById(el.getAttribute('data-aud') + '-arw');
+      const aberto = body.classList.contains('open');
+      body.classList.toggle('open', !aberto);
+      if (arw) arw.textContent = aberto ? '▸' : '▾';
+    });
+  });
+}
+
+// quando muda o mes, invalida a auditoria carregada
+$('f-mes').addEventListener('change', () => { AUD_CARREGADA_MES = null; if (ABA === 'auditoria') carregaAuditoria(true); });
 
 atualizaAuthUI();
 init();

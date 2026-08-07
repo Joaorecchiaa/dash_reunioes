@@ -85,3 +85,13 @@ class PipedriveClient:
         customizados que podem estar no negocio em vez da atividade."""
         data = self._get(self.base_v2, f"/deals/{deal_id}", {})
         return data.get("data")
+
+    def get_deal_field_options(self, field_id):
+        """{option_id: label} das opcoes de um campo de selecao do NEGOCIO
+        (ex.: campo "Reuniao Validada?"). A API devolve o valor do campo
+        como o ID numerico da opcao escolhida -- precisa desse mapa pra
+        traduzir pro texto (ex.: 411 -> "Sim")."""
+        data = self._get(self.base_v1, f"/dealFields/{field_id}", {})
+        campo = data.get("data") or {}
+        opcoes = campo.get("options") or []
+        return {o["id"]: o["label"] for o in opcoes}

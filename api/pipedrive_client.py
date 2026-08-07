@@ -71,3 +71,15 @@ class PipedriveClient:
                 "title": d.get("title") or ("Negocio " + str(d.get("id"))),
             }
         return out
+
+    def get_activity_raw(self, activity_id):
+        """Busca UMA activity crua (todos os campos), pra diagnostico de
+        campos customizados."""
+        data = self._get(self.base_v2, f"/activities/{activity_id}", {})
+        return data.get("data")
+
+    def get_deal_raw(self, deal_id):
+        """Busca UM deal cru (todos os campos), pra diagnostico de campos
+        customizados que podem estar no negocio em vez da atividade."""
+        data = self._get(self.base_v2, f"/deals/{deal_id}", {})
+        return data.get("data")

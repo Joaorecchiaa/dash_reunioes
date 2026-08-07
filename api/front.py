@@ -512,6 +512,21 @@ function render(data) {
     html += `<td class="c-plan mtot">${mt.planned}</td><td class="c-done">${mt.done}</td><td class="c-nsw">${mt.no_show}</td><td class="c-reag">${mt.reagendada}</td></tr>`;
     html += `</tbody></table></div>
       <div class="muted" style="font-size:11px;margin-top:8px">P = planejadas · F = feitas · NS = no-show · R = reagendadas</div></div>`;
+
+    // ---- distribuicao por closer: quantidade + % sobre o total de reunioes de todos os closers ----
+    const totalTodos = data.por_closer.reduce((soma, c) => soma + c.total.planned, 0);
+    const distOrdenada = data.por_closer.slice().sort((a,b) => b.total.planned - a.total.planned);
+    html += `<div class="panel"><h2>Distribuição por closer — ${data.month_label}</h2>
+      <table class="aud-tbl"><tr><th class="l">Closer</th><th>Quantidade</th><th>%</th><th class="barcell"></th></tr>`;
+    for (const c of distOrdenada) {
+      const qtd = c.total.planned;
+      const pct = totalTodos ? (qtd / totalTodos * 100) : 0;
+      html += `<tr><td class="l">${c.name}</td><td class="qtd">${qtd}</td>
+        <td>${pct.toFixed(1)}%</td>
+        <td class="barcell"><div class="aud-bar" style="width:${pct}%"></div></td></tr>`;
+    }
+    html += `<tr class="total"><td class="l">TOTAL</td><td class="qtd">${totalTodos}</td><td>100%</td><td></td></tr>`;
+    html += `</table></div>`;
   }
 
   const priv = ehPriv();

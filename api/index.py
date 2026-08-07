@@ -116,7 +116,7 @@ for i, nome in enumerate(MESES_NOME, start=1):
     MES_TO_NUM[nome[:3]] = i
 
 TTL = 300
-_cache = {"csv": None, "meta": None, "acts": {}, "deals": {}, "current": {}}
+_cache = {"csv": None, "meta": None, "acts": {}, "deals": {}, "current": {}, "campo_validada_opcoes": None}
 _lock = threading.Lock()
 
 
@@ -175,11 +175,39 @@ def _label_do_campo(valor):
     return valor
 
 
+def opcoes_campo_validada():
+    """{option_id: label} do campo "Reuniao Validada?", com cache longo
+    (a lista de opcoes de um campo praticamente nunca muda)."""
+    with _lock:
+        c = _cache.get("campo_validada_opcoes")
+        if c and time.time() - c["ts"] < TTL * 12:  # ~1h
+            return c["opcoes"]
+    try:
+        opcoes = client.get_deal_field_options(CAMPO_VALIDADA_ID)
+    except Exception as e:
+        print("Erro ao buscar opcoes do campo Reuniao Validada:", e)
+        opcoes = {}
+    with _lock:
+        _cache["campo_validada_opcoes"] = {"ts": time.time(), "opcoes": opcoes}
+    return opcoes
+
+
 def campo_validado_sim(a):
-    """True se o campo "Reuniao Validada?" da activity esta como 'Sim'."""
+    """True se o campo "Reuniao Validada?" do negocio esta como 'Sim'.
+    A API devolve o valor como o ID numerico da opcao escolhida (ex.: 411),
+    entao resolve esse ID pro texto usando as opcoes do campo antes de
+    comparar."""
     valor = _label_do_campo(_campo_bruto(a, CAMPO_VALIDADA_ID))
     if valor is None:
         return False
+    # campo de selecao: valor vem como ID numerico da opcao
+    if isinstance(valor, (int, float)) or (isinstance(valor, str) and valor.strip().lstrip("-").isdigit()):
+        opcoes = opcoes_campo_validada()
+        label = opcoes.get(int(valor))
+        if label is None:
+            return False
+        return str(label).strip().lower() == "sim"
+    # fallback: campo ja veio como texto (label direto)
     return str(valor).strip().lower() == "sim"
 
 

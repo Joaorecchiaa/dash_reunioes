@@ -1,749 +1,832 @@
-<!DOCTYPE html>
-<html lang="pt-BR">
-<head>
-<meta charset="UTF-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>Métricas Comerciais - 2026</title>
-<style>
-  :root {
-    --bg: #ffffff;
-    --ink: #1a1d21;
-    --muted: #6b7280;
-    --border: #e5e7eb;
-    --accent: #111827;
-    --ok: #15803d;
-    --warn: #b45309;
-    --bad: #b91c1c;
-    --head-bg: #f3f4f6;
-    --total-bg: #f9fafb;
-  }
-  * { box-sizing: border-box; }
-  body {
-    margin: 0;
-    background: var(--bg);
-    color: var(--ink);
-    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif;
-    padding: 20px 24px 30px;
-  }
-  header {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    background: #0b0b0f;
-    color: #fff;
-    padding: 14px 20px;
-    margin: -20px -24px 20px;
-    border-radius: 0 0 10px 10px;
-  }
-  .header-esquerda { display: flex; align-items: center; gap: 14px; }
-  h1 { font-size: 15px; font-weight: 600; margin: 0; letter-spacing: -0.01em; color: #fff; }
-  h2.titulo-tabela { font-size: 12px; font-weight: 600; margin: 18px 0 8px; color: var(--ink); }
-  .abas {
-    display: flex;
-    gap: 4px;
-    border-bottom: 1px solid var(--border);
-    margin-bottom: 4px;
-  }
-  .aba-btn {
-    background: none;
-    border: none;
-    border-bottom: 2px solid transparent;
-    padding: 6px 2px;
-    margin-right: 14px;
-    font-size: 11px;
-    font-weight: 600;
-    color: var(--muted);
-    cursor: pointer;
-  }
-  .aba-btn.ativa { color: var(--ink); border-bottom-color: #0b0b0f; }
-  .aba-btn:hover { color: var(--ink); }
-  .sub { color: rgba(255,255,255,0.55); font-size: 10px; margin-top: 2px; letter-spacing: 0.03em; text-transform: uppercase; }
-  .badge-dias-uteis {
-    font-size: 11px;
-    color: rgba(255,255,255,0.85);
-    background: rgba(255,255,255,0.08);
-    border: 1px solid rgba(255,255,255,0.12);
-    border-radius: 999px;
-    padding: 5px 14px;
-  }
-  .badge-dias-uteis .destaque { color: #fbbf24; font-weight: 600; }
-  button#refresh {
-    background: #fff;
-    color: #0b0b0f;
-    border: none;
-    padding: 7px 13px;
-    border-radius: 6px;
-    font-size: 11px;
-    font-weight: 600;
-    cursor: pointer;
-  }
-  button#refresh:disabled { opacity: 0.5; cursor: default; }
-  .seletor-periodo { display: flex; gap: 8px; align-items: center; }
-  .seletor-periodo select {
-    padding: 7px 10px;
-    border: 1px solid rgba(255,255,255,0.15);
-    border-radius: 6px;
-    font-size: 11px;
-    background: rgba(255,255,255,0.06);
-    color: #fff;
-  }
-  .meta-info { font-size: 10px; color: rgba(255,255,255,0.5); text-align: right; margin-top: 5px; }
-  table {
-    width: 100%;
-    border-collapse: collapse;
-    font-size: 10.5px;
-    table-layout: fixed;
-  }
-  th, td {
-    padding: 5px 6px;
-    text-align: right;
-    border-bottom: 1px solid var(--border);
-    overflow-wrap: break-word;
-  }
-  th:first-child, td:first-child { text-align: left; }
-  thead th {
-    background: var(--head-bg);
-    font-weight: 600;
-    color: var(--muted);
-    font-size: 11px;
-    text-transform: uppercase;
-    letter-spacing: 0.02em;
-  }
-  td.total, #tabela-financeiro th:nth-child(4) { background: var(--total-bg); font-weight: 600; border-left: 2px solid var(--border); }
-  #tabelaFinanceiro td:nth-child(2), #tabela-financeiro th:nth-child(2) { background: #f0f9f4; }
-  #tabelaFinanceiro td:nth-child(3), #tabela-financeiro th:nth-child(3) { background: #fff7ed; }
-  th.col-olympus, td.col-olympus { background: #eef2ff; }
-  th.col-elite, td.col-elite { background: #ecfdf5; }
-  .pill {
-    display: inline-block;
-    font-size: 10px;
-    font-weight: 600;
-    padding: 1px 6px;
-    border-radius: 999px;
-  }
-  .pill.ok { background: #dcfce7; color: var(--ok); }
-  .pill.warn { background: #fef3c7; color: var(--warn); }
-  .pill.bad { background: #fee2e2; color: var(--bad); }
-  #erro { color: var(--bad); font-size: 13px; margin-top: 20px; display: none; }
+import os
+import csv
+import io
+import time
+import json
+import hmac
+import base64
+import hashlib
+import calendar
+import unicodedata
+import threading
+import requests
+from datetime import datetime, date, timedelta
+from collections import defaultdict
+from flask import Flask, jsonify, request, Response
 
-  .produto-card {
-    border: 1px solid var(--border);
-    border-radius: 8px;
-    margin-bottom: 10px;
-    overflow: hidden;
-  }
-  .produto-card > summary {
-    cursor: pointer;
-    list-style: none;
-    background: var(--head-bg);
-    font-size: 12px;
-    font-weight: 700;
-    text-transform: uppercase;
-    letter-spacing: 0.03em;
-    color: var(--ink);
-    padding: 9px 14px;
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-  }
-  .produto-total-abertos {
-    font-size: 10px;
-    font-weight: 500;
-    text-transform: none;
-    letter-spacing: normal;
-    color: var(--muted);
-  }
-  .produto-card > summary::-webkit-details-marker { display: none; }
-  .produto-card > summary::before { content: "▸ "; color: var(--muted); }
-  .produto-card[open] > summary::before { content: "▾ "; }
-  .produto-card[open] > summary { border-bottom: 1px solid var(--border); }
+# .env so existe localmente; na Vercel as variaveis vem do painel
+try:
+    from dotenv import load_dotenv
+    load_dotenv(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", ".env"))
+except Exception:
+    pass
 
-  .produto-squads {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-  }
-  .produto-squads-3 { grid-template-columns: 1fr 1fr 1fr; }
-  .produto-squads-3 .produto-squad:not(:last-child) { border-right: 1px solid var(--border); }
-  .produto-squads-4 { grid-template-columns: 1fr 1fr 1fr 1fr; }
-  .produto-squads-4 .produto-squad:not(:last-child) { border-right: 1px solid var(--border); }
-  .produto-squad { padding: 12px 16px; }
-  .produto-squad:first-child { border-right: 1px solid var(--border); }
-  .produto-squad-titulo {
-    font-size: 10px;
-    font-weight: 700;
-    text-transform: uppercase;
-    letter-spacing: 0.04em;
-    color: var(--muted);
-    margin-bottom: 8px;
-  }
+try:
+    from api.pipedrive_client import PipedriveClient
+    from api.front import HTML
+except ImportError:
+    from pipedrive_client import PipedriveClient
+    from front import HTML
 
-  .status-grupo {
-    display: flex;
-    justify-content: space-between;
-    padding: 4px 0;
-    font-size: 12px;
-    border-bottom: 1px solid #f3f4f6;
-  }
-  .status-grupo-destaque {
-    background: #f8fafc;
-    padding: 4px 0;
-    border-bottom: none;
-  }
-  .status-grupo-destaque .status-titulo { color: var(--ink); font-weight: 600; }
-  .status-grupo-destaque .status-numero { color: var(--ink); font-weight: 600; }
-  .status-grupo-destaque summary { cursor: pointer; }
-  .status-grupo:last-child { border-bottom: none; }
-  .status-titulo { color: var(--muted); }
-  .status-numero { font-weight: 600; }
+app = Flask(__name__, static_folder=None)
 
-  .status-grupo-dropdown {
-    padding: 4px 0;
-    border-bottom: 1px solid #f3f4f6;
-  }
-  .status-grupo-dropdown:last-child { border-bottom: none; }
-  .status-grupo-dropdown summary {
-    cursor: pointer;
-    list-style: none;
-    display: flex;
-    justify-content: space-between;
-    font-size: 12px;
-  }
-  .status-grupo-dropdown summary .status-titulo { text-decoration: underline; }
-  .status-grupo-dropdown summary::-webkit-details-marker { display: none; }
-  .status-ids-lista {
-    margin-top: 6px;
-    display: flex;
-    flex-wrap: wrap;
-    gap: 6px;
-  }
-  .status-id-item {
-    font-size: 11px;
-    color: var(--accent);
-    background: #f3f4f6;
-    border-radius: 4px;
-    padding: 2px 7px;
-    text-decoration: none;
-  }
-  .status-id-item:hover { background: #e5e7eb; }
-  .status-vazio { font-size: 11px; color: var(--muted); }
+def env(nome, padrao=None):
+    """Le variavel de ambiente limpando aspas/espacos (o painel da Vercel e o
+    Import .env costumam trazer o valor entre aspas)."""
+    v = os.environ.get(nome, padrao)
+    if v is None:
+        raise RuntimeError(f"Variavel de ambiente {nome} nao definida")
+    return str(v).strip().strip('"').strip("'").strip()
 
-  .perdidos-resumo {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 12px;
-    margin-bottom: 16px;
-  }
-  .perdidos-resumo-card {
-    flex: 1;
-    min-width: 160px;
-    border: 1px solid var(--border);
-    border-radius: 8px;
-    padding: 14px 16px;
-  }
-  .perdidos-resumo-card .rotulo { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.03em; }
-  .perdidos-resumo-card .valor { font-size: 22px; font-weight: 700; color: var(--bad); margin-top: 4px; }
-  #resumoNovosLeadsProdutos .valor { color: var(--ink); }
-  #resumoNovosLeadsProdutos { margin-bottom: 20px; }
-  .card-destaque-suave { background: rgba(11, 11, 15, 0.035); }
-  .valor-taxa { font-size: 12px; font-weight: 500; color: var(--muted); }
 
-  .motivos-lista { border: 1px solid var(--border); border-radius: 8px; overflow: hidden; margin-bottom: 20px; }
-  .motivo-dropdown { border-bottom: 1px solid #f3f4f6; }
-  .motivo-dropdown:last-child { border-bottom: none; }
-  .motivo-linha {
-    display: flex;
-    align-items: center;
-    gap: 12px;
-    padding: 8px 14px;
-    font-size: 12px;
-    cursor: pointer;
-    list-style: none;
-  }
-  .motivo-linha::-webkit-details-marker { display: none; }
-  .motivo-linha:hover { background: #f8fafc; }
-  .motivo-nome { flex: 1; }
-  .motivo-barra-wrap { flex: 2; background: #f3f4f6; border-radius: 999px; height: 8px; overflow: hidden; }
-  .motivo-barra { background: var(--bad); height: 100%; }
-  .motivo-qtd { width: 90px; text-align: right; color: var(--muted); }
-  .motivo-pct { width: 50px; text-align: right; font-weight: 600; }
-  .motivo-colaboradores { padding: 6px 14px 10px 28px; background: #fafafa; }
-  .papel-grupo { margin-bottom: 8px; }
-  .papel-titulo { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.03em; color: var(--muted); margin-bottom: 4px; }
-  .colaborador-dropdown { border-bottom: 1px solid #f0f0f0; }
-  .colaborador-dropdown:last-child { border-bottom: none; }
-  .colaborador-dropdown summary {
-    display: flex;
-    justify-content: space-between;
-    padding: 5px 8px;
-    font-size: 12px;
-    cursor: pointer;
-    list-style: none;
-  }
-  .colaborador-dropdown summary::-webkit-details-marker { display: none; }
-  .colaborador-dropdown summary:hover { background: #f0f0f0; }
-  .colaborador-nome { text-decoration: underline; }
-  .colaborador-qtd { color: var(--muted); font-weight: 600; }
-  .colaborador-negocios { padding: 6px 8px 8px 16px; display: flex; flex-wrap: wrap; gap: 6px; }
+PIPEDRIVE_DOMAIN = env("PIPEDRIVE_DOMAIN")
+PIPEDRIVE_API_TOKEN = env("PIPEDRIVE_API_TOKEN")
+CSV_URL = env("COLABORADORES_CSV_URL")
+PIPEDRIVE_BASE_URL = "https://" + PIPEDRIVE_DOMAIN
+REFRESH_SECONDS = int(env("REFRESH_SECONDS", 1200))  # 20 min
 
-  .perdidos-funis {
-    display: grid;
-    grid-template-columns: 1fr 1fr 1fr;
-    gap: 14px;
-  }
-  .perdidos-funil-card { border: 1px solid var(--border); border-radius: 8px; padding: 14px; background: rgba(11, 11, 15, 0.035); }
-  .perdidos-funil-titulo { font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.03em; margin-bottom: 10px; }
-  .perdidos-funil-resumo { display: flex; gap: 10px; margin-bottom: 10px; font-size: 12px; color: var(--muted); }
-  .perdidos-funil-resumo strong { color: var(--ink); font-size: 14px; }
-  .auditoria-etapa { margin-bottom: 16px; }
-  .auditoria-etapa-titulo {
-    font-size: 12px;
-    font-weight: 700;
-    margin-bottom: 6px;
-    color: var(--ink);
-  }
-  .auditoria-etapa-titulo .qtd { color: var(--bad); font-weight: 500; font-size: 11px; }
-  .tabela-wrap { border: 1px solid var(--border); border-radius: 8px; }
-  .tabela-wrap-estreita { max-width: 48vw; min-width: 520px; }
-  .tabela-wrap-estreita table { width: 100%; table-layout: auto; }
-  .tabela-wrap-estreita td:first-child, .tabela-wrap-estreita th:first-child { padding-right: 40px; }
-  .tabela-wrap-estreita td:last-child, .tabela-wrap-estreita th:last-child { padding-left: 40px; }
-  th.grupo-hoje, td.grupo-hoje { background: #eff6ff; }
-  th.grupo-ontem, td.grupo-ontem { background: #f9fafb; }
-  th.grupo-inicio, td.grupo-inicio { border-left: 2px solid var(--border); }
-  thead tr:first-child th { border-bottom: 1px solid var(--border); }
-</style>
-</head>
-<body>
+# ---- autenticacao do acesso privilegiado ----
+# USUARIOS_PRIVILEGIADOS = "usuario1:hash_sha256,usuario2:hash_sha256"
+#   (hash da senha em sha256 hex; gere com gerar_hash.py)
+# AUTH_SECRET = string aleatoria longa para assinar o token
+def _carrega_usuarios():
+    raw = os.environ.get("USUARIOS_PRIVILEGIADOS", "") or ""
+    raw = raw.strip().strip('"').strip("'").strip()
+    users = {}
+    for par in raw.split(","):
+        par = par.strip()
+        if not par or ":" not in par:
+            continue
+        u, h = par.split(":", 1)
+        users[u.strip().lower()] = h.strip().lower()
+    return users
 
-<header>
-  <div class="header-esquerda">
-    <div>
-      <h1>Métricas Comerciais - 2026</h1>
-      <div class="sub">Board Academy</div>
-    </div>
-    <div class="badge-dias-uteis" id="badgeDiasUteis">—</div>
-  </div>
-  <div>
-    <div class="seletor-periodo">
-      <select id="seletorMes"></select>
-      <select id="seletorAno"></select>
-      <button id="refresh" onclick="atualizar()">Atualizar painel</button>
-    </div>
-    <div class="meta-info" id="ultimaAtualizacao">—</div>
-  </div>
-</header>
+USUARIOS_PRIV = _carrega_usuarios()
+AUTH_SECRET = (os.environ.get("AUTH_SECRET", "") or "troque-este-segredo").encode()
+TOKEN_HORAS = 12  # validade do login
 
-<nav class="abas">
-  <button class="aba-btn ativa" id="btnAbaMetricas" onclick="mostrarPagina('metricas')">Métricas</button>
-  <button class="aba-btn" id="btnAbaProdutos" onclick="mostrarPagina('produtos')">Produtos</button>
-  <button class="aba-btn" id="btnAbaPerdidos" onclick="mostrarPagina('perdidos')">Perdidos</button>
-</nav>
 
-<div id="paginaMetricas">
-  <h2 class="titulo-tabela">OLYMPUS &amp; ELITE</h2>
-  <div class="tabela-wrap">
-    <table id="tabela-financeiro">
-      <thead>
-        <tr>
-          <th>Métrica</th>
-          <th>Olympus</th>
-          <th>Elite</th>
-          <th>Total Consolidado</th>
-        </tr>
-      </thead>
-      <tbody id="tabelaFinanceiro"></tbody>
-    </table>
-  </div>
+def _sha256(txt):
+    return hashlib.sha256(txt.encode("utf-8")).hexdigest()
 
-  <h2 class="titulo-tabela">SNIPER</h2>
-  <div class="tabela-wrap tabela-wrap-estreita">
-    <table>
-      <thead>
-        <tr>
-          <th>Métrica</th>
-          <th>Sniper</th>
-        </tr>
-      </thead>
-      <tbody id="tabelaSniper"></tbody>
-    </table>
-  </div>
-</div>
 
-<div id="paginaProdutos" style="display:none;">
-  <div id="secaoProdutos">
-    <div id="resumoNovosLeadsProdutos" class="perdidos-resumo"></div>
-    <h2 class="titulo-tabela">PRODUTOS - DETALHAMENTO</h2>
-    <div id="cardsProdutos"></div>
-  </div>
-</div>
+def gera_token(usuario):
+    exp = int(time.time()) + TOKEN_HORAS * 3600
+    corpo = f"{usuario}|{exp}"
+    assinatura = hmac.new(AUTH_SECRET, corpo.encode(), hashlib.sha256).hexdigest()
+    bruto = f"{corpo}|{assinatura}"
+    return base64.urlsafe_b64encode(bruto.encode()).decode()
 
-<div id="paginaPerdidos" style="display:none;">
-  <h2 class="titulo-tabela">PERDIDOS — GERAL</h2>
-  <div id="resumoPerdidosGeral" class="perdidos-resumo"></div>
-  <div id="motivosPerdidosGeral"></div>
 
-  <h2 class="titulo-tabela">PERDIDOS — POR FUNIL</h2>
-  <div id="cardsPerdidosFunil" class="perdidos-funis"></div>
+def valida_token(token):
+    """Retorna o usuario se o token for valido e nao expirado; senao None."""
+    if not token:
+        return None
+    try:
+        bruto = base64.urlsafe_b64decode(token.encode()).decode()
+        usuario, exp, assinatura = bruto.rsplit("|", 2)
+        corpo = f"{usuario}|{exp}"
+        esperado = hmac.new(AUTH_SECRET, corpo.encode(), hashlib.sha256).hexdigest()
+        if not hmac.compare_digest(esperado, assinatura):
+            return None
+        if int(exp) < int(time.time()):
+            return None
+        return usuario
+    except Exception:
+        return None
 
-  <h2 class="titulo-tabela">AUDITORIA DE PERDAS</h2>
-  <div class="sub" style="color:var(--muted); margin-bottom:10px;">Motivos de perda fora do esperado pra etapa em que o negócio estava</div>
-  <div id="auditoriaPerdidosGeral"></div>
-  <div id="cardsAuditoriaFunil" class="perdidos-funis"></div>
-</div>
 
-<div id="erro"></div>
+def eh_privilegiado(req):
+    """Le o token do header Authorization: Bearer <token>."""
+    auth = req.headers.get("Authorization", "")
+    if auth.startswith("Bearer "):
+        return valida_token(auth[7:]) is not None
+    return False
 
-<script>
-const API_URL = "/api/dashboard";
-const INTERVALO_MS = 10 * 60 * 1000; // 10 minutos
+client = PipedriveClient(PIPEDRIVE_DOMAIN, PIPEDRIVE_API_TOKEN)
 
-function renderizarPerdidos(analise) {
-  const geral = analise.geral || { total_mes: 0, total_hoje: 0, motivos: [] };
-  document.getElementById("resumoPerdidosGeral").innerHTML = `
-    <div class="perdidos-resumo-card">
-      <div class="rotulo">Perdidos Hoje</div>
-      <div class="valor">${geral.total_hoje ?? 0}</div>
-    </div>
-    <div class="perdidos-resumo-card">
-      <div class="rotulo">Perdidos no Mês</div>
-      <div class="valor">${geral.total_mes ?? 0}</div>
-    </div>`;
+TIMES_VALIDOS = {"SNIPER", "OLYMPUS", "ELITE"}
+SUBAREA_ALIAS = {"MGM": "OLYMPUS"}  # so MGM vira OLYMPUS; o resto passa igual
 
-  function listaNegociosSimples(negocios) {
-    if (!negocios || negocios.length === 0) return `<div class="status-vazio">Nenhum</div>`;
-    return negocios.map(n => `<a class="status-id-item" href="${n.url}" target="_blank" rel="noopener">#${n.id}</a>`).join("");
-  }
+MESES_NOME = ["janeiro", "fevereiro", "março", "abril", "maio", "junho",
+              "julho", "agosto", "setembro", "outubro", "novembro", "dezembro"]
+MES_TO_NUM = {}
+for i, nome in enumerate(MESES_NOME, start=1):
+    MES_TO_NUM[nome] = i
+    MES_TO_NUM[nome[:3]] = i
 
-  function listaColaboradores(colaboradores) {
-    if (!colaboradores) return `<div class="status-vazio" style="padding:8px 14px;">Sem dados de colaborador</div>`;
-    const papeis = ["Closer", "SDR", "Outro"];
-    const blocos = papeis.map(papel => {
-      const pessoas = colaboradores[papel] || [];
-      if (pessoas.length === 0) return "";
-      const linhasPessoas = pessoas.map(p => `
-        <details class="colaborador-dropdown">
-          <summary><span class="colaborador-nome">${p.nome}</span> <span class="colaborador-qtd">${p.quantidade}</span></summary>
-          <div class="colaborador-negocios">${listaNegociosSimples(p.negocios)}</div>
-        </details>`).join("");
-      return `<div class="papel-grupo"><div class="papel-titulo">${papel}</div>${linhasPessoas}</div>`;
-    }).join("");
-    return blocos || `<div class="status-vazio" style="padding:8px 14px;">Nenhum colaborador identificado</div>`;
-  }
+TTL = 300
+_cache = {"csv": None, "meta": None, "acts": {}, "deals": {}, "current": {}, "campo_validada_opcoes": None}
+_lock = threading.Lock()
 
-  function listaMotivos(motivos) {
-    if (!motivos || motivos.length === 0) {
-      return `<div class="status-vazio" style="padding:14px;">Nenhum motivo registrado</div>`;
-    }
-    return motivos.map(m => `
-      <details class="motivo-dropdown">
-        <summary class="motivo-linha">
-          <span class="motivo-nome">${m.motivo}</span>
-          <div class="motivo-barra-wrap"><div class="motivo-barra" style="width:${m.percentual}%"></div></div>
-          <span class="motivo-qtd">${m.quantidade} negócios</span>
-          <span class="motivo-pct">${m.percentual}%</span>
-        </summary>
-        <div class="motivo-colaboradores">${listaColaboradores(m.colaboradores)}</div>
-      </details>`).join("");
-  }
 
-  document.getElementById("motivosPerdidosGeral").innerHTML =
-    `<div class="motivos-lista">${listaMotivos(geral.motivos)}</div>`;
+# ---------- utilidades ----------
 
-  const porFunil = analise.por_funil || {};
-  document.getElementById("cardsPerdidosFunil").innerHTML = ["Olympus", "Elite", "Sniper"].map(squad => {
-    const dados = porFunil[squad] || { total_mes: 0, total_hoje: 0, motivos: [] };
-    return `
-      <div class="perdidos-funil-card">
-        <div class="perdidos-funil-titulo">${squad}</div>
-        <div class="perdidos-funil-resumo">
-          <span>Hoje: <strong>${dados.total_hoje ?? 0}</strong></span>
-          <span>Mês: <strong>${dados.total_mes ?? 0}</strong></span>
-        </div>
-        <div class="motivos-lista">${listaMotivos(dados.motivos)}</div>
-      </div>`;
-  }).join("");
+def sem_acento(s):
+    s = unicodedata.normalize("NFKD", str(s or ""))
+    return "".join(c for c in s if not unicodedata.combining(c))
 
-  function listaAuditoria(auditoria) {
-    if (!auditoria || auditoria.length === 0) {
-      return `<div class="status-vazio" style="padding:14px;">Nenhum motivo fora da regra encontrado 🎉</div>`;
-    }
-    return auditoria.map(a => `
-      <div class="auditoria-etapa">
-        <div class="auditoria-etapa-titulo">${a.etapa} <span class="qtd">(${a.total} fora da regra)</span></div>
-        <div class="motivos-lista">${listaMotivos(a.motivos)}</div>
-      </div>`).join("");
-  }
 
-  document.getElementById("auditoriaPerdidosGeral").innerHTML = listaAuditoria(geral.auditoria);
+def norm(s):
+    return sem_acento(s).strip().lower()
 
-  document.getElementById("cardsAuditoriaFunil").innerHTML = ["Olympus", "Elite", "Sniper"].map(squad => {
-    const dados = porFunil[squad] || { auditoria: [] };
-    return `
-      <div class="perdidos-funil-card">
-        <div class="perdidos-funil-titulo">${squad}</div>
-        ${listaAuditoria(dados.auditoria)}
-      </div>`;
-  }).join("");
+
+def parse_mes(v):
+    v = norm(v)
+    if v.isdigit():
+        return int(v)
+    return MES_TO_NUM.get(v) or MES_TO_NUM.get(v[:3])
+
+
+def novo_contador():
+    return {"planned": 0, "done": 0, "no_show": 0, "reagendada": 0}
+
+
+# campo customizado "Reuniao Validada?" no Pipedrive (id fixo do campo)
+CAMPO_VALIDADA_ID = "7299bf170c5deab9b4fd8c2275f55faf51984dea"
+
+
+def _campo_bruto(a, campo_id):
+    """Le o valor cru de um campo customizado da activity, cobrindo os dois
+    formatos que a API do Pipedrive costuma usar (custom_fields aninhado,
+    ou chave direta no nivel raiz)."""
+    cf = a.get("custom_fields")
+    if isinstance(cf, dict) and campo_id in cf:
+        return cf[campo_id]
+    if campo_id in a:
+        return a[campo_id]
+    return None
+
+
+def _label_do_campo(valor):
+    """Extrai o texto de exibicao de um campo de selecao, cobrindo os
+    formatos comuns: string direta, dict {"label":...}/{"value":...}/{"name":...},
+    ou lista (campo de multipla escolha)."""
+    if valor is None:
+        return None
+    if isinstance(valor, dict):
+        return valor.get("label") or valor.get("value") or valor.get("name")
+    if isinstance(valor, list):
+        for item in valor:
+            lbl = _label_do_campo(item)
+            if lbl:
+                return lbl
+        return None
+    return valor
+
+
+def opcoes_campo_validada():
+    """{option_id: label} do campo "Reuniao Validada?", com cache longo
+    (a lista de opcoes de um campo praticamente nunca muda)."""
+    with _lock:
+        c = _cache.get("campo_validada_opcoes")
+        if c and time.time() - c["ts"] < TTL * 12:  # ~1h
+            return c["opcoes"]
+    try:
+        opcoes = client.get_deal_field_options(CAMPO_VALIDADA_ID)
+    except Exception as e:
+        print("Erro ao buscar opcoes do campo Reuniao Validada:", e)
+        opcoes = {}
+    with _lock:
+        _cache["campo_validada_opcoes"] = {"ts": time.time(), "opcoes": opcoes}
+    return opcoes
+
+
+def campo_validado_sim(a):
+    """True se o campo "Reuniao Validada?" do negocio esta como 'Sim'.
+    A API devolve o valor como o ID numerico da opcao escolhida (ex.: 411),
+    entao resolve esse ID pro texto usando as opcoes do campo antes de
+    comparar."""
+    valor = _label_do_campo(_campo_bruto(a, CAMPO_VALIDADA_ID))
+    if valor is None:
+        return False
+    # campo de selecao: valor vem como ID numerico da opcao
+    if isinstance(valor, (int, float)) or (isinstance(valor, str) and valor.strip().lstrip("-").isdigit()):
+        opcoes = opcoes_campo_validada()
+        label = opcoes.get(int(valor))
+        if label is None:
+            return False
+        return str(label).strip().lower() == "sim"
+    # fallback: campo ja veio como texto (label direto)
+    return str(valor).strip().lower() == "sim"
+
+
+def campo_validado_diferente_de_nao(info):
+    """True se o campo "Reuniao Validada?" do negocio NAO esta como 'Nao'
+    -- ou seja, 'Sim' OU em branco/nao preenchido contam como valido; so
+    'Nao' explicito invalida."""
+    valor = _label_do_campo(_campo_bruto(info, CAMPO_VALIDADA_ID))
+    if valor is None:
+        return True  # em branco conta como valido
+    if isinstance(valor, (int, float)) or (isinstance(valor, str) and valor.strip().lstrip("-").isdigit()):
+        opcoes = opcoes_campo_validada()
+        label = opcoes.get(int(valor))
+        if label is None:
+            return True  # opcao desconhecida nao bloqueia
+        valor = label
+    return norm(valor) != "nao"
+
+
+def eh_reuniao_valida_para_auditoria(a, pessoa_id, deal_info):
+    """Reuniao conta na Auditoria SDR/Lideranca quando:
+    - type == "meeting" (nunca no_show/reagendamento)
+    - o RESPONSAVEL (owner_id) da propria atividade e a pessoa auditada
+      -- ja garantido de fora, pois as atividades vem de acts_do_owner(pessoa_id)
+    - o negocio vinculado tem PROPRIETARIO (owner_id do negocio) diferente
+      da pessoa auditada -- nao conta quando o negocio e dela mesma
+    - o campo "Reuniao Validada?" do negocio nao esta como 'Nao'
+      (em branco ou 'Sim' contam)."""
+    if a.get("type") != "meeting":
+        return False
+    info = deal_info.get(a.get("deal_id")) or {}
+    if info.get("owner_id") == pessoa_id:
+        return False
+    return campo_validado_diferente_de_nao(info)
+
+
+def soma_em(counter, a):
+    tipo = a.get("type")
+    done = a.get("done")
+    counter["planned"] += 1
+    if tipo == "meeting" and done:
+        counter["done"] += 1
+    elif tipo == "no_show":
+        counter["no_show"] += 1
+    elif tipo == "reagendamento":
+        counter["reagendada"] += 1
+
+
+def soma_contadores(dest, src):
+    for k in dest:
+        dest[k] += src[k]
+
+
+# ---------- CSV de colaboradores ----------
+
+def carrega_csv():
+    with _lock:
+        c = _cache["csv"]
+        if c and time.time() - c["ts"] < TTL:
+            return c["rows"]
+    resp = requests.get(CSV_URL, timeout=30, allow_redirects=True,
+                        headers={"User-Agent": "Mozilla/5.0"})
+    if resp.status_code != 200:
+        print(f"[CSV] {resp.status_code} ao baixar. URL: {CSV_URL[:120]}...")
+        print(f"[CSV] resposta: {resp.text[:200]}")
+        resp.raise_for_status()
+    resp.encoding = "utf-8"
+    reader = csv.DictReader(io.StringIO(resp.text))
+
+    def achar(*nomes):
+        for col in nomes:
+            alvo = norm(col)
+            for h in reader.fieldnames:
+                if norm(h) == alvo:
+                    return h
+        return None
+
+    col_nome = achar("Nome", "NOME")
+    col_sub = achar("Subarea", "SUBAREA")
+    col_cargo = achar("Cargo", "CARGO")
+    col_mes = achar("Mês Referencia", "Mes Referencia", "MÊS REFERIDO")
+    col_ano = achar("Ano Referencia", "ANO REFERIDO")
+    faltando = [n for n, c in [("Nome", col_nome), ("Subarea", col_sub),
+                ("Cargo", col_cargo), ("Mês Referencia", col_mes),
+                ("Ano Referencia", col_ano)] if not c]
+    if faltando:
+        print("[CSV] Colunas nao encontradas:", faltando, "| Cabecalhos:", reader.fieldnames)
+
+    rows = []
+    for r in reader:
+        subarea = (r.get(col_sub) or "").strip().upper()
+        subarea = SUBAREA_ALIAS.get(subarea, subarea)
+        cargo = norm(r.get(col_cargo))
+        mes = parse_mes(r.get(col_mes))
+        ano = norm(r.get(col_ano))
+        ano = int(ano) if ano.isdigit() else None
+        rows.append({
+            "nome": (r.get(col_nome) or "").strip(),
+            "time": subarea,
+            "cargo": cargo,
+            "mes": mes,
+            "ano": ano,
+        })
+    with _lock:
+        _cache["csv"] = {"ts": time.time(), "rows": rows}
+    return rows
+
+
+def closers_do_mes(year, month):
+    """{nome: time} dos closers ativos naquele mes/ano, so times validos."""
+    out = {}
+    for r in carrega_csv():
+        if not r["cargo"].startswith("closer"):   # "closer 1", "closer 2"...
+            continue
+        if r["mes"] != month or r["ano"] != year:
+            continue
+        if r["time"] not in TIMES_VALIDOS:
+            continue
+        if r["nome"]:
+            out[r["nome"]] = r["time"]
+    return out
+
+
+# nomes (normalizados, sem acento/minusculo) excluidos manualmente da auditoria de SDR
+SDR_EXCLUIDOS = {"priscila ribeiro"}
+
+
+def sdrs_do_mes(year, month):
+    """{nome: time} dos SDRs ativos naquele mes/ano (cargo comeca com 'sdr')."""
+    out = {}
+    for r in carrega_csv():
+        if not r["cargo"].startswith("sdr"):
+            continue
+        if r["mes"] != month or r["ano"] != year:
+            continue
+        if norm(r["nome"]) in SDR_EXCLUIDOS:
+            continue
+        if r["nome"]:
+            out[r["nome"]] = r["time"]
+    return out
+
+
+# unica lista de liderancas que entra na auditoria (nome normalizado -> cargo de exibicao)
+LIDERANCAS_PERMITIDAS = {
+    "mylena oliveira": "Team Leader",
+    "stephanie nascimento": "Team Leader",
+    "marlon silva": "Head",
 }
 
-function mostrarPagina(pagina) {
-  document.getElementById("paginaMetricas").style.display = pagina === "metricas" ? "" : "none";
-  document.getElementById("paginaProdutos").style.display = pagina === "produtos" ? "" : "none";
-  document.getElementById("paginaPerdidos").style.display = pagina === "perdidos" ? "" : "none";
-  document.getElementById("btnAbaMetricas").classList.toggle("ativa", pagina === "metricas");
-  document.getElementById("btnAbaProdutos").classList.toggle("ativa", pagina === "produtos");
-  document.getElementById("btnAbaPerdidos").classList.toggle("ativa", pagina === "perdidos");
-}
 
-function fmtMoeda(v) {
-  return (v ?? 0).toLocaleString("pt-BR", { style: "currency", currency: "BRL", maximumFractionDigits: 0 });
-}
-function fmtNum(v) {
-  return (v ?? 0).toLocaleString("pt-BR", { maximumFractionDigits: 1 });
-}
-function pillClasse(pct) {
-  if (pct >= 100) return "ok";
-  if (pct >= 70) return "warn";
-  return "bad";
-}
-function pill(pct) {
-  return `<span class="pill ${pillClasse(pct)}">${fmtNum(pct)}%</span>`;
-}
+def liderancas_do_mes(year, month):
+    """{nome: cargo} -- so os nomes em LIDERANCAS_PERMITIDAS, com o nome de
+    exibicao (grafia) tirado do CSV daquele mes quando existir."""
+    out = {}
+    for r in carrega_csv():
+        chave = norm(r["nome"])
+        if chave not in LIDERANCAS_PERMITIDAS:
+            continue
+        if r["mes"] != month or r["ano"] != year:
+            continue
+        out[r["nome"]] = LIDERANCAS_PERMITIDAS[chave]
+    return out
 
-let premissasAtual = {};
-function fmtMoedaComPct(pctKey) {
-  return (v) => `${fmtMoeda(v)} <span style="color:var(--muted);font-size:11px;">(${fmtNum(premissasAtual[pctKey] ?? 0)}%)</span>`;
-}
-function fmtNumComPct(pctKey) {
-  return (v) => `${fmtNum(v)} <span style="color:var(--muted);font-size:11px;">(${fmtNum(premissasAtual[pctKey] ?? 0)}%)</span>`;
-}
 
-const METRICAS_FINANCEIRO = [
-  { label: "Meta Mês",                   key: "meta_mes",                fmt: fmtMoeda },
-  { label: "Meta Dia",                   key: "meta_dia",                 fmt: fmtMoeda },
-  { label: "Realizado Bruto",            key: "realizado_bruto",          fmt: fmtMoeda },
-  { label: "Realizado Multiplicador",    key: "realizado_multiplicador",  fmt: fmtMoeda },
-  { label: "Deveria (100%) - MTD",       key: "onde_deveria_100",         fmt: fmtMoedaComPct("ritmo_100_pct") },
-  { label: "Deveria (40%) - MTD",        key: "onde_deveria_40",          fmt: fmtMoedaComPct("ritmo_40_pct") },
-  { label: "Atingimento",                key: "atingimento",              fmt: pill },
-  { label: "Gap 100%",                   key: "gap_100",                  fmt: fmtMoeda },
-  { label: "Gap 40%",                    key: "gap_40",                   fmt: fmtMoeda },
-  { label: "Meta/Dia 40%",               key: "meta_dia_40",              fmt: fmtMoeda },
-  { label: "Meta/Dia 100%",              key: "meta_dia_100",             fmt: fmtMoeda },
-  { label: "Meta/Dia 100% (Bruto)",      key: "meta_dia_100_bruto",       fmt: fmtMoeda },
-  { label: "Previsto Ontem",             key: "previsto_ontem_media",     fmt: fmtMoeda, grupo: "ontem" },
-  { label: "Entrou Ontem (Multiplicador)", key: "ontem",                  fmt: fmtMoeda, grupo: "ontem" },
-  { label: "Entrou Ontem (Bruto)",       key: "ontem_bruto",              fmt: fmtMoeda, grupo: "ontem" },
-  { label: "Previsto Hoje",              key: "previsto_hoje_media",      fmt: fmtMoeda, grupo: "hoje" },
-  { label: "Em Aberto Hoje",             key: "em_aberto_hoje",           fmt: fmtMoeda, grupo: "hoje" },
-  { label: "Entrou Hoje (Multiplicador)", key: "hoje",                    fmt: fmtMoeda, grupo: "hoje" },
-  { label: "Entrou Hoje (Bruto)",        key: "hoje_bruto",               fmt: fmtMoeda, grupo: "hoje" },
-];
+def meses_disponiveis():
+    pares = set()
+    for r in carrega_csv():
+        if r["mes"] and r["ano"]:
+            pares.add((r["ano"], r["mes"]))
+    hoje = date.today()
+    pares.add((hoje.year, hoje.month))
+    saida = []
+    for ano, mes in sorted(pares, reverse=True):
+        saida.append({"value": f"{ano}-{mes:02d}", "label": f"{MESES_NOME[mes-1]}/{ano}"})
+    return saida
 
-const METRICAS_SNIPER = [
-  { label: "Meta Mês",             key: "meta_mes_reunioes",    fmt: v => v },
-  { label: "Meta Dia",             key: "meta_dia_reunioes",    fmt: fmtNum },
-  { label: "Realizado",            key: "realizado_reunioes",   fmt: v => v },
-  { label: "Deveria (100%) - MTD", key: "onde_deveria_100",     fmt: fmtNumComPct("ritmo_100_pct") },
-  { label: "Deveria (40%) - MTD",  key: "onde_deveria_40",      fmt: fmtNumComPct("ritmo_40_pct") },
-  { label: "Atingimento",          key: "atingimento",          fmt: pill },
-  { label: "Gap 100%",             key: "gap_100",              fmt: fmtNum },
-  { label: "Gap 40%",              key: "gap_40",               fmt: fmtNum },
-  { label: "Meta/Dia 40%",         key: "meta_dia_40",          fmt: fmtNum },
-  { label: "Meta/Dia 100%",        key: "meta_dia_100",         fmt: fmtNum },
-  { label: "Previsto Ontem",       key: "previsto_ontem",        fmt: v => v, grupo: "ontem" },
-  { label: "Realizadas Ontem",     key: "dia_anterior_reunioes", fmt: v => v, grupo: "ontem" },
-  { label: "Gap Ontem",            key: "gap_ontem",             fmt: v => v, grupo: "ontem" },
-  { label: "Novos Leads Ontem",    key: "novos_leads_ontem",     fmt: v => v, grupo: "ontem" },
-  { label: "Previsto Hoje",        key: "previsto_hoje",         fmt: v => v, grupo: "hoje" },
-  { label: "Realizadas Hoje",      key: "reunioes_hoje",         fmt: v => v, grupo: "hoje" },
-  { label: "Gap Hoje",             key: "gap_hoje",              fmt: v => v, grupo: "hoje" },
-  { label: "Novos Leads Hoje",     key: "novos_leads_hoje",      fmt: v => v, grupo: "hoje" },
-];
 
-function classesGrupo(grupo) {
-  if (!grupo) return "";
-  return `grupo-${grupo} grupo-inicio`;
-}
+# ---------- meta Pipedrive ----------
 
-let mesAtualSelecionado = true;
+def carrega_meta():
+    with _lock:
+        m = _cache["meta"]
+        if m and time.time() - m["ts"] < TTL:
+            return m["users"], m["pipelines"]
+    users = client.get_users_map()
+    pipelines = client.get_pipelines_map()
+    with _lock:
+        _cache["meta"] = {"ts": time.time(), "users": users, "pipelines": pipelines}
+    return users, pipelines
 
-function tabelaTransposta(metricas, colunas) {
-  // colunas: [{label, dados, isTotal}]
-  const linhas = mesAtualSelecionado ? metricas : metricas.filter(m => !m.grupo);
-  return linhas.map(m => `
-    <tr>
-      <td class="${classesGrupo(m.grupo)}">${m.label}</td>
-      ${colunas.map(c => `<td class="${c.isTotal ? 'total ' : ''}${classesGrupo(m.grupo)}">${m.fmt(c.dados[m.key])}</td>`).join("")}
-    </tr>`).join("");
-}
 
-const MESES = ["Janeiro","Fevereiro","Março","Abril","Maio","Junho","Julho","Agosto","Setembro","Outubro","Novembro","Dezembro"];
+def acts_do_owner(owner_id, year, month):
+    key = (owner_id, year, month)
+    with _lock:
+        c = _cache["acts"].get(key)
+        if c and time.time() - c["ts"] < TTL:
+            return c["acts"]
+    inicio = (date(year, month, 1) - timedelta(days=31)).strftime("%Y-%m-%dT00:00:00Z")
+    acts = client.get_meeting_activities(owner_id, updated_since=inicio)
+    with _lock:
+        _cache["acts"][key] = {"ts": time.time(), "acts": acts}
+    return acts
 
-function popularSeletores() {
-  const hoje = new Date();
-  const anoAtual = hoje.getFullYear();
-  const mesAtual = hoje.getMonth() + 1; // 1-12
-  const selMes = document.getElementById("seletorMes");
-  const selAno = document.getElementById("seletorAno");
 
-  MESES.forEach((nome, i) => {
-    const opt = document.createElement("option");
-    opt.value = i + 1;
-    opt.textContent = nome;
-    selMes.appendChild(opt);
-  });
+def _ranking_por_criador(auditados, year, month):
+    """Para cada pessoa em `auditados` ({nome: label}): ranking de closers
+    (donos dos negocios) pra quem as reunioes dela contam como validadas.
 
-  for (let ano = anoAtual; ano >= 2026; ano--) {
-    const opt = document.createElement("option");
-    opt.value = ano;
-    opt.textContent = ano;
-    selAno.appendChild(opt);
-  }
+    Criterio (conforme definido pelo usuario):
+      - type = meeting
+      - due_date (vencimento) no mes selecionado
+      - RESPONSAVEL (owner_id) da atividade = a propria pessoa auditada
+        -> por isso busca direto com acts_do_owner(pessoa_id), a MESMA
+           funcao/cache ja usada pros closers, so que com o id da pessoa
+      - PROPRIETARIO do negocio (owner_id do deal) DIFERENTE da pessoa
+        auditada -- nao conta reuniao de negocio que e dela mesma
+      - campo "Reuniao Validada?" do negocio DIFERENTE de "Nao"
+        (em branco ou "Sim" contam)
 
-  selMes.value = mesAtual;
-  selAno.value = anoAtual;
-}
-popularSeletores();
+    Funciona pra SDR, Team Leader, Head -- qualquer um que tenha usuario
+    no Pipedrive."""
+    users, _ = carrega_meta()
+    closers = closers_do_mes(year, month)   # nome -> time (so pra exibicao)
 
-async function atualizar() {
-  const btn = document.getElementById("refresh");
-  const erroBox = document.getElementById("erro");
-  const mesSelecionado = document.getElementById("seletorMes").value;
-  const anoSelecionado = document.getElementById("seletorAno").value;
-  btn.disabled = true;
-  btn.textContent = "Atualizando...";
-  erroBox.style.display = "none";
-  try {
-    const resp = await fetch(`${API_URL}?mes=${mesSelecionado}&ano=${anoSelecionado}`, { cache: "no-store" });
-    const data = await resp.json();
-    if (data.erro) throw new Error(data.erro);
-    premissasAtual = data.premissas || {};
-    const nomeMes = MESES[(data.mes || 1) - 1];
-    document.getElementById("badgeDiasUteis").innerHTML =
-      `${nomeMes} ${data.ano} · <span class="destaque">${premissasAtual.dias_uteis_passados ?? "—"}/${premissasAtual.dias_uteis_total ?? "—"}</span> dias úteis · <span class="destaque">${premissasAtual.dias_uteis_restantes ?? "—"}</span> restantes`;
-    mesAtualSelecionado = !!data.e_mes_atual;
-    document.getElementById("secaoProdutos").style.display = mesAtualSelecionado ? "" : "none";
+    id_to_closer_nome = {}
+    for nome in closers:
+        uid = users.get(nome.strip().lower())
+        if uid:
+            id_to_closer_nome[uid] = nome
+    # fallback: qualquer usuario do Pipedrive, caso o dono do negocio nao
+    # esteja na lista de closers do mes (ex.: saiu da empresa, mudou de cargo)
+    id_to_nome_geral = {}
+    for nome_lower, uid in users.items():
+        id_to_nome_geral.setdefault(uid, nome_lower.title())
 
-    document.getElementById("tabelaFinanceiro").innerHTML = tabelaTransposta(METRICAS_FINANCEIRO, [
-      { dados: data.squads.Olympus },
-      { dados: data.squads.Elite },
-      { dados: data.squads.Total, isTotal: true },
-    ]);
+    contadores = {nome: defaultdict(int) for nome in auditados}
+    totais = {nome: 0 for nome in auditados}
 
-    document.getElementById("tabelaSniper").innerHTML = tabelaTransposta(METRICAS_SNIPER, [
-      { dados: data.squads.Sniper },
-    ]);
+    for nome_pessoa in auditados:
+        pessoa_id = users.get(nome_pessoa.strip().lower())
+        if not pessoa_id:
+            continue
+        acts = acts_do_owner(pessoa_id, year, month)
+        deal_ids = {a["deal_id"] for a in acts if a.get("deal_id")}
+        deal_info = info_dos_deals(deal_ids)
+        for a in acts:
+            due = a.get("due_date")
+            if not due:
+                continue
+            d = datetime.strptime(due, "%Y-%m-%d").date()
+            if d.year != year or d.month != month:
+                continue
+            if not eh_reuniao_valida_para_auditoria(a, pessoa_id, deal_info):
+                continue
+            dono_negocio = (deal_info.get(a.get("deal_id")) or {}).get("owner_id")
+            nome_closer = (id_to_closer_nome.get(dono_negocio)
+                           or id_to_nome_geral.get(dono_negocio)
+                           or f"user {dono_negocio}")
+            contadores[nome_pessoa][nome_closer] += 1
+            totais[nome_pessoa] += 1
 
-    const numeros = data.produtos_em_aberto_detalhes || {};
-    const linhasProdutos = ["PFCC", "CES", "LEAN", "ABP", "COAUTORIA", "Não classificado"];
+    saida = []
+    for nome, label in sorted(auditados.items()):
+        encontrado = users.get(nome.strip().lower()) is not None
+        ranking = sorted(contadores[nome].items(), key=lambda x: (-x[1], x[0]))
+        saida.append({
+            "nome": nome, "label": label, "encontrado": encontrado,
+            "total": totais[nome],
+            "closers": [{"closer": k, "qtd": v} for k, v in ranking],
+        })
+    return saida
 
-    function totalGeralNovosLeads(chave) {
-      return ["Sniper", "Navigator"].reduce((soma, squad) =>
-        soma + linhasProdutos.reduce((s2, p) => s2 + (((numeros[squad] || {})[p] || {})[chave] ?? 0), 0), 0);
-    }
-    const mql = data.mql_pfcc || { hoje: 0, mes: 0 };
-    const reapl = data.reaplicacoes || { hoje: 0, mes: 0, taxa_mes_pct: 0 };
-    document.getElementById("resumoNovosLeadsProdutos").innerHTML = `
-      <div class="perdidos-resumo-card card-destaque-suave">
-        <div class="rotulo">Novos Leads Hoje</div>
-        <div class="valor">${totalGeralNovosLeads("novos_hoje")}</div>
-      </div>
-      <div class="perdidos-resumo-card card-destaque-suave">
-        <div class="rotulo">Novos Leads Mês</div>
-        <div class="valor">${totalGeralNovosLeads("novos_mes")}</div>
-      </div>
-      <div class="perdidos-resumo-card">
-        <div class="rotulo">Novos MQL's <strong>PFCC</strong> — Hoje</div>
-        <div class="valor">${mql.hoje ?? 0}</div>
-      </div>
-      <div class="perdidos-resumo-card">
-        <div class="rotulo">Novos MQL's <strong>PFCC</strong> — Mês</div>
-        <div class="valor">${mql.mes ?? 0}</div>
-      </div>
-      <div class="perdidos-resumo-card">
-        <div class="rotulo">Reaplicações Mês</div>
-        <div class="valor">${reapl.mes ?? 0} <span class="valor-taxa">(${reapl.taxa_mes_pct ?? 0}% de taxa)</span></div>
-      </div>`;
-    const CATEGORIAS = [
-      { key: "abertos", label: "Abertos" },
-      { key: "novos_hoje", label: "Novos Leads Hoje", destaque: true, listaKey: "novos_hoje_lista" },
-      { key: "novos_ontem", label: "Novos Leads Ontem", destaque: true, listaKey: "novos_ontem_lista" },
-      { key: "novos_mes", label: "Novos Leads Mês", destaque: true, listaKey: "novos_mes_lista" },
-      { key: "reaplicacoes_hoje", label: "Reaplicações Hoje", destaque: true, listaKey: "reaplicacoes_hoje_lista" },
-      { key: "reaplicacoes_mes", label: "Reaplicações Mês", destaque: true, listaKey: "reaplicacoes_mes_lista" },
-      { key: "perdidos_mes", label: "Perdidos - Mês" },
-      { key: "perdidos_hoje", label: "Perdidos - Hoje" },
-      { key: "ganhos_mes", label: "Ganhos - Mês", listaKey: "ganhos_mes_lista" },
-      { key: "ganhos_hoje", label: "Ganhos - Hoje", listaKey: "ganhos_hoje_lista" },
-    ];
 
-    function listaIds(lista) {
-      if (!lista || lista.length === 0) return "<div class=\"status-vazio\">Nenhum</div>";
-      return lista.map(n => `<a class="status-id-item" href="${n.url}" target="_blank" rel="noopener">#${n.id}</a>`).join("");
+def build_auditoria_sdr(year, month):
+    sdrs = sdrs_do_mes(year, month)
+    lideres = liderancas_do_mes(year, month)
+    return {
+        "year": year, "month": month,
+        "month_label": f"{MESES_NOME[month-1]}/{year}",
+        "sdrs": _ranking_por_criador(sdrs, year, month),
+        "liderancas": _ranking_por_criador(lideres, year, month),
     }
 
-    function totalAbertosProduto(produto) {
-      return ["Olympus", "Elite", "Sniper", "Navigator"].reduce(
-        (soma, squad) => soma + (((numeros[squad] || {})[produto] || {}).abertos ?? 0), 0
-      );
+
+def info_dos_deals(deal_ids):
+    """{deal_id: {"pipeline_id":..., "title":...}} com cache local."""
+    faltando = []
+    with _lock:
+        for d in deal_ids:
+            if d not in _cache["deals"]:
+                faltando.append(d)
+    if faltando:
+        novos = client.get_deals_info(faltando)
+        with _lock:
+            _cache["deals"].update(novos)
+    with _lock:
+        return {d: _cache["deals"].get(d) for d in deal_ids}
+
+
+# ---------- construcao ----------
+
+def build_dashboard(year, month, time_filtro=None, closer_filtro=None, privilegiado=False):
+    users, pipelines = carrega_meta()
+    closers = closers_do_mes(year, month)
+
+    if time_filtro and time_filtro.upper() != "TODOS":
+        closers = {n: t for n, t in closers.items() if t == time_filtro.upper()}
+    if closer_filtro and closer_filtro.upper() != "TODOS":
+        closers = {n: t for n, t in closers.items() if n == closer_filtro}
+
+    last_day = calendar.monthrange(year, month)[1]
+    combined_days = {d: novo_contador() for d in range(1, last_day + 1)}
+    geral_dia = {d: [] for d in range(1, last_day + 1)}  # dia -> reunioes de todos os closers (so priv)
+    month_total = novo_contador()
+    por_closer = []
+    por_time = defaultdict(novo_contador)
+    por_time_days = {}          # time -> {dia: contador}
+    nao_encontrados = []
+
+    for nome, time_c in sorted(closers.items()):
+        if time_c not in por_time_days:
+            por_time_days[time_c] = {d: novo_contador() for d in range(1, last_day + 1)}
+
+        owner_id = users.get(nome.strip().lower())
+        if not owner_id:
+            nao_encontrados.append(nome)
+            continue
+
+        acts = acts_do_owner(owner_id, year, month)
+        deal_ids = {a["deal_id"] for a in acts if a.get("deal_id")}
+        deal_info = info_dos_deals(deal_ids)
+
+        c_total = novo_contador()
+        c_days = {d: novo_contador() for d in range(1, last_day + 1)}
+        c_pipes = defaultdict(novo_contador)
+        c_criadas = {"proprio": 0, "outro": 0}
+        c_criadas_days = {d: {"proprio": 0, "outro": 0} for d in range(1, last_day + 1)}
+        c_negocios_mes = {}   # deal_id -> {id,title,url}  (dedupe do mes)
+        c_negocios_dia = {d: [] for d in range(1, last_day + 1)}  # dia -> lista de reunioes com negocio
+
+        for a in acts:
+            due = a.get("due_date")
+            deal_id = a.get("deal_id")
+            tipo = a.get("type")
+            done = a.get("done")
+            if not due or not deal_id:
+                continue
+            d = datetime.strptime(due, "%Y-%m-%d").date()
+            if d.year != year or d.month != month:
+                continue
+
+            soma_em(combined_days[d.day], a)
+            soma_em(month_total, a)
+            soma_em(c_total, a)
+            soma_em(c_days[d.day], a)
+            soma_em(por_time[time_c], a)
+            soma_em(por_time_days[time_c][d.day], a)
+
+            info = deal_info.get(deal_id) or {}
+            pid = info.get("pipeline_id")
+            pnome = pipelines.get(pid, f"Funil {pid}") if pid else "Sem funil"
+            soma_em(c_pipes[pnome], a)
+
+            chave = "proprio" if a.get("creator_user_id") == owner_id else "outro"
+            c_criadas[chave] += 1
+            c_criadas_days[d.day][chave] += 1
+
+            if privilegiado:
+                titulo = info.get("title") or ("Negocio " + str(deal_id))
+                url = PIPEDRIVE_BASE_URL + "/deal/" + str(deal_id)
+                hora = (a.get("due_time") or "")[:5]  # HH:MM
+                # dedupe do mes (por negocio)
+                if deal_id not in c_negocios_mes:
+                    c_negocios_mes[deal_id] = {"id": deal_id, "title": titulo, "url": url}
+                # lista do dia (uma linha por reuniao, com hora)
+                item_dia = {
+                    "id": deal_id, "title": titulo, "url": url,
+                    "hora": hora, "tipo": tipo, "done": bool(done),
+                }
+                c_negocios_dia[d.day].append(item_dia)
+                # lista geral (todos os closers) para a secao "dia a dia"
+                geral_dia[d.day].append({**item_dia, "closer": nome, "time": time_c})
+
+        por_closer.append({
+            "name": nome, "time": time_c,
+            "total": c_total,
+            "days": [{"dia": d, "counter": c_days[d]} for d in range(1, last_day + 1)],
+            "by_pipeline": dict(c_pipes),
+            "criadas": c_criadas,
+            "criadas_days": [{"dia": d, "c": c_criadas_days[d]} for d in range(1, last_day + 1)],
+            "negocios": sorted(c_negocios_mes.values(), key=lambda x: x["id"]) if privilegiado else [],
+            "negocios_dia": ([{"dia": d, "itens": sorted(c_negocios_dia[d], key=lambda x: x["hora"])}
+                              for d in range(1, last_day + 1)] if privilegiado else []),
+        })
+
+    dias = [{"dia": d, "counter": combined_days[d]} for d in range(1, last_day + 1)]
+    geral_dia_out = ([{"dia": d, "itens": sorted(geral_dia[d], key=lambda x: (x["hora"], x["closer"]))}
+                      for d in range(1, last_day + 1)] if privilegiado else [])
+    por_closer.sort(key=lambda x: (-x["total"]["planned"], x["name"]))
+
+    por_time_days_out = {
+        t: [{"dia": d, "counter": dd[d]} for d in range(1, last_day + 1)]
+        for t, dd in por_time_days.items()
     }
 
-    function blocoSquad(squad, produto) {
-      const dadosProduto = ((numeros[squad] || {})[produto]) || {};
-      const squadsComNovosLeads = ["Sniper", "Navigator"];
-      let categorias = CATEGORIAS;
-      if (squad === "Sniper") categorias = categorias.filter(c => !c.key.startsWith("ganhos"));
-      if (!squadsComNovosLeads.includes(squad)) categorias = categorias.filter(c => !c.key.startsWith("novos_") && !c.key.startsWith("reaplicacoes_"));
-      const grupos = categorias.map(cat => {
-        if (cat.listaKey) {
-          const lista = dadosProduto[cat.listaKey] || [];
-          return `
-            <details class="status-grupo-dropdown${cat.destaque ? ' status-grupo-destaque' : ''}">
-              <summary><span class="status-titulo">${cat.label}:</span> <span class="status-numero">${dadosProduto[cat.key] ?? 0}</span></summary>
-              <div class="status-ids-lista">${listaIds(lista)}</div>
-            </details>`;
-        }
-        return `
-          <div class="status-grupo${cat.destaque ? ' status-grupo-destaque' : ''}">
-            <span class="status-titulo">${cat.label}:</span>
-            <span class="status-numero">${dadosProduto[cat.key] ?? 0}</span>
-          </div>`;
-      }).join("");
-      return `
-        <div class="produto-squad">
-          <div class="produto-squad-titulo">${squad}</div>
-          ${grupos}
-        </div>`;
+    return {
+        "generated_at": datetime.now().isoformat(),
+        "year": year, "month": month,
+        "month_label": f"{MESES_NOME[month-1]}/{year}",
+        "days": dias,
+        "month_total": month_total,
+        "por_time": dict(por_time),
+        "por_time_days": por_time_days_out,
+        "por_closer": por_closer,
+        "geral_dia": geral_dia_out,
+        "nao_encontrados": nao_encontrados,
     }
 
-    document.getElementById("cardsProdutos").innerHTML = linhasProdutos.map(p => `
-      <details class="produto-card">
-        <summary>${p} <span class="produto-total-abertos">Total aberto: ${totalAbertosProduto(p)}</span></summary>
-        <div class="produto-squads produto-squads-4">
-          ${blocoSquad("Olympus", p)}
-          ${blocoSquad("Elite", p)}
-          ${blocoSquad("Sniper", p)}
-          ${blocoSquad("Navigator", p)}
-        </div>
-      </details>`).join("");
 
-    renderizarPerdidos(data.perdidos_analise || {});
+def eh_default(year, month, team, closer):
+    hoje = date.today()
+    return (year == hoje.year and month == hoje.month
+            and (not team or team.upper() == "TODOS")
+            and (not closer or closer.upper() == "TODOS"))
 
-    document.getElementById("ultimaAtualizacao").textContent =
-      "Atualizado às " + new Date(data.geradoEm).toLocaleTimeString("pt-BR", { timeZone: "America/Sao_Paulo" });
-  } catch (e) {
-    erroBox.textContent = "Erro ao atualizar: " + e.message;
-    erroBox.style.display = "block";
-  } finally {
-    btn.disabled = false;
-    btn.textContent = "Atualizar painel";
-  }
-}
 
-atualizar();
-setInterval(atualizar, INTERVALO_MS);
-</script>
+def refresh_current_loop():
+    """Reconstroi o mes atual a cada REFRESH_SECONDS. So roda LOCAL --
+    na Vercel (serverless) nao existe processo de fundo; o refresh vem do navegador."""
+    while True:
+        try:
+            hoje = date.today()
+            data_comum = build_dashboard(hoje.year, hoje.month, privilegiado=False)
+            data_priv = build_dashboard(hoje.year, hoje.month, privilegiado=True)
+            with _lock:
+                _cache["current"] = {
+                    "ts": time.time(), "key": (hoje.year, hoje.month),
+                    "data": {False: data_comum, True: data_priv},
+                }
+            print(f"[auto] mes atual atualizado {datetime.now():%H:%M:%S}")
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            print("Erro no refresh automatico:", e)
+        time.sleep(REFRESH_SECONDS)
 
-</body>
-</html>
+
+# ---------- rotas ----------
+
+@app.route("/api/init")
+def api_init():
+    hoje = date.today()
+    return jsonify({
+        "months": meses_disponiveis(),
+        "current": f"{hoje.year}-{hoje.month:02d}",
+        "teams": ["Todos"] + sorted(TIMES_VALIDOS),
+        "refresh_seconds": REFRESH_SECONDS,
+    })
+
+
+@app.route("/api/closers")
+def api_closers():
+    mes = request.args.get("month", "")
+    try:
+        year, month = map(int, mes.split("-"))
+    except Exception:
+        hoje = date.today()
+        year, month = hoje.year, hoje.month
+    closers = closers_do_mes(year, month)
+    return jsonify({"closers": ["Todos"] + sorted(closers.keys())})
+
+
+@app.route("/api/dashboard")
+def api_dashboard():
+    mes = request.args.get("month", "")
+    try:
+        year, month = map(int, mes.split("-"))
+    except Exception:
+        hoje = date.today()
+        year, month = hoje.year, hoje.month
+    team = request.args.get("team")
+    closer = request.args.get("closer")
+    priv = eh_privilegiado(request)
+
+    if eh_default(year, month, team, closer):
+        with _lock:
+            c = _cache["current"]
+            if c and c.get("key") == (year, month) and priv in c["data"]:
+                return jsonify(c["data"][priv])
+
+    try:
+        return jsonify(build_dashboard(year, month, team, closer, privilegiado=priv))
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/auditoria_sdr")
+def api_auditoria_sdr():
+    # auditoria revela pra quem cada SDR marca -> so privilegiado
+    if not eh_privilegiado(request):
+        return jsonify({"error": "acesso restrito", "sdrs": []}), 401
+    mes = request.args.get("month", "")
+    try:
+        year, month = map(int, mes.split("-"))
+    except Exception:
+        hoje = date.today()
+        year, month = hoje.year, hoje.month
+    try:
+        return jsonify(build_auditoria_sdr(year, month))
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/debug_activity")
+def api_debug_activity():
+    """Diagnostico: mostra o JSON cru de UMA activity, pra ver o formato
+    exato do campo customizado 'Reuniao Validada?'. So privilegiado."""
+    if not eh_privilegiado(request):
+        return jsonify({"error": "acesso restrito"}), 401
+    aid = request.args.get("id")
+    if not aid:
+        return jsonify({"error": "informe ?id=<activity_id>"}), 400
+    try:
+        raw = client.get_activity_raw(aid)
+        return jsonify(raw)
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/debug_deal")
+def api_debug_deal():
+    """Diagnostico: mostra o JSON cru de UM negocio, caso o campo
+    'Reuniao Validada?' esteja no deal em vez da activity. So privilegiado."""
+    if not eh_privilegiado(request):
+        return jsonify({"error": "acesso restrito"}), 401
+    did = request.args.get("id")
+    if not did:
+        return jsonify({"error": "informe ?id=<deal_id>"}), 400
+    try:
+        raw = client.get_deal_raw(did)
+        return jsonify(raw)
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/debug_deal_compare")
+def api_debug_deal_compare():
+    """Diagnostico: busca o MESMO negocio de duas formas -- fetch individual
+    (/deals/{id}) e fetch em lote (/deals?ids=...), que e como o dashboard
+    de verdade busca. O Pipedrive as vezes omite custom_fields na busca em
+    lote; isso mostra se e esse o problema. So privilegiado."""
+    if not eh_privilegiado(request):
+        return jsonify({"error": "acesso restrito"}), 401
+    did = request.args.get("id")
+    if not did:
+        return jsonify({"error": "informe ?id=<deal_id>"}), 400
+    try:
+        individual = client.get_deal_raw(did)
+        lote_map = client.get_deals_info([did])
+        em_lote = lote_map.get(int(did)) if did.isdigit() else None
+        if em_lote is None:
+            em_lote = lote_map.get(did)
+        return jsonify({
+            "busca_individual (GET /deals/{id})": individual,
+            "busca_em_lote (GET /deals?ids=..., como o dashboard usa)": em_lote,
+        })
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/login", methods=["POST"])
+def api_login():
+    dados = request.get_json(silent=True) or {}
+    usuario = str(dados.get("usuario", "")).strip().lower()
+    senha = str(dados.get("senha", ""))
+    hash_ok = USUARIOS_PRIV.get(usuario)
+    if hash_ok and hmac.compare_digest(hash_ok, _sha256(senha)):
+        return jsonify({"token": gera_token(usuario), "usuario": usuario})
+    return jsonify({"error": "usuario ou senha invalidos"}), 401
+
+
+@app.route("/api/me")
+def api_me():
+    auth = request.headers.get("Authorization", "")
+    tok = auth[7:] if auth.startswith("Bearer ") else ""
+    u = valida_token(tok)
+    return jsonify({"privilegiado": bool(u), "usuario": u})
+
+
+# servir o front (HTML vem embutido em front.py -- garante que vai no bundle)
+# "/" = local; "/api/index" = destino do rewrite da Vercel (vercel.json)
+@app.route("/")
+@app.route("/api/index")
+def index():
+    return Response(HTML, mimetype="text/html")
+
+
+# rotas de API "de verdade" que existem
+_API_ROTAS = ("/api/init", "/api/closers", "/api/dashboard", "/api/login", "/api/me", "/api/auditoria_sdr", "/api/debug_activity", "/api/debug_deal", "/api/debug_deal_compare")
+
+
+@app.errorhandler(404)
+def not_found(e):
+    # so devolve erro JSON quando bate numa rota de API conhecida com metodo/params errados;
+    # qualquer outro path desconhecido cai no front (SPA-like)
+    if request.path in _API_ROTAS:
+        return jsonify({"error": "rota nao encontrada", "path": request.path}), 404
+    return Response(HTML, mimetype="text/html")
+
+
+# entrypoint explicito para o runtime Python da Vercel (@vercel/python)
+# procura por um objeto WSGI chamado "app", "application" ou "handler"
+application = app
+handler = app
+
+if __name__ == "__main__":
+    threading.Thread(target=refresh_current_loop, daemon=True).start()
+    app.run(debug=True, port=5000, use_reloader=False)

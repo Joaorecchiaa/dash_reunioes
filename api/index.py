@@ -246,19 +246,25 @@ def sdrs_do_mes(year, month):
     return out
 
 
+# unica lista de liderancas que entra na auditoria (nome normalizado -> cargo de exibicao)
+LIDERANCAS_PERMITIDAS = {
+    "mylena oliveira": "Team Leader",
+    "stephanie nascimento": "Team Leader",
+    "marlom silva": "Head",
+}
+
+
 def liderancas_do_mes(year, month):
-    """{nome: cargo} de quem nao e closer nem sdr (team leaders, head, etc.)
-    -- pega qualquer cargo diferente desses dois, entao nao precisa saber
-    o texto exato usado na planilha para "Team Leader" ou "Head"."""
+    """{nome: cargo} -- so os nomes em LIDERANCAS_PERMITIDAS, com o nome de
+    exibicao (grafia) tirado do CSV daquele mes quando existir."""
     out = {}
     for r in carrega_csv():
-        cargo = r["cargo"]
-        if not cargo or cargo.startswith("closer") or cargo.startswith("sdr"):
+        chave = norm(r["nome"])
+        if chave not in LIDERANCAS_PERMITIDAS:
             continue
         if r["mes"] != month or r["ano"] != year:
             continue
-        if r["nome"]:
-            out[r["nome"]] = cargo.title()
+        out[r["nome"]] = LIDERANCAS_PERMITIDAS[chave]
     return out
 
 

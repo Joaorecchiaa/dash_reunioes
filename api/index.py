@@ -250,7 +250,7 @@ def sdrs_do_mes(year, month):
 LIDERANCAS_PERMITIDAS = {
     "mylena oliveira": "Team Leader",
     "stephanie nascimento": "Team Leader",
-    "marlom silva": "Head",
+    "marlon silva": "Head",
 }
 
 

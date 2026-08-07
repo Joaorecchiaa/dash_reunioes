@@ -211,16 +211,37 @@ def campo_validado_sim(a):
     return str(valor).strip().lower() == "sim"
 
 
-def eh_validada(a, deal_info):
-    """Reuniao VALIDADA = feita (type=meeting, done=true) E o NEGOCIO
-    vinculado tem o campo "Reuniao Validada?" = Sim.
-    Esse campo vive no negocio (fica obrigatorio quando o negocio entra na
-    etapa Negociacao), nao na atividade -- por isso recebe `deal_info`
-    ({deal_id: <negocio cru>}) em vez de olhar dentro da propria activity."""
-    if a.get("type") != "meeting" or not a.get("done"):
+def campo_validado_diferente_de_nao(info):
+    """True se o campo "Reuniao Validada?" do negocio NAO esta como 'Nao'
+    -- ou seja, 'Sim' OU em branco/nao preenchido contam como valido; so
+    'Nao' explicito invalida."""
+    valor = _label_do_campo(_campo_bruto(info, CAMPO_VALIDADA_ID))
+    if valor is None:
+        return True  # em branco conta como valido
+    if isinstance(valor, (int, float)) or (isinstance(valor, str) and valor.strip().lstrip("-").isdigit()):
+        opcoes = opcoes_campo_validada()
+        label = opcoes.get(int(valor))
+        if label is None:
+            return True  # opcao desconhecida nao bloqueia
+        valor = label
+    return norm(valor) != "nao"
+
+
+def eh_reuniao_valida_para_auditoria(a, pessoa_id, deal_info):
+    """Reuniao conta na Auditoria SDR/Lideranca quando:
+    - type == "meeting" (nunca no_show/reagendamento)
+    - o RESPONSAVEL (owner_id) da propria atividade e a pessoa auditada
+      -- ja garantido de fora, pois as atividades vem de acts_do_owner(pessoa_id)
+    - o negocio vinculado tem PROPRIETARIO (owner_id do negocio) diferente
+      da pessoa auditada -- nao conta quando o negocio e dela mesma
+    - o campo "Reuniao Validada?" do negocio nao esta como 'Nao'
+      (em branco ou 'Sim' contam)."""
+    if a.get("type") != "meeting":
         return False
     info = deal_info.get(a.get("deal_id")) or {}
-    return campo_validado_sim(info)
+    if info.get("owner_id") == pessoa_id:
+        return False
+    return campo_validado_diferente_de_nao(info)
 
 
 def soma_em(counter, a):
@@ -393,35 +414,43 @@ def acts_do_owner(owner_id, year, month):
 
 def _ranking_por_criador(auditados, year, month):
     """Para cada pessoa em `auditados` ({nome: label}): ranking de closers
-    pra quem ela marcou reunioes no mes. Conta SO reunioes VALIDADAS
-    (feita + campo "Reuniao Validada?" = Sim) -- no-show, reagendada e
-    reuniao feita mas nao validada nao contam aqui.
-    Funciona pra SDR, Team Leader, Head -- qualquer um que tenha usuario no
-    Pipedrive e apareca como creator_user_id de uma atividade de algum closer.
+    (donos dos negocios) pra quem as reunioes dela contam como validadas.
 
-    A API v2 do Pipedrive nao filtra activities por "quem criou" (nao existe
-    parametro de creator), so por owner_id. Entao em vez de pedir "o que essa
-    pessoa criou", percorremos as atividades de cada CLOSER (que ja sabemos
-    buscar por owner_id, com cache) e filtramos localmente as que foram
-    criadas por alguem de `auditados` -- mesmo resultado, sem endpoint
-    problematico."""
+    Criterio (conforme definido pelo usuario):
+      - type = meeting
+      - due_date (vencimento) no mes selecionado
+      - RESPONSAVEL (owner_id) da atividade = a propria pessoa auditada
+        -> por isso busca direto com acts_do_owner(pessoa_id), a MESMA
+           funcao/cache ja usada pros closers, so que com o id da pessoa
+      - PROPRIETARIO do negocio (owner_id do deal) DIFERENTE da pessoa
+        auditada -- nao conta reuniao de negocio que e dela mesma
+      - campo "Reuniao Validada?" do negocio DIFERENTE de "Nao"
+        (em branco ou "Sim" contam)
+
+    Funciona pra SDR, Team Leader, Head -- qualquer um que tenha usuario
+    no Pipedrive."""
     users, _ = carrega_meta()
-    closers = closers_do_mes(year, month)   # nome -> time
+    closers = closers_do_mes(year, month)   # nome -> time (so pra exibicao)
 
-    id_to_nome = {}
-    for nome in auditados:
+    id_to_closer_nome = {}
+    for nome in closers:
         uid = users.get(nome.strip().lower())
         if uid:
-            id_to_nome[uid] = nome
+            id_to_closer_nome[uid] = nome
+    # fallback: qualquer usuario do Pipedrive, caso o dono do negocio nao
+    # esteja na lista de closers do mes (ex.: saiu da empresa, mudou de cargo)
+    id_to_nome_geral = {}
+    for nome_lower, uid in users.items():
+        id_to_nome_geral.setdefault(uid, nome_lower.title())
 
     contadores = {nome: defaultdict(int) for nome in auditados}
     totais = {nome: 0 for nome in auditados}
 
-    for closer_nome in closers:
-        owner_id = users.get(closer_nome.strip().lower())
-        if not owner_id:
+    for nome_pessoa in auditados:
+        pessoa_id = users.get(nome_pessoa.strip().lower())
+        if not pessoa_id:
             continue
-        acts = acts_do_owner(owner_id, year, month)
+        acts = acts_do_owner(pessoa_id, year, month)
         deal_ids = {a["deal_id"] for a in acts if a.get("deal_id")}
         deal_info = info_dos_deals(deal_ids)
         for a in acts:
@@ -431,16 +460,14 @@ def _ranking_por_criador(auditados, year, month):
             d = datetime.strptime(due, "%Y-%m-%d").date()
             if d.year != year or d.month != month:
                 continue
-            if not eh_validada(a, deal_info):
-                continue  # so conta reuniao VALIDADA (feita + campo "Reuniao Validada?" = Sim no negocio)
-            creator = a.get("creator_user_id")
-            if creator == owner_id:
-                continue  # marcou pra si mesmo, nao conta
-            nome_criador = id_to_nome.get(creator)
-            if not nome_criador:
-                continue  # criado por alguem fora do grupo auditado
-            contadores[nome_criador][closer_nome] += 1
-            totais[nome_criador] += 1
+            if not eh_reuniao_valida_para_auditoria(a, pessoa_id, deal_info):
+                continue
+            dono_negocio = (deal_info.get(a.get("deal_id")) or {}).get("owner_id")
+            nome_closer = (id_to_closer_nome.get(dono_negocio)
+                           or id_to_nome_geral.get(dono_negocio)
+                           or f"user {dono_negocio}")
+            contadores[nome_pessoa][nome_closer] += 1
+            totais[nome_pessoa] += 1
 
     saida = []
     for nome, label in sorted(auditados.items()):

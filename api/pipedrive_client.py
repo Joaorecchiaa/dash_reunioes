@@ -48,6 +48,27 @@ class PipedriveClient:
                 break
         return activities
 
+    def get_activities_by_creator(self, creator_user_id, updated_since=None):
+        """Atividades criadas por user_id (SDR), tipos meeting/no_show/reagendamento
+        com deal_id. Usa user_id (filtro de criador na v2)."""
+        tipos = {"meeting", "no_show", "reagendamento"}
+        activities = []
+        cursor = None
+        while True:
+            params = {"user_id": creator_user_id, "limit": 500}
+            if updated_since:
+                params["updated_since"] = updated_since
+            if cursor:
+                params["cursor"] = cursor
+            data = self._get(self.base_v2, "/activities", params)
+            for a in data.get("data") or []:
+                if a.get("type") in tipos and a.get("deal_id"):
+                    activities.append(a)
+            cursor = (data.get("additional_data") or {}).get("next_cursor")
+            if not cursor:
+                break
+        return activities
+
     def get_deals_info(self, deal_ids):
         """{deal_id: {"pipeline_id": int, "title": str}}, em lotes de 100."""
         deal_ids = [d for d in deal_ids if d]

@@ -139,7 +139,7 @@ def parse_mes(v):
 
 
 def novo_contador():
-    return {"planned": 0, "done": 0, "validada": 0, "no_show": 0, "reagendada": 0}
+    return {"planned": 0, "done": 0, "no_show": 0, "reagendada": 0}
 
 
 # campo customizado "Reuniao Validada?" no Pipedrive (id fixo do campo)
@@ -195,8 +195,6 @@ def soma_em(counter, a):
     counter["planned"] += 1
     if tipo == "meeting" and done:
         counter["done"] += 1
-        if eh_validada(a):
-            counter["validada"] += 1
     elif tipo == "no_show":
         counter["no_show"] += 1
     elif tipo == "reagendamento":
@@ -664,6 +662,38 @@ def api_auditoria_sdr():
         return jsonify({"error": str(e)}), 500
 
 
+@app.route("/api/debug_activity")
+def api_debug_activity():
+    """Diagnostico: mostra o JSON cru de UMA activity, pra ver o formato
+    exato do campo customizado 'Reuniao Validada?'. So privilegiado."""
+    if not eh_privilegiado(request):
+        return jsonify({"error": "acesso restrito"}), 401
+    aid = request.args.get("id")
+    if not aid:
+        return jsonify({"error": "informe ?id=<activity_id>"}), 400
+    try:
+        raw = client.get_activity_raw(aid)
+        return jsonify(raw)
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/debug_deal")
+def api_debug_deal():
+    """Diagnostico: mostra o JSON cru de UM negocio, caso o campo
+    'Reuniao Validada?' esteja no deal em vez da activity. So privilegiado."""
+    if not eh_privilegiado(request):
+        return jsonify({"error": "acesso restrito"}), 401
+    did = request.args.get("id")
+    if not did:
+        return jsonify({"error": "informe ?id=<deal_id>"}), 400
+    try:
+        raw = client.get_deal_raw(did)
+        return jsonify(raw)
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
 @app.route("/api/login", methods=["POST"])
 def api_login():
     dados = request.get_json(silent=True) or {}
@@ -692,7 +722,7 @@ def index():
 
 
 # rotas de API "de verdade" que existem
-_API_ROTAS = ("/api/init", "/api/closers", "/api/dashboard", "/api/login", "/api/me", "/api/auditoria_sdr")
+_API_ROTAS = ("/api/init", "/api/closers", "/api/dashboard", "/api/login", "/api/me", "/api/auditoria_sdr", "/api/debug_activity", "/api/debug_deal")
 
 
 @app.errorhandler(404)

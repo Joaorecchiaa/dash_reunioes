@@ -310,10 +310,10 @@ def acts_do_owner(owner_id, year, month):
 
 def _ranking_por_criador(auditados, year, month):
     """Para cada pessoa em `auditados` ({nome: label}): ranking de closers
-    pra quem ela marcou reunioes no mes. Conta toda reuniao marcada
-    (qualquer desfecho). Funciona pra SDR, Team Leader, Head -- qualquer um
-    que tenha usuario no Pipedrive e apareca como creator_user_id de uma
-    atividade de algum closer.
+    pra quem ela marcou reunioes no mes. Conta SO reunioes FEITAS/concluidas
+    (type=meeting e done=true) -- no-show e reagendada nao contam aqui.
+    Funciona pra SDR, Team Leader, Head -- qualquer um que tenha usuario no
+    Pipedrive e apareca como creator_user_id de uma atividade de algum closer.
 
     A API v2 do Pipedrive nao filtra activities por "quem criou" (nao existe
     parametro de creator), so por owner_id. Entao em vez de pedir "o que essa
@@ -342,6 +342,8 @@ def _ranking_por_criador(auditados, year, month):
             due = a.get("due_date")
             if not due:
                 continue
+            if a.get("type") != "meeting" or not a.get("done"):
+                continue  # so conta reuniao FEITA (concluida)
             d = datetime.strptime(due, "%Y-%m-%d").date()
             if d.year != year or d.month != month:
                 continue

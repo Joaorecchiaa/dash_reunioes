@@ -49,7 +49,10 @@ class PipedriveClient:
         return activities
 
     def get_deals_info(self, deal_ids):
-        """{deal_id: {"pipeline_id": int, "title": str}}, em lotes de 100."""
+        """{deal_id: <objeto do negocio, cru>}, em lotes de 100.
+        Mantem o objeto completo do negocio (nao so pipeline_id/title) para
+        que campos customizados do negocio -- como "Reuniao Validada?" --
+        fiquem disponiveis sem precisar de outra chamada."""
         deal_ids = [d for d in deal_ids if d]
         result = {}
         batch = []
@@ -66,10 +69,9 @@ class PipedriveClient:
         data = self._get(self.base_v2, "/deals", {"ids": ",".join(ids_batch), "limit": 100})
         out = {}
         for d in data.get("data") or []:
-            out[d["id"]] = {
-                "pipeline_id": d.get("pipeline_id"),
-                "title": d.get("title") or ("Negocio " + str(d.get("id"))),
-            }
+            if not d.get("title"):
+                d["title"] = "Negocio " + str(d.get("id"))
+            out[d["id"]] = d  # objeto completo: pipeline_id, title, custom_fields, etc.
         return out
 
     def get_activity_raw(self, activity_id):

@@ -227,6 +227,19 @@ def closers_do_mes(year, month):
     return out
 
 
+def sdrs_do_mes(year, month):
+    """{nome: time} dos SDRs ativos naquele mes/ano (cargo comeca com 'sdr')."""
+    out = {}
+    for r in carrega_csv():
+        if not r["cargo"].startswith("sdr"):
+            continue
+        if r["mes"] != month or r["ano"] != year:
+            continue
+        if r["nome"]:
+            out[r["nome"]] = r["time"]
+    return out
+
+
 def meses_disponiveis():
     pares = set()
     for r in carrega_csv():
@@ -265,6 +278,75 @@ def acts_do_owner(owner_id, year, month):
     with _lock:
         _cache["acts"][key] = {"ts": time.time(), "acts": acts}
     return acts
+
+
+def acts_criadas_por(creator_id, year, month):
+    """Atividades criadas por um user (SDR), com cache separado."""
+    key = ("criadas", creator_id, year, month)
+    with _lock:
+        c = _cache["acts"].get(key)
+        if c and time.time() - c["ts"] < TTL:
+            return c["acts"]
+    inicio = (date(year, month, 1) - timedelta(days=31)).strftime("%Y-%m-%dT00:00:00Z")
+    acts = client.get_activities_by_creator(creator_id, updated_since=inicio)
+    with _lock:
+        _cache["acts"][key] = {"ts": time.time(), "acts": acts}
+    return acts
+
+
+def build_auditoria_sdr(year, month):
+    """Para cada SDR do mes: ranking de closers pra quem ele marcou reunioes.
+    Conta toda reuniao marcada (qualquer desfecho) com due_date no mes."""
+    users, _ = carrega_meta()
+    id_para_nome = {uid: nome for nome, uid in users.items()}  # user_id -> nome(min)
+    closers = closers_do_mes(year, month)                      # nome -> time
+    # nome(min) -> nome exibicao (usa o do CSV de closers quando existir)
+    nome_exib = {}
+    for nome in closers:
+        nome_exib[nome.strip().lower()] = nome
+
+    sdrs = sdrs_do_mes(year, month)
+    saida = []
+    for sdr_nome, sdr_time in sorted(sdrs.items()):
+        creator_id = users.get(sdr_nome.strip().lower())
+        if not creator_id:
+            saida.append({"sdr": sdr_nome, "time": sdr_time, "encontrado": False,
+                          "total": 0, "closers": []})
+            continue
+
+        acts = acts_criadas_por(creator_id, year, month)
+        por_closer = defaultdict(int)
+        total = 0
+        for a in acts:
+            due = a.get("due_date")
+            if not due:
+                continue
+            d = datetime.strptime(due, "%Y-%m-%d").date()
+            if d.year != year or d.month != month:
+                continue
+            owner = a.get("owner_id")
+            # ignora quando marcou pra si mesmo (nao e "marcar pra um closer")
+            if owner == creator_id:
+                continue
+            nome_owner = id_para_nome.get(owner)
+            if nome_owner:
+                label = nome_exib.get(nome_owner, nome_owner.title())
+            else:
+                label = f"user {owner}"
+            por_closer[label] += 1
+            total += 1
+
+        ranking = sorted(por_closer.items(), key=lambda x: (-x[1], x[0]))
+        saida.append({
+            "sdr": sdr_nome, "time": sdr_time, "encontrado": True,
+            "total": total,
+            "closers": [{"closer": k, "qtd": v} for k, v in ranking],
+        })
+    return {
+        "year": year, "month": month,
+        "month_label": f"{MESES_NOME[month-1]}/{year}",
+        "sdrs": saida,
+    }
 
 
 def info_dos_deals(deal_ids):
@@ -481,6 +563,25 @@ def api_dashboard():
         return jsonify({"error": str(e)}), 500
 
 
+@app.route("/api/auditoria_sdr")
+def api_auditoria_sdr():
+    # auditoria revela pra quem cada SDR marca -> so privilegiado
+    if not eh_privilegiado(request):
+        return jsonify({"error": "acesso restrito", "sdrs": []}), 401
+    mes = request.args.get("month", "")
+    try:
+        year, month = map(int, mes.split("-"))
+    except Exception:
+        hoje = date.today()
+        year, month = hoje.year, hoje.month
+    try:
+        return jsonify(build_auditoria_sdr(year, month))
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return jsonify({"error": str(e)}), 500
+
+
 @app.route("/api/login", methods=["POST"])
 def api_login():
     dados = request.get_json(silent=True) or {}
@@ -509,7 +610,7 @@ def index():
 
 
 # rotas de API "de verdade" que existem
-_API_ROTAS = ("/api/init", "/api/closers", "/api/dashboard", "/api/login", "/api/me")
+_API_ROTAS = ("/api/init", "/api/closers", "/api/dashboard", "/api/login", "/api/me", "/api/auditoria_sdr")
 
 
 @app.errorhandler(404)

@@ -180,6 +180,9 @@ HTML = r"""<!DOCTYPE html>
   .tab.locked { opacity:.5; }
 
   /* auditoria SDR */
+  .aud-section-title { font-size:12px; font-weight:800; color:var(--muted); text-transform:uppercase;
+                       letter-spacing:1px; margin:22px 0 10px; padding-bottom:6px; border-bottom:2px solid var(--border); }
+  .aud-section-title:first-of-type { margin-top:8px; }
   .aud-sdr { background:var(--card); border:1px solid var(--border); border-radius:12px; margin-bottom:12px; overflow:hidden; }
   .aud-head { display:flex; align-items:center; gap:12px; padding:14px 18px; cursor:pointer; user-select:none; }
   .aud-head:hover { background:#f7f8fa; }
@@ -665,42 +668,53 @@ async function carregaAuditoria(forcar) {
   }
 }
 
-function renderAuditoria(data) {
-  let html = `<div class="kpi-head">Auditoria de SDR — pra quais closers cada SDR marcou reuniões · ${data.month_label}</div>`;
-  if (!data.sdrs || !data.sdrs.length) {
-    html += '<div class="aud-empty">Nenhum SDR encontrado no CSV para esse mês.</div>';
-    $('root-aud').innerHTML = html;
-    return;
-  }
-  // ordena SDRs por total (desc)
-  const sdrs = data.sdrs.slice().sort((a,b) => b.total - a.total);
-  sdrs.forEach((s, i) => {
-    const aid = 'aud-' + i;
-    const maxq = s.closers.length ? s.closers[0].qtd : 1;
-    let linhas = '';
-    if (s.closers.length) {
-      linhas = `<table class="aud-tbl"><tr><th>Closer</th><th>Reuniões marcadas</th><th class="barcell"></th></tr>`;
-      for (const c of s.closers) {
-        const pct = Math.round((c.qtd / maxq) * 100);
-        linhas += `<tr><td>${c.closer}</td><td class="qtd">${c.qtd}</td>
-          <td class="barcell"><div class="aud-bar" style="width:${pct}%"></div></td></tr>`;
-      }
-      linhas += `</table>`;
-    } else if (!s.encontrado) {
-      linhas = `<div class="aud-empty">SDR sem correspondência no Pipedrive (nome não bateu).</div>`;
-    } else {
-      linhas = `<div class="aud-empty">Nenhuma reunião marcada para closers nesse mês.</div>`;
+function auditoriaBloco(pessoa, idx, prefixo) {
+  const aid = prefixo + '-' + idx;
+  const maxq = pessoa.closers.length ? pessoa.closers[0].qtd : 1;
+  let linhas = '';
+  if (pessoa.closers.length) {
+    linhas = `<table class="aud-tbl"><tr><th>Closer</th><th>Reuniões marcadas</th><th class="barcell"></th></tr>`;
+    for (const c of pessoa.closers) {
+      const pct = Math.round((c.qtd / maxq) * 100);
+      linhas += `<tr><td>${c.closer}</td><td class="qtd">${c.qtd}</td>
+        <td class="barcell"><div class="aud-bar" style="width:${pct}%"></div></td></tr>`;
     }
-    html += `<div class="aud-sdr">
-      <div class="aud-head" data-aud="${aid}">
-        <span class="aud-arrow" id="${aid}-arw">▸</span>
-        <span class="aud-name">${s.sdr}</span>
-        <span class="aud-team">${s.time}</span>
-        <span class="aud-total"><b>${s.total}</b> reuniões</span>
-      </div>
-      <div class="aud-body" id="${aid}">${linhas}</div>
-    </div>`;
-  });
+    linhas += `</table>`;
+  } else if (!pessoa.encontrado) {
+    linhas = `<div class="aud-empty">Sem correspondência no Pipedrive (nome não bateu).</div>`;
+  } else {
+    linhas = `<div class="aud-empty">Nenhuma reunião marcada para closers nesse mês.</div>`;
+  }
+  return `<div class="aud-sdr">
+    <div class="aud-head" data-aud="${aid}">
+      <span class="aud-arrow" id="${aid}-arw">▸</span>
+      <span class="aud-name">${pessoa.nome}</span>
+      <span class="aud-team">${pessoa.label}</span>
+      <span class="aud-total"><b>${pessoa.total}</b> reuniões</span>
+    </div>
+    <div class="aud-body" id="${aid}">${linhas}</div>
+  </div>`;
+}
+
+function renderAuditoria(data) {
+  let html = `<div class="kpi-head">Auditoria — pra quais closers cada pessoa marcou reuniões · ${data.month_label}</div>`;
+
+  html += `<div class="aud-section-title">SDRs</div>`;
+  if (data.sdrs && data.sdrs.length) {
+    const sdrs = data.sdrs.slice().sort((a,b) => b.total - a.total);
+    sdrs.forEach((s, i) => { html += auditoriaBloco(s, i, 'aud-sdr'); });
+  } else {
+    html += '<div class="aud-empty">Nenhum SDR encontrado no CSV para esse mês.</div>';
+  }
+
+  html += `<div class="aud-section-title">Liderança</div>`;
+  if (data.liderancas && data.liderancas.length) {
+    const lids = data.liderancas.slice().sort((a,b) => b.total - a.total);
+    lids.forEach((s, i) => { html += auditoriaBloco(s, i, 'aud-lid'); });
+  } else {
+    html += '<div class="aud-empty">Nenhum Team Leader ou Head encontrado no CSV para esse mês.</div>';
+  }
+
   $('root-aud').innerHTML = html;
   document.querySelectorAll('.aud-head[data-aud]').forEach(el => {
     el.addEventListener('click', () => {

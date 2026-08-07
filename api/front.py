@@ -52,7 +52,7 @@ HTML = r"""<!DOCTYPE html>
   .kpi.plan { border-color:var(--gold); background:var(--gold-soft); }
   .kpi .lbl { font-size:11px; color:var(--muted); text-transform:uppercase; letter-spacing:.5px; }
   .kpi .val { font-size:30px; font-weight:800; line-height:1.1; }
-  .kpi.plan .val{color:var(--text);} .kpi.done .val{color:var(--text);}
+  .kpi.plan .val{color:var(--text);} .kpi.done .val{color:var(--text);} .kpi.valid .val{color:var(--text);}
   .kpi.nsw .val{color:var(--text);} .kpi.reag .val{color:var(--text);}
 
   .month-strip { display:flex; gap:16px; flex-wrap:wrap; align-items:center; background:var(--card);
@@ -82,7 +82,7 @@ HTML = r"""<!DOCTYPE html>
   td.l, th.l { text-align:left; }
   tr.total td { font-weight:800; border-top:2px solid var(--gold); background:var(--gold-soft); color:var(--text); }
   tr.today td { background:var(--gold-soft); }
-  .c-plan{color:var(--text); font-weight:800;} .c-done{color:var(--done);} .c-nsw{color:var(--nsw);} .c-reag{color:var(--reag);}
+  .c-plan{color:var(--text); font-weight:800;} .c-done{color:var(--done);} .c-valid{color:#0a5f36; font-weight:700;} .c-nsw{color:var(--nsw);} .c-reag{color:var(--reag);}
   .warn { color:var(--nsw); font-size:12px; margin-bottom:16px; }
   .muted { color:var(--muted); }
 
@@ -365,7 +365,7 @@ async function buscar(isAuto) {
 }
 
 function cols(c) {
-  return `<td class="c-plan">${c.planned}</td><td class="c-done">${c.done}</td>`
+  return `<td class="c-plan">${c.planned}</td><td class="c-done">${c.done}</td><td class="c-valid">${c.validada}</td>`
        + `<td class="c-nsw">${c.no_show}</td><td class="c-reag">${c.reagendada}</td>`;
 }
 
@@ -377,7 +377,7 @@ function render(data) {
   const dSel = Math.min(diaSelecionado() || 1, nDays);
   const dSelStr = String(dSel).padStart(2,'0');
   const mesStr = String(data.month).padStart(2,'0');
-  const zero = {planned:0, done:0, no_show:0, reagendada:0};
+  const zero = {planned:0, done:0, validada:0, no_show:0, reagendada:0};
   const getDia = (lista, n) => { const r = (lista||[]).find(x => x.dia === n); return r ? r.counter : null; };
 
   const tresDias = [];
@@ -385,9 +385,9 @@ function render(data) {
   tresDias.push({n: dSel, rot: 'Dia ' + dSelStr});
   if (dSel + 1 <= nDays)  tresDias.push({n: dSel+1, rot: 'Seguinte'});
 
-  const quatro = c => `<td class="c-plan">${c.planned}</td><td class="c-done">${c.done}</td>`
+  const quatro = c => `<td class="c-plan">${c.planned}</td><td class="c-done">${c.done}</td><td class="c-valid">${c.validada}</td>`
                     + `<td class="c-nsw">${c.no_show}</td><td class="c-reag">${c.reagendada}</td>`;
-  const subHead = extra => `<th class="c-plan${extra||''}">P</th><th class="c-done">F</th><th class="c-nsw">NS</th><th class="c-reag">R</th>`;
+  const subHead = extra => `<th class="c-plan${extra||''}">P</th><th class="c-done">F</th><th class="c-valid">V</th><th class="c-nsw">NS</th><th class="c-reag">R</th>`;
 
   const diaCounter = getDia(data.days, dSel) || zero;
 
@@ -397,6 +397,7 @@ function render(data) {
   html += `<div class="kpis">
     <div class="kpi plan"><div class="lbl">Planejadas</div><div class="val">${diaCounter.planned}</div></div>
     <div class="kpi done"><div class="lbl">Feitas</div><div class="val">${diaCounter.done}</div></div>
+    <div class="kpi valid"><div class="lbl">Validadas</div><div class="val">${diaCounter.validada}</div></div>
     <div class="kpi nsw"><div class="lbl">No Show</div><div class="val">${diaCounter.no_show}</div></div>
     <div class="kpi reag"><div class="lbl">Reagendadas</div><div class="val">${diaCounter.reagendada}</div></div>
   </div>`;
@@ -405,6 +406,7 @@ function render(data) {
     <span class="ms-title">Total do mês — ${data.month_label}</span>
     <span class="ms-item c-plan">Planejadas <b>${mt.planned}</b></span>
     <span class="ms-item c-done">Feitas <b>${mt.done}</b></span>
+    <span class="ms-item c-valid">Validadas <b>${mt.validada}</b></span>
     <span class="ms-item c-nsw">No Show <b>${mt.no_show}</b></span>
     <span class="ms-item c-reag">Reagendadas <b>${mt.reagendada}</b></span>
   </div>`;
@@ -420,12 +422,12 @@ function render(data) {
         <div class="tc-row">
           <span class="tc-lbl">Total dia ${dSelStr}</span>
           <span class="tc-big">${cd.planned}</span>
-          <span class="tc-sub">plan · <span class="c-done">${cd.done}</span> feitas · <span class="c-nsw">${cd.no_show}</span> NS · <span class="c-reag">${cd.reagendada}</span> reag</span>
+          <span class="tc-sub">plan · <span class="c-done">${cd.done}</span> feitas · <span class="c-valid">${cd.validada}</span> valid · <span class="c-nsw">${cd.no_show}</span> NS · <span class="c-reag">${cd.reagendada}</span> reag</span>
         </div>
         <div class="tc-row">
           <span class="tc-lbl">Total mês</span>
           <span class="tc-big">${cm.planned}</span>
-          <span class="tc-sub">plan · <span class="c-done">${cm.done}</span> feitas · <span class="c-nsw">${cm.no_show}</span> NS · <span class="c-reag">${cm.reagendada}</span> reag</span>
+          <span class="tc-sub">plan · <span class="c-done">${cm.done}</span> feitas · <span class="c-valid">${cm.validada}</span> valid · <span class="c-nsw">${cm.no_show}</span> NS · <span class="c-reag">${cm.reagendada}</span> reag</span>
         </div>
       </div>`;
     }
@@ -438,15 +440,15 @@ function render(data) {
       <th class="closer l" rowspan="2">Closer</th><th class="team l" rowspan="2">Time</th>`;
     for (const d of tresDias) {
       const cls = (d.n === dSel) ? ' today' : '';
-      html += `<th colspan="4" class="grp-day${cls}">${d.rot} <span class="muted">${String(d.n).padStart(2,'0')}</span></th>`;
+      html += `<th colspan="5" class="grp-day${cls}">${d.rot} <span class="muted">${String(d.n).padStart(2,'0')}</span></th>`;
     }
-    html += `<th colspan="4" class="grp-tot mtot">Total do mês</th></tr>`;
+    html += `<th colspan="5" class="grp-tot mtot">Total do mês</th></tr>`;
     html += `<tr class="sub">`;
     for (const d of tresDias) html += subHead((d.n === dSel) ? ' today' : '');
-    html += `<th class="c-plan mtot">P</th><th class="c-done">F</th><th class="c-nsw">NS</th><th class="c-reag">R</th>`;
+    html += `<th class="c-plan mtot">P</th><th class="c-done">F</th><th class="c-valid">V</th><th class="c-nsw">NS</th><th class="c-reag">R</th>`;
     html += `</tr></thead><tbody>`;
 
-    const nCols = 2 + tresDias.length * 4 + 4;
+    const nCols = 2 + tresDias.length * 5 + 5;
     data.por_closer.forEach((c, i) => {
       const cid = 'cr-' + i;
       html += `<tr><td class="closer l"><span class="cl-wrap"><span class="cl-toggle" data-cr="${cid}" id="${cid}-t">▸ criador</span>${c.name}</span></td><td class="team l">${c.time}</td>`;
@@ -509,17 +511,17 @@ function render(data) {
 
     html += `<tr class="foot"><td class="closer l">TOTAL</td><td class="team l"></td>`;
     for (const d of tresDias) html += quatro(getDia(data.days, d.n) || zero);
-    html += `<td class="c-plan mtot">${mt.planned}</td><td class="c-done">${mt.done}</td><td class="c-nsw">${mt.no_show}</td><td class="c-reag">${mt.reagendada}</td></tr>`;
+    html += `<td class="c-plan mtot">${mt.planned}</td><td class="c-done">${mt.done}</td><td class="c-valid">${mt.validada}</td><td class="c-nsw">${mt.no_show}</td><td class="c-reag">${mt.reagendada}</td></tr>`;
     html += `</tbody></table></div>
-      <div class="muted" style="font-size:11px;margin-top:8px">P = planejadas · F = feitas · NS = no-show · R = reagendadas</div></div>`;
+      <div class="muted" style="font-size:11px;margin-top:8px">P = planejadas · F = feitas · V = validadas · NS = no-show · R = reagendadas</div></div>`;
 
-    // ---- distribuicao por closer: reunioes FEITAS/concluidas + % sobre o total de todos os closers ----
-    const totalTodos = data.por_closer.reduce((soma, c) => soma + c.total.done, 0);
-    const distOrdenada = data.por_closer.slice().sort((a,b) => b.total.done - a.total.done);
-    html += `<div class="panel"><h2>Distribuição por closer — reuniões feitas · ${data.month_label}</h2>
+    // ---- distribuicao por closer: reunioes VALIDADAS + % sobre o total de todos os closers ----
+    const totalTodos = data.por_closer.reduce((soma, c) => soma + c.total.validada, 0);
+    const distOrdenada = data.por_closer.slice().sort((a,b) => b.total.validada - a.total.validada);
+    html += `<div class="panel"><h2>Distribuição por closer — reuniões validadas · ${data.month_label}</h2>
       <table class="aud-tbl"><tr><th class="l">Closer</th><th>Quantidade</th><th>%</th><th class="barcell"></th></tr>`;
     for (const c of distOrdenada) {
-      const qtd = c.total.done;
+      const qtd = c.total.validada;
       const pct = totalTodos ? (qtd / totalTodos * 100) : 0;
       html += `<tr><td class="l">${c.name}</td><td class="qtd">${qtd}</td>
         <td>${pct.toFixed(1)}%</td>
@@ -533,7 +535,7 @@ function render(data) {
   const gdMap = {};
   if (priv) for (const g of (data.geral_dia || [])) gdMap[g.dia] = g.itens || [];
   html += `<details class="diaria"><summary>Dia a dia — todos os times (${data.month_label})${priv ? ' · clique num dia para ver as reuniões' : ''}</summary><div class="inner">
-    <table><tr>${priv ? '<th style="width:24px"></th>' : ''}<th class="l">Dia</th><th>Planejado</th><th>Feitas</th><th>No Show</th><th>Reagendadas</th></tr>`;
+    <table><tr>${priv ? '<th style="width:24px"></th>' : ''}<th class="l">Dia</th><th>Planejado</th><th>Feitas</th><th>Validadas</th><th>No Show</th><th>Reagendadas</th></tr>`;
   for (const row of data.days) {
     const cls = (row.dia === dSel) ? ' class="today"' : '';
     const itens = priv ? (gdMap[row.dia] || []) : [];
@@ -550,7 +552,7 @@ function render(data) {
           <td><a href="${it.url}" target="_blank" rel="noopener">${it.title}</a></td></tr>`;
       }
       sub += `</table>`;
-      const colspan = 5 + 1; // arrow + Dia + 4
+      const colspan = 6 + 1; // arrow + Dia + 5 (P F V NS R)
       html += `<tr class="dd-detail" id="ddrow-${row.dia}" style="display:none"><td colspan="${colspan}"><div class="dd-box">${sub}</div></td></tr>`;
     }
   }

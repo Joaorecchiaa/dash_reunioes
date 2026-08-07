@@ -183,10 +183,16 @@ def campo_validado_sim(a):
     return str(valor).strip().lower() == "sim"
 
 
-def eh_validada(a):
-    """Reuniao VALIDADA = feita (type=meeting, done=true) E
-    campo "Reuniao Validada?" = Sim."""
-    return a.get("type") == "meeting" and bool(a.get("done")) and campo_validado_sim(a)
+def eh_validada(a, deal_info):
+    """Reuniao VALIDADA = feita (type=meeting, done=true) E o NEGOCIO
+    vinculado tem o campo "Reuniao Validada?" = Sim.
+    Esse campo vive no negocio (fica obrigatorio quando o negocio entra na
+    etapa Negociacao), nao na atividade -- por isso recebe `deal_info`
+    ({deal_id: <negocio cru>}) em vez de olhar dentro da propria activity."""
+    if a.get("type") != "meeting" or not a.get("done"):
+        return False
+    info = deal_info.get(a.get("deal_id")) or {}
+    return campo_validado_sim(info)
 
 
 def soma_em(counter, a):
@@ -388,15 +394,17 @@ def _ranking_por_criador(auditados, year, month):
         if not owner_id:
             continue
         acts = acts_do_owner(owner_id, year, month)
+        deal_ids = {a["deal_id"] for a in acts if a.get("deal_id")}
+        deal_info = info_dos_deals(deal_ids)
         for a in acts:
             due = a.get("due_date")
             if not due:
                 continue
-            if not eh_validada(a):
-                continue  # so conta reuniao VALIDADA (feita + campo "Reuniao Validada?" = Sim)
             d = datetime.strptime(due, "%Y-%m-%d").date()
             if d.year != year or d.month != month:
                 continue
+            if not eh_validada(a, deal_info):
+                continue  # so conta reuniao VALIDADA (feita + campo "Reuniao Validada?" = Sim no negocio)
             creator = a.get("creator_user_id")
             if creator == owner_id:
                 continue  # marcou pra si mesmo, nao conta

@@ -702,6 +702,31 @@ def api_debug_deal():
         return jsonify({"error": str(e)}), 500
 
 
+@app.route("/api/debug_deal_compare")
+def api_debug_deal_compare():
+    """Diagnostico: busca o MESMO negocio de duas formas -- fetch individual
+    (/deals/{id}) e fetch em lote (/deals?ids=...), que e como o dashboard
+    de verdade busca. O Pipedrive as vezes omite custom_fields na busca em
+    lote; isso mostra se e esse o problema. So privilegiado."""
+    if not eh_privilegiado(request):
+        return jsonify({"error": "acesso restrito"}), 401
+    did = request.args.get("id")
+    if not did:
+        return jsonify({"error": "informe ?id=<deal_id>"}), 400
+    try:
+        individual = client.get_deal_raw(did)
+        lote_map = client.get_deals_info([did])
+        em_lote = lote_map.get(int(did)) if did.isdigit() else None
+        if em_lote is None:
+            em_lote = lote_map.get(did)
+        return jsonify({
+            "busca_individual (GET /deals/{id})": individual,
+            "busca_em_lote (GET /deals?ids=..., como o dashboard usa)": em_lote,
+        })
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
 @app.route("/api/login", methods=["POST"])
 def api_login():
     dados = request.get_json(silent=True) or {}
@@ -730,7 +755,7 @@ def index():
 
 
 # rotas de API "de verdade" que existem
-_API_ROTAS = ("/api/init", "/api/closers", "/api/dashboard", "/api/login", "/api/me", "/api/auditoria_sdr", "/api/debug_activity", "/api/debug_deal")
+_API_ROTAS = ("/api/init", "/api/closers", "/api/dashboard", "/api/login", "/api/me", "/api/auditoria_sdr", "/api/debug_activity", "/api/debug_deal", "/api/debug_deal_compare")
 
 
 @app.errorhandler(404)

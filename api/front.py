@@ -513,13 +513,13 @@ function render(data) {
     html += `</tbody></table></div>
       <div class="muted" style="font-size:11px;margin-top:8px">P = planejadas · F = feitas · NS = no-show · R = reagendadas</div></div>`;
 
-    // ---- distribuicao por closer: quantidade + % sobre o total de reunioes de todos os closers ----
-    const totalTodos = data.por_closer.reduce((soma, c) => soma + c.total.planned, 0);
-    const distOrdenada = data.por_closer.slice().sort((a,b) => b.total.planned - a.total.planned);
-    html += `<div class="panel"><h2>Distribuição por closer — ${data.month_label}</h2>
+    // ---- distribuicao por closer: reunioes FEITAS/concluidas + % sobre o total de todos os closers ----
+    const totalTodos = data.por_closer.reduce((soma, c) => soma + c.total.done, 0);
+    const distOrdenada = data.por_closer.slice().sort((a,b) => b.total.done - a.total.done);
+    html += `<div class="panel"><h2>Distribuição por closer — reuniões feitas · ${data.month_label}</h2>
       <table class="aud-tbl"><tr><th class="l">Closer</th><th>Quantidade</th><th>%</th><th class="barcell"></th></tr>`;
     for (const c of distOrdenada) {
-      const qtd = c.total.planned;
+      const qtd = c.total.done;
       const pct = totalTodos ? (qtd / totalTodos * 100) : 0;
       html += `<tr><td class="l">${c.name}</td><td class="qtd">${qtd}</td>
         <td>${pct.toFixed(1)}%</td>

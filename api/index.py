@@ -227,6 +227,10 @@ def closers_do_mes(year, month):
     return out
 
 
+# nomes (normalizados, sem acento/minusculo) excluidos manualmente da auditoria de SDR
+SDR_EXCLUIDOS = {"priscila ribeiro"}
+
+
 def sdrs_do_mes(year, month):
     """{nome: time} dos SDRs ativos naquele mes/ano (cargo comeca com 'sdr')."""
     out = {}
@@ -235,8 +239,26 @@ def sdrs_do_mes(year, month):
             continue
         if r["mes"] != month or r["ano"] != year:
             continue
+        if norm(r["nome"]) in SDR_EXCLUIDOS:
+            continue
         if r["nome"]:
             out[r["nome"]] = r["time"]
+    return out
+
+
+def liderancas_do_mes(year, month):
+    """{nome: cargo} de quem nao e closer nem sdr (team leaders, head, etc.)
+    -- pega qualquer cargo diferente desses dois, entao nao precisa saber
+    o texto exato usado na planilha para "Team Leader" ou "Head"."""
+    out = {}
+    for r in carrega_csv():
+        cargo = r["cargo"]
+        if not cargo or cargo.startswith("closer") or cargo.startswith("sdr"):
+            continue
+        if r["mes"] != month or r["ano"] != year:
+            continue
+        if r["nome"]:
+            out[r["nome"]] = cargo.title()
     return out
 
 
@@ -280,30 +302,32 @@ def acts_do_owner(owner_id, year, month):
     return acts
 
 
-def build_auditoria_sdr(year, month):
-    """Para cada SDR do mes: ranking de closers pra quem ele marcou reunioes.
-    Conta toda reuniao marcada (qualquer desfecho) com due_date no mes.
+def _ranking_por_criador(auditados, year, month):
+    """Para cada pessoa em `auditados` ({nome: label}): ranking de closers
+    pra quem ela marcou reunioes no mes. Conta toda reuniao marcada
+    (qualquer desfecho). Funciona pra SDR, Team Leader, Head -- qualquer um
+    que tenha usuario no Pipedrive e apareca como creator_user_id de uma
+    atividade de algum closer.
 
     A API v2 do Pipedrive nao filtra activities por "quem criou" (nao existe
-    parametro de creator), so por owner_id. Entao em vez de pedir "o que a
-    SDR criou", percorremos as atividades de cada CLOSER (que ja sabemos
+    parametro de creator), so por owner_id. Entao em vez de pedir "o que essa
+    pessoa criou", percorremos as atividades de cada CLOSER (que ja sabemos
     buscar por owner_id, com cache) e filtramos localmente as que foram
-    criadas por alguma SDR -- mesmo resultado, sem endpoint problematico."""
+    criadas por alguem de `auditados` -- mesmo resultado, sem endpoint
+    problematico."""
     users, _ = carrega_meta()
     closers = closers_do_mes(year, month)   # nome -> time
-    sdrs = sdrs_do_mes(year, month)         # nome -> time
 
-    # user_id -> nome de exibicao, so para quem e SDR neste mes
-    sdr_id_to_nome = {}
-    for nome in sdrs:
+    id_to_nome = {}
+    for nome in auditados:
         uid = users.get(nome.strip().lower())
         if uid:
-            sdr_id_to_nome[uid] = nome
+            id_to_nome[uid] = nome
 
-    contadores = {nome: defaultdict(int) for nome in sdrs}
-    totais = {nome: 0 for nome in sdrs}
+    contadores = {nome: defaultdict(int) for nome in auditados}
+    totais = {nome: 0 for nome in auditados}
 
-    for closer_nome, _time_c in closers.items():
+    for closer_nome in closers:
         owner_id = users.get(closer_nome.strip().lower())
         if not owner_id:
             continue
@@ -317,27 +341,33 @@ def build_auditoria_sdr(year, month):
                 continue
             creator = a.get("creator_user_id")
             if creator == owner_id:
-                continue  # SDR marcando pra si mesma nao conta (nao e o caso aqui, mas por seguranca)
-            sdr_nome = sdr_id_to_nome.get(creator)
-            if not sdr_nome:
-                continue  # criado por alguem que nao e SDR (o proprio closer, outro closer, etc.)
-            contadores[sdr_nome][closer_nome] += 1
-            totais[sdr_nome] += 1
+                continue  # marcou pra si mesmo, nao conta
+            nome_criador = id_to_nome.get(creator)
+            if not nome_criador:
+                continue  # criado por alguem fora do grupo auditado
+            contadores[nome_criador][closer_nome] += 1
+            totais[nome_criador] += 1
 
     saida = []
-    for sdr_nome, sdr_time in sorted(sdrs.items()):
-        encontrado = users.get(sdr_nome.strip().lower()) is not None
-        ranking = sorted(contadores[sdr_nome].items(), key=lambda x: (-x[1], x[0]))
+    for nome, label in sorted(auditados.items()):
+        encontrado = users.get(nome.strip().lower()) is not None
+        ranking = sorted(contadores[nome].items(), key=lambda x: (-x[1], x[0]))
         saida.append({
-            "sdr": sdr_nome, "time": sdr_time, "encontrado": encontrado,
-            "total": totais[sdr_nome],
+            "nome": nome, "label": label, "encontrado": encontrado,
+            "total": totais[nome],
             "closers": [{"closer": k, "qtd": v} for k, v in ranking],
         })
+    return saida
 
+
+def build_auditoria_sdr(year, month):
+    sdrs = sdrs_do_mes(year, month)
+    lideres = liderancas_do_mes(year, month)
     return {
         "year": year, "month": month,
         "month_label": f"{MESES_NOME[month-1]}/{year}",
-        "sdrs": saida,
+        "sdrs": _ranking_por_criador(sdrs, year, month),
+        "liderancas": _ranking_por_criador(lideres, year, month),
     }
 
 

@@ -444,6 +444,7 @@ def _ranking_por_criador(auditados, year, month):
         id_to_nome_geral.setdefault(uid, nome_lower.title())
 
     contadores = {nome: defaultdict(int) for nome in auditados}
+    negocios_por = {nome: defaultdict(list) for nome in auditados}  # nome -> {closer: [negocios]}
     totais = {nome: 0 for nome in auditados}
 
     for nome_pessoa in auditados:
@@ -462,12 +463,19 @@ def _ranking_por_criador(auditados, year, month):
                 continue
             if not eh_reuniao_valida_para_auditoria(a, pessoa_id, deal_info):
                 continue
-            dono_negocio = (deal_info.get(a.get("deal_id")) or {}).get("owner_id")
+            deal_id = a.get("deal_id")
+            info = deal_info.get(deal_id) or {}
+            dono_negocio = info.get("owner_id")
             nome_closer = (id_to_closer_nome.get(dono_negocio)
                            or id_to_nome_geral.get(dono_negocio)
                            or f"user {dono_negocio}")
             contadores[nome_pessoa][nome_closer] += 1
             totais[nome_pessoa] += 1
+            negocios_por[nome_pessoa][nome_closer].append({
+                "id": deal_id,
+                "title": info.get("title") or ("Negocio " + str(deal_id)),
+                "url": PIPEDRIVE_BASE_URL + "/deal/" + str(deal_id),
+            })
 
     saida = []
     for nome, label in sorted(auditados.items()):
@@ -476,7 +484,11 @@ def _ranking_por_criador(auditados, year, month):
         saida.append({
             "nome": nome, "label": label, "encontrado": encontrado,
             "total": totais[nome],
-            "closers": [{"closer": k, "qtd": v} for k, v in ranking],
+            "closers": [
+                {"closer": k, "qtd": v,
+                 "negocios": sorted(negocios_por[nome][k], key=lambda x: x["id"])}
+                for k, v in ranking
+            ],
         })
     return saida
 

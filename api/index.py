@@ -138,8 +138,11 @@ def parse_mes(v):
     return MES_TO_NUM.get(v) or MES_TO_NUM.get(v[:3])
 
 
-def novo_contador():
-    return {"planned": 0, "done": 0, "no_show": 0, "reagendada": 0}
+def novo_contador(com_validada=False):
+    base = {"planned": 0, "done": 0, "no_show": 0, "reagendada": 0}
+    if com_validada:
+        base["validada"] = 0
+    return base
 
 
 # campo customizado "Reuniao Validada?" no Pipedrive (id fixo do campo)
@@ -227,29 +230,41 @@ def campo_validado_diferente_de_nao(info):
     return norm(valor) != "nao"
 
 
+def atividade_e_validada(a, deal_info):
+    """Para a coluna 'Validadas' na tela de Reunioes: feita (type=meeting,
+    done=true) E o negocio vinculado tem 'Reuniao Validada?' == 'Sim'
+    (estrito -- em branco NAO conta)."""
+    if a.get("type") != "meeting" or not a.get("done"):
+        return False
+    info = deal_info.get(a.get("deal_id")) or {}
+    return campo_validado_sim(info)
+
+
 def eh_reuniao_valida_para_auditoria(a, pessoa_id, deal_info):
     """Reuniao conta na Auditoria SDR/Lideranca quando:
-    - type == "meeting" (nunca no_show/reagendamento)
+    - type == "meeting" e done == true (reuniao FEITA)
     - o RESPONSAVEL (owner_id) da propria atividade e a pessoa auditada
       -- ja garantido de fora, pois as atividades vem de acts_do_owner(pessoa_id)
     - o negocio vinculado tem PROPRIETARIO (owner_id do negocio) diferente
       da pessoa auditada -- nao conta quando o negocio e dela mesma
-    - o campo "Reuniao Validada?" do negocio nao esta como 'Nao'
-      (em branco ou 'Sim' contam)."""
-    if a.get("type") != "meeting":
+    - o campo "Reuniao Validada?" do negocio == 'Sim' (estrito -- em
+      branco NAO conta)."""
+    if a.get("type") != "meeting" or not a.get("done"):
         return False
     info = deal_info.get(a.get("deal_id")) or {}
     if info.get("owner_id") == pessoa_id:
         return False
-    return campo_validado_diferente_de_nao(info)
+    return campo_validado_sim(info)
 
 
-def soma_em(counter, a):
+def soma_em(counter, a, eh_valid=False):
     tipo = a.get("type")
     done = a.get("done")
     counter["planned"] += 1
     if tipo == "meeting" and done:
         counter["done"] += 1
+        if eh_valid and "validada" in counter:
+            counter["validada"] += 1
     elif tipo == "no_show":
         counter["no_show"] += 1
     elif tipo == "reagendamento":
@@ -527,7 +542,7 @@ def build_dashboard(year, month, time_filtro=None, closer_filtro=None, privilegi
         closers = {n: t for n, t in closers.items() if t == time_filtro.upper()}
     if closer_filtro and closer_filtro.upper() != "TODOS":
         closers = {n: t for n, t in closers.items() if n == closer_filtro}
-    return _build_dashboard_generico(closers, year, month, privilegiado)
+    return _build_dashboard_generico(closers, year, month, privilegiado, com_validada=False)
 
 
 def build_dashboard_sdr(year, month, time_filtro=None, sdr_filtro=None, privilegiado=False):
@@ -536,27 +551,27 @@ def build_dashboard_sdr(year, month, time_filtro=None, sdr_filtro=None, privileg
         sdrs = {n: t for n, t in sdrs.items() if str(t).upper() == time_filtro.upper()}
     if sdr_filtro and sdr_filtro.upper() != "TODOS":
         sdrs = {n: t for n, t in sdrs.items() if n == sdr_filtro}
-    return _build_dashboard_generico(sdrs, year, month, privilegiado)
+    return _build_dashboard_generico(sdrs, year, month, privilegiado, com_validada=True)
 
 
-def _build_dashboard_generico(closers, year, month, privilegiado=False):
+def _build_dashboard_generico(closers, year, month, privilegiado=False, com_validada=False):
     """Nucleo do dashboard de reunioes -- recebe `closers` ja resolvido
     ({nome: time}) e calcula dias/KPIs/matriz/etc. Usado tanto pra closers
     quanto pra SDRs (so muda quem entra no dict de entrada)."""
     users, pipelines = carrega_meta()
 
     last_day = calendar.monthrange(year, month)[1]
-    combined_days = {d: novo_contador() for d in range(1, last_day + 1)}
+    combined_days = {d: novo_contador(com_validada) for d in range(1, last_day + 1)}
     geral_dia = {d: [] for d in range(1, last_day + 1)}  # dia -> reunioes de todos os closers (so priv)
-    month_total = novo_contador()
+    month_total = novo_contador(com_validada)
     por_closer = []
-    por_time = defaultdict(novo_contador)
+    por_time = defaultdict(lambda: novo_contador(com_validada))
     por_time_days = {}          # time -> {dia: contador}
     nao_encontrados = []
 
     for nome, time_c in sorted(closers.items()):
         if time_c not in por_time_days:
-            por_time_days[time_c] = {d: novo_contador() for d in range(1, last_day + 1)}
+            por_time_days[time_c] = {d: novo_contador(com_validada) for d in range(1, last_day + 1)}
 
         owner_id = users.get(nome.strip().lower())
         if not owner_id:
@@ -567,9 +582,9 @@ def _build_dashboard_generico(closers, year, month, privilegiado=False):
         deal_ids = {a["deal_id"] for a in acts if a.get("deal_id")}
         deal_info = info_dos_deals(deal_ids)
 
-        c_total = novo_contador()
-        c_days = {d: novo_contador() for d in range(1, last_day + 1)}
-        c_pipes = defaultdict(novo_contador)
+        c_total = novo_contador(com_validada)
+        c_days = {d: novo_contador(com_validada) for d in range(1, last_day + 1)}
+        c_pipes = defaultdict(lambda: novo_contador(com_validada))
         c_criadas = {"proprio": 0, "outro": 0}
         c_criadas_days = {d: {"proprio": 0, "outro": 0} for d in range(1, last_day + 1)}
         c_negocios_mes = {}   # deal_id -> {id,title,url}  (dedupe do mes)
@@ -586,17 +601,19 @@ def _build_dashboard_generico(closers, year, month, privilegiado=False):
             if d.year != year or d.month != month:
                 continue
 
-            soma_em(combined_days[d.day], a)
-            soma_em(month_total, a)
-            soma_em(c_total, a)
-            soma_em(c_days[d.day], a)
-            soma_em(por_time[time_c], a)
-            soma_em(por_time_days[time_c][d.day], a)
-
             info = deal_info.get(deal_id) or {}
+            eh_valid = com_validada and atividade_e_validada(a, deal_info)
+
+            soma_em(combined_days[d.day], a, eh_valid)
+            soma_em(month_total, a, eh_valid)
+            soma_em(c_total, a, eh_valid)
+            soma_em(c_days[d.day], a, eh_valid)
+            soma_em(por_time[time_c], a, eh_valid)
+            soma_em(por_time_days[time_c][d.day], a, eh_valid)
+
             pid = info.get("pipeline_id")
             pnome = pipelines.get(pid, f"Funil {pid}") if pid else "Sem funil"
-            soma_em(c_pipes[pnome], a)
+            soma_em(c_pipes[pnome], a, eh_valid)
 
             chave = "proprio" if a.get("creator_user_id") == owner_id else "outro"
             c_criadas[chave] += 1

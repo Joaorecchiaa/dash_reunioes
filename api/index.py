@@ -522,13 +522,28 @@ def info_dos_deals(deal_ids):
 # ---------- construcao ----------
 
 def build_dashboard(year, month, time_filtro=None, closer_filtro=None, privilegiado=False):
-    users, pipelines = carrega_meta()
     closers = closers_do_mes(year, month)
-
     if time_filtro and time_filtro.upper() != "TODOS":
         closers = {n: t for n, t in closers.items() if t == time_filtro.upper()}
     if closer_filtro and closer_filtro.upper() != "TODOS":
         closers = {n: t for n, t in closers.items() if n == closer_filtro}
+    return _build_dashboard_generico(closers, year, month, privilegiado)
+
+
+def build_dashboard_sdr(year, month, time_filtro=None, sdr_filtro=None, privilegiado=False):
+    sdrs = sdrs_do_mes(year, month)
+    if time_filtro and time_filtro.upper() != "TODOS":
+        sdrs = {n: t for n, t in sdrs.items() if str(t).upper() == time_filtro.upper()}
+    if sdr_filtro and sdr_filtro.upper() != "TODOS":
+        sdrs = {n: t for n, t in sdrs.items() if n == sdr_filtro}
+    return _build_dashboard_generico(sdrs, year, month, privilegiado)
+
+
+def _build_dashboard_generico(closers, year, month, privilegiado=False):
+    """Nucleo do dashboard de reunioes -- recebe `closers` ja resolvido
+    ({nome: time}) e calcula dias/KPIs/matriz/etc. Usado tanto pra closers
+    quanto pra SDRs (so muda quem entra no dict de entrada)."""
+    users, pipelines = carrega_meta()
 
     last_day = calendar.monthrange(year, month)[1]
     combined_days = {d: novo_contador() for d in range(1, last_day + 1)}
@@ -718,6 +733,37 @@ def api_dashboard():
         return jsonify({"error": str(e)}), 500
 
 
+@app.route("/api/sdrs")
+def api_sdrs():
+    mes = request.args.get("month", "")
+    try:
+        year, month = map(int, mes.split("-"))
+    except Exception:
+        hoje = date.today()
+        year, month = hoje.year, hoje.month
+    sdrs = sdrs_do_mes(year, month)
+    return jsonify({"sdrs": ["Todos"] + sorted(sdrs.keys())})
+
+
+@app.route("/api/dashboard_sdr")
+def api_dashboard_sdr():
+    mes = request.args.get("month", "")
+    try:
+        year, month = map(int, mes.split("-"))
+    except Exception:
+        hoje = date.today()
+        year, month = hoje.year, hoje.month
+    team = request.args.get("team")
+    sdr = request.args.get("sdr")
+    priv = eh_privilegiado(request)
+    try:
+        return jsonify(build_dashboard_sdr(year, month, team, sdr, privilegiado=priv))
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return jsonify({"error": str(e)}), 500
+
+
 @app.route("/api/auditoria_sdr")
 def api_auditoria_sdr():
     # auditoria revela pra quem cada SDR marca -> so privilegiado
@@ -822,7 +868,7 @@ def index():
 
 
 # rotas de API "de verdade" que existem
-_API_ROTAS = ("/api/init", "/api/closers", "/api/dashboard", "/api/login", "/api/me", "/api/auditoria_sdr", "/api/debug_activity", "/api/debug_deal", "/api/debug_deal_compare")
+_API_ROTAS = ("/api/init", "/api/closers", "/api/dashboard", "/api/sdrs", "/api/dashboard_sdr", "/api/login", "/api/me", "/api/auditoria_sdr", "/api/debug_activity", "/api/debug_deal", "/api/debug_deal_compare")
 
 
 @app.errorhandler(404)

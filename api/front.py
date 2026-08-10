@@ -245,7 +245,7 @@ HTML = r"""<!DOCTYPE html>
       <div class="field"><label>Mês</label><select id="f-mes"></select></div>
       <div class="field"><label>Dia</label><select id="f-dia"></select></div>
       <div class="field"><label>Time</label><select id="f-time"></select></div>
-      <div class="field"><label>Closer</label><select id="f-closer"></select></div>
+      <div class="field"><label id="f-closer-label">Closer</label><select id="f-closer"></select></div>
       <button id="btn">Pesquisar</button>
       <div class="updated"><div id="updated"></div><div class="auto" id="auto"></div></div>
     </div>
@@ -253,10 +253,12 @@ HTML = r"""<!DOCTYPE html>
 
   <div class="page">
     <div class="tabs" id="tabs">
-      <button class="tab active" id="tab-reunioes" data-tab="reunioes">Reuniões</button>
+      <button class="tab active" id="tab-reunioes" data-tab="reunioes">Reuniões - Closers</button>
+      <button class="tab" id="tab-sdrs" data-tab="sdrs">Reuniões - SDRs</button>
       <button class="tab" id="tab-auditoria" data-tab="auditoria">Auditoria SDR</button>
     </div>
     <div id="root"><div class="muted">Carregando filtros…</div></div>
+    <div id="root-sdr" style="display:none"><div class="muted">Carregando filtros…</div></div>
     <div id="root-aud" style="display:none"><div class="muted">Carregando auditoria…</div></div>
   </div>
 
@@ -274,6 +276,8 @@ const diaHojeNum = hoje.getDate();
 let CURRENT_MONTH = null;
 let REFRESH_MS = 1200000;
 let LAST_DATA = null;
+let LAST_DATA_SDR = null;
+let MODO_PESSOA = 'closer';  // 'closer' | 'sdr' -- controla o filtro compartilhado e o botao Pesquisar
 
 function opt(sel, arr, getV, getL) {
   sel.innerHTML = '';
@@ -285,7 +289,8 @@ function opt(sel, arr, getV, getL) {
 }
 
 function ehDefaultAtual() {
-  return $('f-mes').value === CURRENT_MONTH
+  return MODO_PESSOA === 'closer'
+      && $('f-mes').value === CURRENT_MONTH
       && $('f-time').value === 'Todos'
       && $('f-closer').value === 'Todos';
 }
@@ -324,20 +329,31 @@ async function init() {
   $('f-mes').value = d.current;
   opt($('f-time'), d.teams, x=>x, x=>x);
   preencheDias();
-  await carregaClosers();
+  await carregaPessoas();
   buscar(false);
   setInterval(() => { if (ehDefaultAtual()) buscar(true); }, REFRESH_MS);
 }
 
-async function carregaClosers() {
-  const d = await (await fetch('/api/closers?month=' + $('f-mes').value)).json();
-  opt($('f-closer'), d.closers, x=>x, x=>x);
+async function carregaPessoas() {
+  const endpoint = MODO_PESSOA === 'sdr' ? '/api/sdrs' : '/api/closers';
+  const campo = MODO_PESSOA === 'sdr' ? 'sdrs' : 'closers';
+  $('f-closer-label').textContent = MODO_PESSOA === 'sdr' ? 'SDR' : 'Closer';
+  const d = await (await fetch(endpoint + '?month=' + $('f-mes').value)).json();
+  opt($('f-closer'), d[campo], x=>x, x=>x);
 }
 
-$('f-mes').addEventListener('change', async () => { preencheDias(); await carregaClosers(); });
+$('f-mes').addEventListener('change', async () => {
+  preencheDias();
+  await carregaPessoas();
+});
 // dia e so recorte visual: re-renderiza na hora, sem nova requisicao
-$('f-dia').addEventListener('change', () => { if (LAST_DATA) render(LAST_DATA); });
-$('btn').addEventListener('click', () => buscar(false));
+$('f-dia').addEventListener('change', () => {
+  if (MODO_PESSOA === 'sdr') { if (LAST_DATA_SDR) renderSdr(LAST_DATA_SDR); }
+  else { if (LAST_DATA) render(LAST_DATA); }
+});
+$('btn').addEventListener('click', () => {
+  if (MODO_PESSOA === 'sdr') buscarSdr(false); else buscar(false);
+});
 
 async function buscar(isAuto) {
   // virada de dia: se a data mudou desde que a pagina abriu, recarrega
@@ -367,14 +383,34 @@ async function buscar(isAuto) {
   }
 }
 
+async function buscarSdr(isAuto) {
+  if (!isAuto) {
+    $('btn').disabled = true;
+    $('root-sdr').innerHTML = '<div class="muted">Buscando no Pipedrive… (pode levar alguns segundos)</div>';
+  }
+  const p = new URLSearchParams({
+    month: $('f-mes').value, team: $('f-time').value, sdr: $('f-closer').value,
+  });
+  try {
+    const res = await fetch('/api/dashboard_sdr?' + p.toString(), { headers: authHeaders() });
+    const data = await res.json();
+    if (data.error) $('root-sdr').innerHTML = '<div class="warn">Erro: ' + data.error + '</div>';
+    else { LAST_DATA_SDR = data; renderSdr(data); }
+  } catch (e) {
+    if (!isAuto) $('root-sdr').innerHTML = '<div class="warn">Falha na requisição: ' + e + '</div>';
+  } finally {
+    $('btn').disabled = false;
+  }
+}
+
 function cols(c) {
   return `<td class="c-plan">${c.planned}</td><td class="c-done">${c.done}</td>`
        + `<td class="c-nsw">${c.no_show}</td><td class="c-reag">${c.reagendada}</td>`;
 }
 
-function render(data) {
+function renderGenerico(data, cfg) {
   $('updated').innerText = 'Atualizado: ' + new Date(data.generated_at).toLocaleString('pt-BR');
-  $('auto').innerText = ehDefaultAtual() ? '● atualiza sozinho a cada ' + Math.round(REFRESH_MS/60000) + ' min' : '';
+  $('auto').innerText = (cfg.ehAtual && cfg.ehAtual()) ? '● atualiza sozinho a cada ' + Math.round(REFRESH_MS/60000) + ' min' : '';
   const mt = data.month_total;
   const nDays = data.days.length;
   const dSel = Math.min(diaSelecionado() || 1, nDays);
@@ -436,9 +472,9 @@ function render(data) {
   }
 
   if (data.por_closer.length) {
-    html += `<div class="panel"><h2>Por closer</h2><div class="matrix-wrap"><table class="matrix">`;
+    html += `<div class="panel"><h2>Por ${cfg.label}</h2><div class="matrix-wrap"><table class="matrix">`;
     html += `<thead><tr class="grp">
-      <th class="closer l" rowspan="2">Closer</th><th class="team l" rowspan="2">Time</th>`;
+      <th class="closer l" rowspan="2">${cfg.label}</th><th class="team l" rowspan="2">Time</th>`;
     for (const d of tresDias) {
       const cls = (d.n === dSel) ? ' today' : '';
       html += `<th colspan="4" class="grp-day${cls}">${d.rot} <span class="muted">${String(d.n).padStart(2,'0')}</span></th>`;
@@ -451,28 +487,33 @@ function render(data) {
 
     const nCols = 2 + tresDias.length * 4 + 4;
     data.por_closer.forEach((c, i) => {
-      const cid = 'cr-' + i;
-      html += `<tr><td class="closer l"><span class="cl-wrap"><span class="cl-toggle" data-cr="${cid}" id="${cid}-t">▸ criador</span>${c.name}</span></td><td class="team l">${c.time}</td>`;
+      const cid = cfg.idPrefix + '-' + i;
+      const nomeCel = cfg.comCriador
+        ? `<span class="cl-wrap"><span class="cl-toggle" data-cr="${cid}" id="${cid}-t">▸ criador</span>${c.name}</span>`
+        : `<span class="cl-wrap"><span class="cl-toggle" data-cr="${cid}" id="${cid}-t">▸ detalhes</span>${c.name}</span>`;
+      html += `<tr><td class="closer l">${nomeCel}</td><td class="team l">${c.time}</td>`;
       for (const d of tresDias) html += quatro(getDia(c.days, d.n) || zero);
       const t = c.total;
       html += `<td class="c-plan mtot">${t.planned}</td><td class="c-done">${t.done}</td><td class="c-nsw">${t.no_show}</td><td class="c-reag">${t.reagendada}</td></tr>`;
 
-      const crGet = (dia) => ((c.criadas_days || []).find(x => x.dia === dia) || {}).c || {proprio:0, outro:0};
-      const crHoje = crGet(dSel);
-      const dAnt = dSel - 1;
-      const blocoCriador = (titulo, cc) => `
-          <div class="creator-col">
-            <div class="cc-title">${titulo}</div>
-            <div class="creator-box">
-              <div class="ci-item"><span class="ci-lbl">Criadas pelo próprio</span><span class="ci-val">${cc.proprio}</span></div>
-              <div class="ci-item"><span class="ci-lbl">Criadas por outro</span><span class="ci-val">${cc.outro}</span></div>
-              <div class="ci-item"><span class="ci-lbl">Total</span><span class="ci-val">${cc.proprio + cc.outro}</span></div>
-            </div>
-          </div>`;
-      const sep = '<div class="creator-sep"></div>';
       let blocos = '';
-      if (dAnt >= 1) blocos += blocoCriador('Dia anterior ' + String(dAnt).padStart(2,'0') + '/' + mesStr, crGet(dAnt)) + sep;
-      blocos += blocoCriador('Dia ' + dSelStr + '/' + mesStr, crHoje);
+      if (cfg.comCriador) {
+        const crGet = (dia) => ((c.criadas_days || []).find(x => x.dia === dia) || {}).c || {proprio:0, outro:0};
+        const crHoje = crGet(dSel);
+        const dAnt = dSel - 1;
+        const blocoCriador = (titulo, cc) => `
+            <div class="creator-col">
+              <div class="cc-title">${titulo}</div>
+              <div class="creator-box">
+                <div class="ci-item"><span class="ci-lbl">Criadas pelo próprio</span><span class="ci-val">${cc.proprio}</span></div>
+                <div class="ci-item"><span class="ci-lbl">Criadas por outro</span><span class="ci-val">${cc.outro}</span></div>
+                <div class="ci-item"><span class="ci-lbl">Total</span><span class="ci-val">${cc.proprio + cc.outro}</span></div>
+              </div>
+            </div>`;
+        const sep = '<div class="creator-sep"></div>';
+        if (dAnt >= 1) blocos += blocoCriador('Dia anterior ' + String(dAnt).padStart(2,'0') + '/' + mesStr, crGet(dAnt)) + sep;
+        blocos += blocoCriador('Dia ' + dSelStr + '/' + mesStr, crHoje);
+      }
       let negHtml = '';
       if (ehPriv()) {
         // --- negocios do DIA selecionado (com hora) ---
@@ -516,11 +557,11 @@ function render(data) {
     html += `</tbody></table></div>
       <div class="muted" style="font-size:11px;margin-top:8px">P = planejadas · F = feitas · NS = no-show · R = reagendadas</div></div>`;
 
-    // ---- distribuicao por closer: reunioes FEITAS/concluidas + % sobre o total de todos os closers ----
+    // ---- distribuicao: reunioes FEITAS/concluidas + % sobre o total de todos ----
     const totalTodos = data.por_closer.reduce((soma, c) => soma + c.total.done, 0);
     const distOrdenada = data.por_closer.slice().sort((a,b) => b.total.done - a.total.done);
-    html += `<div class="panel"><h2>Distribuição por closer — reuniões feitas · ${data.month_label}</h2>
-      <table class="aud-tbl"><tr><th class="l">Closer</th><th>Quantidade</th><th>%</th><th class="barcell"></th></tr>`;
+    html += `<div class="panel"><h2>Distribuição por ${cfg.label} — reuniões feitas · ${data.month_label}</h2>
+      <table class="aud-tbl"><tr><th class="l">${cfg.label}</th><th>Quantidade</th><th>%</th><th class="barcell"></th></tr>`;
     for (const c of distOrdenada) {
       const qtd = c.total.done;
       const pct = totalTodos ? (qtd / totalTodos * 100) : 0;
@@ -537,6 +578,7 @@ function render(data) {
   if (priv) for (const g of (data.geral_dia || [])) gdMap[g.dia] = g.itens || [];
   html += `<details class="diaria"><summary>Dia a dia — todos os times (${data.month_label})${priv ? ' · clique num dia para ver as reuniões' : ''}</summary><div class="inner">
     <table><tr>${priv ? '<th style="width:24px"></th>' : ''}<th class="l">Dia</th><th>Planejado</th><th>Feitas</th><th>No Show</th><th>Reagendadas</th></tr>`;
+
   for (const row of data.days) {
     const cls = (row.dia === dSel) ? ' class="today"' : '';
     const itens = priv ? (gdMap[row.dia] || []) : [];
@@ -545,7 +587,7 @@ function render(data) {
     const clickable = (priv && temItens) ? ` class="dd-click${cls ? ' today' : ''}" data-dd="ddrow-${row.dia}"` : cls;
     html += `<tr${clickable}>${arrow}<td class="l">${String(row.dia).padStart(2,'0')}</td>${cols(row.counter)}</tr>`;
     if (priv && temItens) {
-      let sub = `<table class="dd-tbl"><tr><th>Hora</th><th>Closer</th><th>Time</th><th>ID</th><th>Negócio</th></tr>`;
+      let sub = `<table class="dd-tbl"><tr><th>Hora</th><th>${cfg.label}</th><th>Time</th><th>ID</th><th>Negócio</th></tr>`;
       for (const it of itens) {
         sub += `<tr><td class="neg-hora">${it.hora || '--:--'}</td>
           <td>${it.closer}</td><td class="muted">${it.time}</td>
@@ -564,9 +606,23 @@ function render(data) {
     html += `<div class="warn">⚠ Sem correspondência no Pipedrive: ${data.nao_encontrados.join(', ')}</div>`;
   }
 
-  $('root').innerHTML = html;
+  $(cfg.rootId).innerHTML = html;
   ligaCriador();
   ligaDiaADia();
+}
+
+function render(data) {
+  renderGenerico(data, {
+    rootId: 'root', label: 'Closer', comCriador: true, idPrefix: 'cr',
+    ehAtual: ehDefaultAtual,
+  });
+}
+
+function renderSdr(data) {
+  renderGenerico(data, {
+    rootId: 'root-sdr', label: 'SDR', comCriador: false, idPrefix: 'sr',
+    ehAtual: null,
+  });
 }
 
 function ligaCriador() {
@@ -577,7 +633,8 @@ function ligaCriador() {
       if (!row) return;
       const aberto = row.style.display !== 'none';
       row.style.display = aberto ? 'none' : 'table-row';
-      el.textContent = (aberto ? '▸' : '▾') + ' criador';
+      const rotulo = el.textContent.replace(/^./, '').trim();  // preserva o texto ("criador"/"detalhes")
+      el.textContent = (aberto ? '▸' : '▾') + ' ' + rotulo;
     });
   });
 }
@@ -658,17 +715,32 @@ $('loginModal').addEventListener('click', e => { if (e.target.id === 'loginModal
 let ABA = 'reunioes';
 let AUD_CARREGADA_MES = null;
 
-function trocaAba(nome) {
+async function trocaAba(nome) {
   if (nome === 'auditoria' && !ehPriv()) return;
   ABA = nome;
   $('tab-reunioes').classList.toggle('active', nome === 'reunioes');
+  $('tab-sdrs').classList.toggle('active', nome === 'sdrs');
   $('tab-auditoria').classList.toggle('active', nome === 'auditoria');
   $('root').style.display = (nome === 'reunioes') ? '' : 'none';
+  $('root-sdr').style.display = (nome === 'sdrs') ? '' : 'none';
   $('root-aud').style.display = (nome === 'auditoria') ? '' : 'none';
+
+  if (nome === 'sdrs' && MODO_PESSOA !== 'sdr') {
+    MODO_PESSOA = 'sdr';
+    await carregaPessoas();
+    buscarSdr(false);
+  } else if (nome === 'reunioes' && MODO_PESSOA !== 'closer') {
+    MODO_PESSOA = 'closer';
+    await carregaPessoas();
+    buscar(false);
+  } else if (nome === 'sdrs' && !LAST_DATA_SDR) {
+    buscarSdr(false);
+  }
   if (nome === 'auditoria') carregaAuditoria();
 }
 
 $('tab-reunioes').addEventListener('click', () => trocaAba('reunioes'));
+$('tab-sdrs').addEventListener('click', () => trocaAba('sdrs'));
 $('tab-auditoria').addEventListener('click', () => trocaAba('auditoria'));
 
 async function carregaAuditoria(forcar) {

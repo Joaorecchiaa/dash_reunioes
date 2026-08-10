@@ -179,16 +179,22 @@ def _label_do_campo(valor):
 
 
 def opcoes_campo_validada():
-    """{option_id: label} do campo "Reuniao Validada?", com cache longo
-    (a lista de opcoes de um campo praticamente nunca muda)."""
+    """{option_id: label} do campo "Reuniao Validada?". Cache longo (~1h)
+    quando a busca funciona (a lista de opcoes quase nunca muda); cache
+    curto (~5min, mesmo TTL do resto) quando falha/vem vazia, pra nao
+    ficar 1h inteira sem tentar de novo se foi um erro passageiro."""
     with _lock:
         c = _cache.get("campo_validada_opcoes")
-        if c and time.time() - c["ts"] < TTL * 12:  # ~1h
-            return c["opcoes"]
+        if c:
+            ttl_efetivo = TTL * 12 if c["opcoes"] else TTL
+            if time.time() - c["ts"] < ttl_efetivo:
+                return c["opcoes"]
     try:
         opcoes = client.get_deal_field_options(CAMPO_VALIDADA_ID)
+        if not opcoes:
+            print("[Validada] busca de opcoes do campo voltou vazia")
     except Exception as e:
-        print("Erro ao buscar opcoes do campo Reuniao Validada:", e)
+        print("[Validada] Erro ao buscar opcoes do campo Reuniao Validada:", e)
         opcoes = {}
     with _lock:
         _cache["campo_validada_opcoes"] = {"ts": time.time(), "opcoes": opcoes}

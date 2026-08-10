@@ -194,6 +194,9 @@ HTML = r"""<!DOCTYPE html>
   .aud-body { display:none; padding:0 18px 14px; }
   .aud-body.open { display:block; }
   table.aud-tbl { width:100%; border-collapse:collapse; font-size:13px; }
+  table.aud-tbl td.aud-negs { font-size:12px; }
+  table.aud-tbl td.aud-negs a { color:var(--text); text-decoration:none; margin-right:6px; }
+  table.aud-tbl td.aud-negs a:hover { text-decoration:underline; color:var(--gold-ink); }
   table.aud-tbl th { font-size:10px; color:var(--muted); text-transform:uppercase; letter-spacing:.5px; text-align:left; padding:6px 10px; border-bottom:1px solid var(--border); }
   table.aud-tbl td { padding:7px 10px; border-bottom:1px solid var(--border); }
   table.aud-tbl td.qtd { font-weight:800; width:70px; }
@@ -688,11 +691,15 @@ function auditoriaBloco(pessoa, idx, prefixo) {
   const maxq = pessoa.closers.length ? pessoa.closers[0].qtd : 1;
   let linhas = '';
   if (pessoa.closers.length) {
-    linhas = `<table class="aud-tbl"><tr><th>Closer</th><th>Reuniões marcadas</th><th class="barcell"></th></tr>`;
+    linhas = `<table class="aud-tbl"><tr><th>Closer</th><th>Reuniões marcadas</th><th class="barcell"></th><th>Negócios</th></tr>`;
     for (const c of pessoa.closers) {
       const pct = Math.round((c.qtd / maxq) * 100);
+      const negs = (c.negocios || []).map(n =>
+        `<a href="${n.url}" target="_blank" rel="noopener" title="${n.title}">#${n.id}</a>`
+      ).join(', ');
       linhas += `<tr><td>${c.closer}</td><td class="qtd">${c.qtd}</td>
-        <td class="barcell"><div class="aud-bar" style="width:${pct}%"></div></td></tr>`;
+        <td class="barcell"><div class="aud-bar" style="width:${pct}%"></div></td>
+        <td class="aud-negs">${negs}</td></tr>`;
     }
     linhas += `</table>`;
   } else if (!pessoa.encontrado) {

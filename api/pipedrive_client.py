@@ -86,12 +86,18 @@ class PipedriveClient:
         data = self._get(self.base_v2, f"/deals/{deal_id}", {})
         return data.get("data")
 
-    def get_deal_field_options(self, field_id):
+    def get_deal_field_options(self, field_key):
         """{option_id: label} das opcoes de um campo de selecao do NEGOCIO
         (ex.: campo "Reuniao Validada?"). A API devolve o valor do campo
         como o ID numerico da opcao escolhida -- precisa desse mapa pra
-        traduzir pro texto (ex.: 411 -> "Sim")."""
-        data = self._get(self.base_v1, f"/dealFields/{field_id}", {})
+        traduzir pro texto (ex.: 411 -> "Sim").
+
+        IMPORTANTE: o "id" longo do campo (hash tipo 7299bf17...) e na
+        verdade o "key" do campo, nao o id numerico interno. Na API v1,
+        /dealFields/{id} espera o id NUMERICO (nao o hash) -- por isso
+        tem que usar a v2, onde o endpoint aceita o key/hash direto como
+        "field_code": GET /v2/dealFields/{field_code}."""
+        data = self._get(self.base_v2, f"/dealFields/{field_key}", {})
         campo = data.get("data") or {}
         opcoes = campo.get("options") or []
         return {o["id"]: o["label"] for o in opcoes}

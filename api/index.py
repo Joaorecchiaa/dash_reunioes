@@ -236,29 +236,61 @@ def campo_validado_diferente_de_nao(info):
     return norm(valor) != "nao"
 
 
-def atividade_e_validada(a, deal_info):
+# nomes (alem dos closers) que tambem podem ser proprietarios validos de
+# um negocio para fins de "reuniao validada"
+PROPRIETARIOS_EXTRAS_PERMITIDOS = {"denise mussolin"}
+
+
+def proprietarios_validos_ids(year, month):
+    """ids de quem PODE ser dono valido de um negocio para contar uma
+    reuniao como validada: os closers do mes + PROPRIETARIOS_EXTRAS_PERMITIDOS
+    (ex.: Denise Mussolin). Se o dono do negocio nao estiver nesse conjunto
+    (ex.: for outro SDR, outro Team Leader, etc.), a reuniao nao conta."""
+    users, _ = carrega_meta()
+    closers = closers_do_mes(year, month)
+    extras_norm = {norm(n) for n in PROPRIETARIOS_EXTRAS_PERMITIDOS}
+    ids = set()
+    for nome in closers:
+        uid = users.get(nome.strip().lower())
+        if uid:
+            ids.add(uid)
+    for nome_usuario, uid in users.items():
+        if norm(nome_usuario) in extras_norm:
+            ids.add(uid)
+    return ids
+
+
+def atividade_e_validada(a, deal_info, proprietarios_ids):
     """Para a coluna 'Validadas' na tela de Reunioes: feita (type=meeting,
-    done=true) E o negocio vinculado tem 'Reuniao Validada?' == 'Sim'
+    done=true), o negocio vinculado tem PROPRIETARIO valido (closer do mes
+    ou PROPRIETARIOS_EXTRAS_PERMITIDOS) E o campo 'Reuniao Validada?' == 'Sim'
     (estrito -- em branco NAO conta)."""
     if a.get("type") != "meeting" or not a.get("done"):
         return False
     info = deal_info.get(a.get("deal_id")) or {}
+    if info.get("owner_id") not in proprietarios_ids:
+        return False
     return campo_validado_sim(info)
 
 
-def eh_reuniao_valida_para_auditoria(a, pessoa_id, deal_info):
+def eh_reuniao_valida_para_auditoria(a, pessoa_id, deal_info, proprietarios_ids):
     """Reuniao conta na Auditoria SDR/Lideranca quando:
     - type == "meeting" e done == true (reuniao FEITA)
     - o RESPONSAVEL (owner_id) da propria atividade e a pessoa auditada
       -- ja garantido de fora, pois as atividades vem de acts_do_owner(pessoa_id)
     - o negocio vinculado tem PROPRIETARIO (owner_id do negocio) diferente
-      da pessoa auditada -- nao conta quando o negocio e dela mesma
+      da pessoa auditada E dentro do conjunto valido (closer do mes ou
+      PROPRIETARIOS_EXTRAS_PERMITIDOS) -- nao conta se o dono e a propria
+      pessoa auditada, nem se o dono for outro SDR/Team Leader qualquer
     - o campo "Reuniao Validada?" do negocio == 'Sim' (estrito -- em
       branco NAO conta)."""
     if a.get("type") != "meeting" or not a.get("done"):
         return False
     info = deal_info.get(a.get("deal_id")) or {}
-    if info.get("owner_id") == pessoa_id:
+    dono = info.get("owner_id")
+    if dono == pessoa_id:
+        return False
+    if dono not in proprietarios_ids:
         return False
     return campo_validado_sim(info)
 
@@ -452,14 +484,14 @@ def _ranking_por_criador(auditados, year, month):
     no Pipedrive."""
     users, _ = carrega_meta()
     closers = closers_do_mes(year, month)   # nome -> time (so pra exibicao)
+    proprietarios_ids = proprietarios_validos_ids(year, month)
 
     id_to_closer_nome = {}
     for nome in closers:
         uid = users.get(nome.strip().lower())
         if uid:
             id_to_closer_nome[uid] = nome
-    # fallback: qualquer usuario do Pipedrive, caso o dono do negocio nao
-    # esteja na lista de closers do mes (ex.: saiu da empresa, mudou de cargo)
+    # fallback de nome (ex.: Denise Mussolin, que e permitida mas nao e closer)
     id_to_nome_geral = {}
     for nome_lower, uid in users.items():
         id_to_nome_geral.setdefault(uid, nome_lower.title())
@@ -482,7 +514,7 @@ def _ranking_por_criador(auditados, year, month):
             d = datetime.strptime(due, "%Y-%m-%d").date()
             if d.year != year or d.month != month:
                 continue
-            if not eh_reuniao_valida_para_auditoria(a, pessoa_id, deal_info):
+            if not eh_reuniao_valida_para_auditoria(a, pessoa_id, deal_info, proprietarios_ids):
                 continue
             deal_id = a.get("deal_id")
             info = deal_info.get(deal_id) or {}
@@ -565,6 +597,7 @@ def _build_dashboard_generico(closers, year, month, privilegiado=False, com_vali
     ({nome: time}) e calcula dias/KPIs/matriz/etc. Usado tanto pra closers
     quanto pra SDRs (so muda quem entra no dict de entrada)."""
     users, pipelines = carrega_meta()
+    proprietarios_ids = proprietarios_validos_ids(year, month) if com_validada else set()
 
     last_day = calendar.monthrange(year, month)[1]
     combined_days = {d: novo_contador(com_validada) for d in range(1, last_day + 1)}
@@ -608,7 +641,7 @@ def _build_dashboard_generico(closers, year, month, privilegiado=False, com_vali
                 continue
 
             info = deal_info.get(deal_id) or {}
-            eh_valid = com_validada and atividade_e_validada(a, deal_info)
+            eh_valid = com_validada and atividade_e_validada(a, deal_info, proprietarios_ids)
 
             soma_em(combined_days[d.day], a, eh_valid)
             soma_em(month_total, a, eh_valid)

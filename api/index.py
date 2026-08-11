@@ -662,13 +662,23 @@ def _build_dashboard_generico(closers, year, month, privilegiado=False, com_vali
                 titulo = info.get("title") or ("Negocio " + str(deal_id))
                 url = PIPEDRIVE_BASE_URL + "/deal/" + str(deal_id)
                 hora = (a.get("due_time") or "")[:5]  # HH:MM
-                # dedupe do mes (por negocio)
+                if tipo == "reagendamento":
+                    status = "Reagendada"
+                elif tipo == "no_show":
+                    status = "No Show"
+                elif tipo == "meeting" and done and eh_valid:
+                    status = "Validada"
+                elif tipo == "meeting" and done:
+                    status = "Feita"
+                else:
+                    status = "Planejada"
+                # dedupe do mes (por negocio) -- guarda o status da 1a reuniao encontrada
                 if deal_id not in c_negocios_mes:
-                    c_negocios_mes[deal_id] = {"id": deal_id, "title": titulo, "url": url}
+                    c_negocios_mes[deal_id] = {"id": deal_id, "title": titulo, "url": url, "status": status}
                 # lista do dia (uma linha por reuniao, com hora)
                 item_dia = {
                     "id": deal_id, "title": titulo, "url": url,
-                    "hora": hora, "tipo": tipo, "done": bool(done),
+                    "hora": hora, "tipo": tipo, "done": bool(done), "status": status,
                 }
                 c_negocios_dia[d.day].append(item_dia)
                 # lista geral (todos os closers) para a secao "dia a dia"

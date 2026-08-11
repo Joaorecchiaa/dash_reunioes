@@ -52,7 +52,7 @@ HTML = r"""<!DOCTYPE html>
   .kpi.plan { border-color:var(--gold); background:var(--gold-soft); }
   .kpi .lbl { font-size:11px; color:var(--muted); text-transform:uppercase; letter-spacing:.5px; }
   .kpi .val { font-size:30px; font-weight:800; line-height:1.1; }
-  .kpi.plan .val{color:var(--text);} .kpi.done .val{color:var(--text);}
+  .kpi.plan .val{color:var(--text);} .kpi.done .val{color:var(--text);} .kpi.valid .val{color:var(--text);}
   .kpi.nsw .val{color:var(--text);} .kpi.reag .val{color:var(--text);}
 
   .month-strip { display:flex; gap:16px; flex-wrap:wrap; align-items:center; background:var(--card);
@@ -82,7 +82,7 @@ HTML = r"""<!DOCTYPE html>
   td.l, th.l { text-align:left; }
   tr.total td { font-weight:800; border-top:2px solid var(--gold); background:var(--gold-soft); color:var(--text); }
   tr.today td { background:var(--gold-soft); }
-  .c-plan{color:var(--text); font-weight:800;} .c-done{color:var(--done);} .c-nsw{color:var(--nsw);} .c-reag{color:var(--reag);}
+  .c-plan{color:var(--text); font-weight:800;} .c-done{color:var(--done);} .c-valid{color:#0a5f36; font-weight:700;} .c-nsw{color:var(--nsw);} .c-reag{color:var(--reag);}
   .warn { color:var(--nsw); font-size:12px; margin-bottom:16px; }
   .muted { color:var(--muted); }
 
@@ -403,8 +403,9 @@ async function buscarSdr(isAuto) {
   }
 }
 
-function cols(c) {
-  return `<td class="c-plan">${c.planned}</td><td class="c-done">${c.done}</td>`
+function cols(c, comValidada) {
+  const meio = comValidada ? `<td class="c-valid">${c.validada||0}</td>` : '';
+  return `<td class="c-plan">${c.planned}</td><td class="c-done">${c.done}</td>${meio}`
        + `<td class="c-nsw">${c.no_show}</td><td class="c-reag">${c.reagendada}</td>`;
 }
 
@@ -416,7 +417,7 @@ function renderGenerico(data, cfg) {
   const dSel = Math.min(diaSelecionado() || 1, nDays);
   const dSelStr = String(dSel).padStart(2,'0');
   const mesStr = String(data.month).padStart(2,'0');
-  const zero = {planned:0, done:0, no_show:0, reagendada:0};
+  const zero = {planned:0, done:0, validada:0, no_show:0, reagendada:0};
   const getDia = (lista, n) => { const r = (lista||[]).find(x => x.dia === n); return r ? r.counter : null; };
 
   const tresDias = [];
@@ -424,26 +425,39 @@ function renderGenerico(data, cfg) {
   tresDias.push({n: dSel, rot: 'Dia ' + dSelStr});
   if (dSel + 1 <= nDays)  tresDias.push({n: dSel+1, rot: 'Seguinte'});
 
-  const quatro = c => `<td class="c-plan">${c.planned}</td><td class="c-done">${c.done}</td>`
-                    + `<td class="c-nsw">${c.no_show}</td><td class="c-reag">${c.reagendada}</td>`;
-  const subHead = extra => `<th class="c-plan${extra||''}">P</th><th class="c-done">F</th><th class="c-nsw">NS</th><th class="c-reag">R</th>`;
+  const quatro = (c, mtotCls) => {
+    const meio = cfg.comValidada ? `<td class="c-valid">${c.validada||0}</td>` : '';
+    return `<td class="c-plan${mtotCls?' mtot':''}">${c.planned}</td><td class="c-done">${c.done}</td>${meio}`
+         + `<td class="c-nsw">${c.no_show}</td><td class="c-reag">${c.reagendada}</td>`;
+  };
+  const subHead = extra => {
+    const meio = cfg.comValidada ? `<th class="c-valid">V</th>` : '';
+    return `<th class="c-plan${extra||''}">P</th><th class="c-done">F</th>${meio}<th class="c-nsw">NS</th><th class="c-reag">R</th>`;
+  };
+  const nColsPorBloco = cfg.comValidada ? 5 : 4;
 
   const diaCounter = getDia(data.days, dSel) || zero;
 
   let html = '';
 
+  const kpiValidaHtml = cfg.comValidada
+    ? `<div class="kpi valid"><div class="lbl">Validadas</div><div class="val">${diaCounter.validada||0}</div></div>` : '';
   html += `<div class="kpi-head">Dia ${dSelStr}/${mesStr}</div>`;
   html += `<div class="kpis">
     <div class="kpi plan"><div class="lbl">Planejadas</div><div class="val">${diaCounter.planned}</div></div>
     <div class="kpi done"><div class="lbl">Feitas</div><div class="val">${diaCounter.done}</div></div>
+    ${kpiValidaHtml}
     <div class="kpi nsw"><div class="lbl">No Show</div><div class="val">${diaCounter.no_show}</div></div>
     <div class="kpi reag"><div class="lbl">Reagendadas</div><div class="val">${diaCounter.reagendada}</div></div>
   </div>`;
 
+  const msValidaHtml = cfg.comValidada
+    ? `<span class="ms-item c-valid">Validadas <b>${mt.validada||0}</b></span>` : '';
   html += `<div class="month-strip">
     <span class="ms-title">Total do mês — ${data.month_label}</span>
     <span class="ms-item c-plan">Planejadas <b>${mt.planned}</b></span>
     <span class="ms-item c-done">Feitas <b>${mt.done}</b></span>
+    ${msValidaHtml}
     <span class="ms-item c-nsw">No Show <b>${mt.no_show}</b></span>
     <span class="ms-item c-reag">Reagendadas <b>${mt.reagendada}</b></span>
   </div>`;
@@ -459,12 +473,12 @@ function renderGenerico(data, cfg) {
         <div class="tc-row">
           <span class="tc-lbl">Total dia ${dSelStr}</span>
           <span class="tc-big">${cd.planned}</span>
-          <span class="tc-sub">plan · <span class="c-done">${cd.done}</span> feitas · <span class="c-nsw">${cd.no_show}</span> NS · <span class="c-reag">${cd.reagendada}</span> reag</span>
+          <span class="tc-sub">plan · <span class="c-done">${cd.done}</span> feitas${cfg.comValidada ? ' · <span class=\"c-valid\">' + (cd.validada||0) + '</span> valid' : ''} · <span class="c-nsw">${cd.no_show}</span> NS · <span class="c-reag">${cd.reagendada}</span> reag</span>
         </div>
         <div class="tc-row">
           <span class="tc-lbl">Total mês</span>
           <span class="tc-big">${cm.planned}</span>
-          <span class="tc-sub">plan · <span class="c-done">${cm.done}</span> feitas · <span class="c-nsw">${cm.no_show}</span> NS · <span class="c-reag">${cm.reagendada}</span> reag</span>
+          <span class="tc-sub">plan · <span class="c-done">${cm.done}</span> feitas${cfg.comValidada ? ' · <span class=\"c-valid\">' + (cm.validada||0) + '</span> valid' : ''} · <span class="c-nsw">${cm.no_show}</span> NS · <span class="c-reag">${cm.reagendada}</span> reag</span>
         </div>
       </div>`;
     }
@@ -477,15 +491,15 @@ function renderGenerico(data, cfg) {
       <th class="closer l" rowspan="2">${cfg.label}</th><th class="team l" rowspan="2">Time</th>`;
     for (const d of tresDias) {
       const cls = (d.n === dSel) ? ' today' : '';
-      html += `<th colspan="4" class="grp-day${cls}">${d.rot} <span class="muted">${String(d.n).padStart(2,'0')}</span></th>`;
+      html += `<th colspan="${nColsPorBloco}" class="grp-day${cls}">${d.rot} <span class="muted">${String(d.n).padStart(2,'0')}</span></th>`;
     }
-    html += `<th colspan="4" class="grp-tot mtot">Total do mês</th></tr>`;
+    html += `<th colspan="${nColsPorBloco}" class="grp-tot mtot">Total do mês</th></tr>`;
     html += `<tr class="sub">`;
     for (const d of tresDias) html += subHead((d.n === dSel) ? ' today' : '');
-    html += `<th class="c-plan mtot">P</th><th class="c-done">F</th><th class="c-nsw">NS</th><th class="c-reag">R</th>`;
+    html += subHead(' mtot');
     html += `</tr></thead><tbody>`;
 
-    const nCols = 2 + tresDias.length * 4 + 4;
+    const nCols = 2 + tresDias.length * nColsPorBloco + nColsPorBloco;
     data.por_closer.forEach((c, i) => {
       const cid = cfg.idPrefix + '-' + i;
       const nomeCel = cfg.comCriador
@@ -553,17 +567,20 @@ function renderGenerico(data, cfg) {
 
     html += `<tr class="foot"><td class="closer l">TOTAL</td><td class="team l"></td>`;
     for (const d of tresDias) html += quatro(getDia(data.days, d.n) || zero);
-    html += `<td class="c-plan mtot">${mt.planned}</td><td class="c-done">${mt.done}</td><td class="c-nsw">${mt.no_show}</td><td class="c-reag">${mt.reagendada}</td></tr>`;
+    html += quatro(mt, true) + `</tr>`;
+    const legendaValid = cfg.comValidada ? ' · V = validadas' : '';
     html += `</tbody></table></div>
-      <div class="muted" style="font-size:11px;margin-top:8px">P = planejadas · F = feitas · NS = no-show · R = reagendadas</div></div>`;
+      <div class="muted" style="font-size:11px;margin-top:8px">P = planejadas · F = feitas${legendaValid} · NS = no-show · R = reagendadas</div></div>`;
 
-    // ---- distribuicao: reunioes FEITAS/concluidas + % sobre o total de todos ----
-    const totalTodos = data.por_closer.reduce((soma, c) => soma + c.total.done, 0);
-    const distOrdenada = data.por_closer.slice().sort((a,b) => b.total.done - a.total.done);
-    html += `<div class="panel"><h2>Distribuição por ${cfg.label} — reuniões feitas · ${data.month_label}</h2>
+    // ---- distribuicao: Validadas (se disponivel) ou Feitas + % sobre o total de todos ----
+    const metricaDist = cfg.comValidada ? 'validada' : 'done';
+    const tituloDist = cfg.comValidada ? 'reuniões validadas' : 'reuniões feitas';
+    const totalTodos = data.por_closer.reduce((soma, c) => soma + (c.total[metricaDist]||0), 0);
+    const distOrdenada = data.por_closer.slice().sort((a,b) => (b.total[metricaDist]||0) - (a.total[metricaDist]||0));
+    html += `<div class="panel"><h2>Distribuição por ${cfg.label} — ${tituloDist} · ${data.month_label}</h2>
       <table class="aud-tbl"><tr><th class="l">${cfg.label}</th><th>Quantidade</th><th>%</th><th class="barcell"></th></tr>`;
     for (const c of distOrdenada) {
-      const qtd = c.total.done;
+      const qtd = c.total[metricaDist] || 0;
       const pct = totalTodos ? (qtd / totalTodos * 100) : 0;
       html += `<tr><td class="l">${c.name}</td><td class="qtd">${qtd}</td>
         <td>${pct.toFixed(1)}%</td>
@@ -577,7 +594,7 @@ function renderGenerico(data, cfg) {
   const gdMap = {};
   if (priv) for (const g of (data.geral_dia || [])) gdMap[g.dia] = g.itens || [];
   html += `<details class="diaria"><summary>Dia a dia — todos os times (${data.month_label})${priv ? ' · clique num dia para ver as reuniões' : ''}</summary><div class="inner">
-    <table><tr>${priv ? '<th style="width:24px"></th>' : ''}<th class="l">Dia</th><th>Planejado</th><th>Feitas</th><th>No Show</th><th>Reagendadas</th></tr>`;
+    <table><tr>${priv ? '<th style="width:24px"></th>' : ''}<th class="l">Dia</th><th>Planejado</th><th>Feitas</th>${cfg.comValidada ? '<th>Validadas</th>' : ''}<th>No Show</th><th>Reagendadas</th></tr>`;
 
   for (const row of data.days) {
     const cls = (row.dia === dSel) ? ' class="today"' : '';
@@ -585,7 +602,7 @@ function renderGenerico(data, cfg) {
     const temItens = itens.length > 0;
     const arrow = priv ? `<td class="dd-arrow">${temItens ? '▸' : ''}</td>` : '';
     const clickable = (priv && temItens) ? ` class="dd-click${cls ? ' today' : ''}" data-dd="ddrow-${row.dia}"` : cls;
-    html += `<tr${clickable}>${arrow}<td class="l">${String(row.dia).padStart(2,'0')}</td>${cols(row.counter)}</tr>`;
+    html += `<tr${clickable}>${arrow}<td class="l">${String(row.dia).padStart(2,'0')}</td>${cols(row.counter, cfg.comValidada)}</tr>`;
     if (priv && temItens) {
       let sub = `<table class="dd-tbl"><tr><th>Hora</th><th>${cfg.label}</th><th>Time</th><th>ID</th><th>Negócio</th></tr>`;
       for (const it of itens) {
@@ -595,12 +612,12 @@ function renderGenerico(data, cfg) {
           <td><a href="${it.url}" target="_blank" rel="noopener">${it.title}</a></td></tr>`;
       }
       sub += `</table>`;
-      const colspan = 5 + 1; // arrow + Dia + 4
+      const colspan = (cfg.comValidada ? 6 : 5) + 1; // arrow + Dia + colunas
       html += `<tr class="dd-detail" id="ddrow-${row.dia}" style="display:none"><td colspan="${colspan}"><div class="dd-box">${sub}</div></td></tr>`;
     }
   }
   const totLead = priv ? '<td></td>' : '';
-  html += `<tr class="total">${totLead}<td class="l">TOTAL</td>${cols(mt)}</tr></table></div></details>`;
+  html += `<tr class="total">${totLead}<td class="l">TOTAL</td>${cols(mt, cfg.comValidada)}</tr></table></div></details>`;
 
   if (data.nao_encontrados && data.nao_encontrados.length) {
     html += `<div class="warn">⚠ Sem correspondência no Pipedrive: ${data.nao_encontrados.join(', ')}</div>`;
@@ -614,14 +631,14 @@ function renderGenerico(data, cfg) {
 function render(data) {
   renderGenerico(data, {
     rootId: 'root', label: 'Closer', comCriador: true, idPrefix: 'cr',
-    ehAtual: ehDefaultAtual,
+    ehAtual: ehDefaultAtual, comValidada: false,
   });
 }
 
 function renderSdr(data) {
   renderGenerico(data, {
     rootId: 'root-sdr', label: 'SDR', comCriador: false, idPrefix: 'sr',
-    ehAtual: null,
+    ehAtual: null, comValidada: true,
   });
 }
 

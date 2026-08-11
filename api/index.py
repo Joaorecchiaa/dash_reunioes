@@ -591,13 +591,28 @@ def info_dos_deals(deal_ids):
 
 # ---------- construcao ----------
 
+# nomes de "criador" cujas atividades devem ser IGNORADAS na contagem
+# (ex.: integracoes/automacoes -- nao sao reunioes marcadas por gente de verdade)
+CRIADORES_EXCLUIDOS = {"matheus paz"}
+
+
+def ids_criadores_excluidos():
+    """ids do Pipedrive dos nomes em CRIADORES_EXCLUIDOS."""
+    users, _ = carrega_meta()
+    alvo_norm = {norm(n) for n in CRIADORES_EXCLUIDOS}
+    return {uid for nome_lower, uid in users.items() if norm(nome_lower) in alvo_norm}
+
+
 def build_dashboard(year, month, time_filtro=None, closer_filtro=None, privilegiado=False):
     closers = closers_do_mes(year, month)
     if time_filtro and time_filtro.upper() != "TODOS":
         closers = {n: t for n, t in closers.items() if t == time_filtro.upper()}
     if closer_filtro and closer_filtro.upper() != "TODOS":
         closers = {n: t for n, t in closers.items() if n == closer_filtro}
-    return _build_dashboard_generico(closers, year, month, privilegiado, com_validada=False)
+    return _build_dashboard_generico(
+        closers, year, month, privilegiado, com_validada=False,
+        excluir_criadores_ids=ids_criadores_excluidos(),
+    )
 
 
 def build_dashboard_sdr(year, month, time_filtro=None, sdr_filtro=None, privilegiado=False):
@@ -609,7 +624,8 @@ def build_dashboard_sdr(year, month, time_filtro=None, sdr_filtro=None, privileg
     return _build_dashboard_generico(sdrs, year, month, privilegiado, com_validada=True)
 
 
-def _build_dashboard_generico(closers, year, month, privilegiado=False, com_validada=False):
+def _build_dashboard_generico(closers, year, month, privilegiado=False, com_validada=False,
+                               excluir_criadores_ids=None):
     """Nucleo do dashboard de reunioes -- recebe `closers` ja resolvido
     ({nome: time}) e calcula dias/KPIs/matriz/etc. Usado tanto pra closers
     quanto pra SDRs (so muda quem entra no dict de entrada)."""
@@ -647,6 +663,8 @@ def _build_dashboard_generico(closers, year, month, privilegiado=False, com_vali
         c_negocios_dia = {d: [] for d in range(1, last_day + 1)}  # dia -> lista de reunioes com negocio
 
         for a in acts:
+            if excluir_criadores_ids and a.get("creator_user_id") in excluir_criadores_ids:
+                continue  # atividade criada por integracao/automacao -- nao conta
             due = a.get("due_date")
             deal_id = a.get("deal_id")
             tipo = a.get("type")

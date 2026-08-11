@@ -155,8 +155,16 @@ HTML = r"""<!DOCTYPE html>
   table.neg-tbl td, table.neg-tbl th { overflow:hidden; text-overflow:ellipsis; }
   table.neg-tbl col.c-hora { width:60px; }
   table.neg-tbl col.c-id { width:120px; }
+  table.neg-tbl col.c-status { width:90px; }
   /* linha vertical separando ID do Negocio (2a coluna), alinhada nas duas tabelas */
   table.neg-tbl th:nth-child(2), table.neg-tbl td:nth-child(2) { border-right:1px solid var(--border); }
+  .status-badge { display:inline-block; padding:2px 8px; border-radius:10px; font-size:10px; font-weight:700;
+                  text-transform:uppercase; letter-spacing:.3px; white-space:nowrap; }
+  .status-badge.st-planejada { background:#eceff1; color:var(--muted); }
+  .status-badge.st-feita { background:#e6f6ee; color:var(--done); }
+  .status-badge.st-validada { background:#e0f2e9; color:#0a5f36; }
+  .status-badge.st-noshow { background:#fdeaea; color:var(--nsw); }
+  .status-badge.st-reagendada { background:#fdf3e3; color:var(--reag); }
   tr.dd-click { cursor:pointer; }
   tr.dd-click:hover td { background:#eef0f3; }
   td.dd-arrow { color:var(--muted); font-size:10px; text-align:center; width:24px; }
@@ -403,6 +411,15 @@ async function buscarSdr(isAuto) {
   }
 }
 
+function statusBadge(status) {
+  const mapa = {
+    'Planejada': 'st-planejada', 'Feita': 'st-feita', 'Validada': 'st-validada',
+    'No Show': 'st-noshow', 'Reagendada': 'st-reagendada',
+  };
+  const cls = mapa[status] || 'st-planejada';
+  return `<span class="status-badge ${cls}">${status || '—'}</span>`;
+}
+
 function cols(c, comValidada) {
   const meio = comValidada ? `<td class="c-valid">${c.validada||0}</td>` : '';
   return `<td class="c-plan">${c.planned}</td><td class="c-done">${c.done}</td>${meio}`
@@ -534,11 +551,12 @@ function renderGenerico(data, cfg) {
         const nd = ((c.negocios_dia || []).find(x => x.dia === dSel) || {}).itens || [];
         negHtml += `<div class="neg-box"><div class="nb-title">Negócios do dia ${dSelStr}/${mesStr} (${nd.length}) — clique para abrir no Pipedrive</div>`;
         if (nd.length) {
-          negHtml += `<table class="neg-tbl"><colgroup><col class="c-hora"><col class="c-id"><col></colgroup><tr><th>Hora</th><th>ID</th><th>Negócio</th></tr>`;
+          negHtml += `<table class="neg-tbl"><colgroup><col class="c-hora"><col class="c-id"><col><col class="c-status"></colgroup><tr><th>Hora</th><th>ID</th><th>Negócio</th><th>Status</th></tr>`;
           for (const n of nd) {
             negHtml += `<tr><td class="neg-hora">${n.hora || '--:--'}</td>
               <td><a href="${n.url}" target="_blank" rel="noopener">#${n.id}</a></td>
-              <td><a href="${n.url}" target="_blank" rel="noopener">${n.title}</a></td></tr>`;
+              <td><a href="${n.url}" target="_blank" rel="noopener">${n.title}</a></td>
+              <td>${statusBadge(n.status)}</td></tr>`;
           }
           negHtml += `</table>`;
         } else {
@@ -550,10 +568,11 @@ function renderGenerico(data, cfg) {
         const nm = c.negocios || [];
         negHtml += `<div class="neg-box"><div class="nb-title">Negócios do mês (${nm.length})</div>`;
         if (nm.length) {
-          negHtml += `<table class="neg-tbl"><colgroup><col class="c-hora"><col class="c-id"><col></colgroup><tr><th></th><th>ID</th><th>Negócio</th></tr>`;
+          negHtml += `<table class="neg-tbl"><colgroup><col class="c-hora"><col class="c-id"><col><col class="c-status"></colgroup><tr><th></th><th>ID</th><th>Negócio</th><th>Status</th></tr>`;
           for (const n of nm) {
             negHtml += `<tr><td class="neg-hora"></td><td><a href="${n.url}" target="_blank" rel="noopener">#${n.id}</a></td>
-              <td><a href="${n.url}" target="_blank" rel="noopener">${n.title}</a></td></tr>`;
+              <td><a href="${n.url}" target="_blank" rel="noopener">${n.title}</a></td>
+              <td>${statusBadge(n.status)}</td></tr>`;
           }
           negHtml += `</table>`;
         } else {

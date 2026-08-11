@@ -165,6 +165,7 @@ HTML = r"""<!DOCTYPE html>
   .status-badge.st-validada { background:#e0f2e9; color:#0a5f36; }
   .status-badge.st-noshow { background:#fdeaea; color:var(--nsw); }
   .status-badge.st-reagendada { background:#fdf3e3; color:var(--reag); }
+  .status-badge.st-vencida { background:#fdeaea; color:#8a1f1f; }
   tr.dd-click { cursor:pointer; }
   tr.dd-click:hover td { background:#eef0f3; }
   td.dd-arrow { color:var(--muted); font-size:10px; text-align:center; width:24px; }
@@ -414,7 +415,7 @@ async function buscarSdr(isAuto) {
 function statusBadge(status) {
   const mapa = {
     'Planejada': 'st-planejada', 'Feita': 'st-feita', 'Validada': 'st-validada',
-    'No Show': 'st-noshow', 'Reagendada': 'st-reagendada',
+    'No Show': 'st-noshow', 'Reagendada': 'st-reagendada', 'Vencida': 'st-vencida',
   };
   const cls = mapa[status] || 'st-planejada';
   return `<span class="status-badge ${cls}">${status || '—'}</span>`;

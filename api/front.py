@@ -166,6 +166,11 @@ HTML = r"""<!DOCTYPE html>
   .status-badge.st-noshow { background:#fdeaea; color:var(--nsw); }
   .status-badge.st-reagendada { background:#fdf3e3; color:var(--reag); }
   .status-badge.st-vencida { background:#fdeaea; color:#8a1f1f; }
+  .deal-badge { display:inline-block; padding:2px 8px; border-radius:10px; font-size:10px; font-weight:700;
+                text-transform:uppercase; letter-spacing:.3px; white-space:nowrap; }
+  .deal-badge.dl-aberto { background:#eaf1fb; color:#1a4d8f; }
+  .deal-badge.dl-ganho { background:#e6f6ee; color:var(--done); }
+  .deal-badge.dl-perdido { background:#fdeaea; color:var(--nsw); }
   tr.dd-click { cursor:pointer; }
   tr.dd-click:hover td { background:#eef0f3; }
   td.dd-arrow { color:var(--muted); font-size:10px; text-align:center; width:24px; }
@@ -412,6 +417,12 @@ async function buscarSdr(isAuto) {
   }
 }
 
+function dealBadge(status) {
+  const mapa = { 'Aberto': 'dl-aberto', 'Ganho': 'dl-ganho', 'Perdido': 'dl-perdido' };
+  const cls = mapa[status] || 'dl-aberto';
+  return `<span class="deal-badge ${cls}">${status || '—'}</span>`;
+}
+
 function statusBadge(status) {
   const mapa = {
     'Planejada': 'st-planejada', 'Feita': 'st-feita', 'Validada': 'st-validada',
@@ -552,12 +563,13 @@ function renderGenerico(data, cfg) {
         const nd = ((c.negocios_dia || []).find(x => x.dia === dSel) || {}).itens || [];
         negHtml += `<div class="neg-box"><div class="nb-title">Negócios do dia ${dSelStr}/${mesStr} (${nd.length}) — clique para abrir no Pipedrive</div>`;
         if (nd.length) {
-          negHtml += `<table class="neg-tbl"><colgroup><col class="c-hora"><col class="c-id"><col><col class="c-status"></colgroup><tr><th>Hora</th><th>ID</th><th>Negócio</th><th>Status</th></tr>`;
+          negHtml += `<table class="neg-tbl"><colgroup><col class="c-hora"><col class="c-id"><col><col class="c-status"><col class="c-status"></colgroup><tr><th>Hora</th><th>ID</th><th>Negócio</th><th>Status</th><th>Situação</th></tr>`;
           for (const n of nd) {
             negHtml += `<tr><td class="neg-hora">${n.hora || '--:--'}</td>
               <td><a href="${n.url}" target="_blank" rel="noopener">#${n.id}</a></td>
               <td><a href="${n.url}" target="_blank" rel="noopener">${n.title}</a></td>
-              <td>${statusBadge(n.status)}</td></tr>`;
+              <td>${statusBadge(n.status)}</td>
+              <td>${dealBadge(n.status_negocio)}</td></tr>`;
           }
           negHtml += `</table>`;
         } else {
@@ -569,11 +581,12 @@ function renderGenerico(data, cfg) {
         const nm = c.negocios || [];
         negHtml += `<div class="neg-box"><div class="nb-title">Negócios do mês (${nm.length})</div>`;
         if (nm.length) {
-          negHtml += `<table class="neg-tbl"><colgroup><col class="c-hora"><col class="c-id"><col><col class="c-status"></colgroup><tr><th></th><th>ID</th><th>Negócio</th><th>Status</th></tr>`;
+          negHtml += `<table class="neg-tbl"><colgroup><col class="c-hora"><col class="c-id"><col><col class="c-status"><col class="c-status"></colgroup><tr><th></th><th>ID</th><th>Negócio</th><th>Status</th><th>Situação</th></tr>`;
           for (const n of nm) {
             negHtml += `<tr><td class="neg-hora"></td><td><a href="${n.url}" target="_blank" rel="noopener">#${n.id}</a></td>
               <td><a href="${n.url}" target="_blank" rel="noopener">${n.title}</a></td>
-              <td>${statusBadge(n.status)}</td></tr>`;
+              <td>${statusBadge(n.status)}</td>
+              <td>${dealBadge(n.status_negocio)}</td></tr>`;
           }
           negHtml += `</table>`;
         } else {

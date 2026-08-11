@@ -691,13 +691,20 @@ def _build_dashboard_generico(closers, year, month, privilegiado=False, com_vali
                     # ainda nao aconteceu -- confere se o prazo (due_date/due_time)
                     # ja passou, pra marcar como Vencida em vez de Planejada
                     status = "Vencida" if reuniao_vencida(due, a.get("due_time")) else "Planejada"
+                # status do NEGOCIO (aberto/ganho/perdido), independente do status da reuniao
+                status_negocio = {"open": "Aberto", "won": "Ganho", "lost": "Perdido"}.get(
+                    info.get("status"), info.get("status") or "—")
                 # dedupe do mes (por negocio) -- guarda o status da 1a reuniao encontrada
                 if deal_id not in c_negocios_mes:
-                    c_negocios_mes[deal_id] = {"id": deal_id, "title": titulo, "url": url, "status": status}
+                    c_negocios_mes[deal_id] = {
+                        "id": deal_id, "title": titulo, "url": url,
+                        "status": status, "status_negocio": status_negocio,
+                    }
                 # lista do dia (uma linha por reuniao, com hora)
                 item_dia = {
                     "id": deal_id, "title": titulo, "url": url,
-                    "hora": hora, "tipo": tipo, "done": bool(done), "status": status,
+                    "hora": hora, "tipo": tipo, "done": bool(done),
+                    "status": status, "status_negocio": status_negocio,
                 }
                 c_negocios_dia[d.day].append(item_dia)
                 # lista geral (todos os closers) para a secao "dia a dia"

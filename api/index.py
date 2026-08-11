@@ -260,6 +260,23 @@ def proprietarios_validos_ids(year, month):
     return ids
 
 
+def reuniao_vencida(due_date_str, due_time_str):
+    """True se a data/hora de vencimento (due_date + due_time) da atividade
+    ja passou. Sem due_time, considera o fim do dia (23:59:59) -- so vence
+    depois que o dia inteiro passou, evita marcar reuniao de hoje sem hora
+    definida como vencida."""
+    if not due_date_str:
+        return False
+    hora_str = (due_time_str or "23:59:59").strip()[:8]
+    if len(hora_str) < 8:
+        hora_str = "23:59:59"
+    try:
+        due_dt = datetime.strptime(due_date_str + " " + hora_str, "%Y-%m-%d %H:%M:%S")
+    except ValueError:
+        due_dt = datetime.strptime(due_date_str, "%Y-%m-%d")
+    return due_dt < datetime.now()
+
+
 def atividade_e_validada(a, deal_info, proprietarios_ids):
     """Para a coluna 'Validadas' na tela de Reunioes: feita (type=meeting,
     done=true), o negocio vinculado tem PROPRIETARIO valido (closer do mes
@@ -671,7 +688,9 @@ def _build_dashboard_generico(closers, year, month, privilegiado=False, com_vali
                 elif tipo == "meeting" and done:
                     status = "Feita"
                 else:
-                    status = "Planejada"
+                    # ainda nao aconteceu -- confere se o prazo (due_date/due_time)
+                    # ja passou, pra marcar como Vencida em vez de Planejada
+                    status = "Vencida" if reuniao_vencida(due, a.get("due_time")) else "Planejada"
                 # dedupe do mes (por negocio) -- guarda o status da 1a reuniao encontrada
                 if deal_id not in c_negocios_mes:
                     c_negocios_mes[deal_id] = {"id": deal_id, "title": titulo, "url": url, "status": status}

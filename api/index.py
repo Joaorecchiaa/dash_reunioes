@@ -594,13 +594,20 @@ def info_dos_deals(deal_ids):
 # nomes de "criador" cujas atividades devem ser IGNORADAS na contagem
 # (ex.: integracoes/automacoes -- nao sao reunioes marcadas por gente de verdade)
 CRIADORES_EXCLUIDOS = {"matheus paz"}
+# ids fixos conhecidos -- garantia que funciona mesmo se o nome no Pipedrive
+# nao bater exatamente com CRIADORES_EXCLUIDOS (confirmado com o usuario)
+CRIADORES_EXCLUIDOS_IDS_FIXOS = {14326654}  # Matheus Paz -- integracao de IA
 
 
 def ids_criadores_excluidos():
-    """ids do Pipedrive dos nomes em CRIADORES_EXCLUIDOS."""
+    """ids do Pipedrive dos nomes em CRIADORES_EXCLUIDOS, somados aos ids
+    fixos conhecidos (a busca por nome pode falhar por causa de grafia
+    diferente no Pipedrive -- o id fixo garante a exclusao de qualquer jeito)."""
     users, _ = carrega_meta()
     alvo_norm = {norm(n) for n in CRIADORES_EXCLUIDOS}
-    return {uid for nome_lower, uid in users.items() if norm(nome_lower) in alvo_norm}
+    ids = {uid for nome_lower, uid in users.items() if norm(nome_lower) in alvo_norm}
+    ids |= CRIADORES_EXCLUIDOS_IDS_FIXOS
+    return ids
 
 
 def build_dashboard(year, month, time_filtro=None, closer_filtro=None, privilegiado=False):

@@ -1,882 +1,1000 @@
-# -*- coding: utf-8 -*-
-"""Front-end do dashboard embutido como string.
+import os
+import csv
+import io
+import time
+import json
+import hmac
+import base64
+import hashlib
+import calendar
+import unicodedata
+import threading
+import requests
+from datetime import datetime, date, timedelta
+from collections import defaultdict
+from flask import Flask, jsonify, request, Response
 
-O HTML mora aqui dentro (e nao como arquivo .html solto) porque o bundler
-da Vercel so empacota os .py na funcao serverless.
-"""
+# .env so existe localmente; na Vercel as variaveis vem do painel
+try:
+    from dotenv import load_dotenv
+    load_dotenv(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", ".env"))
+except Exception:
+    pass
 
-HTML = r"""<!DOCTYPE html>
-<html lang="pt-br">
-<head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>REUNIÕES - CLOSERS</title>
-<style>
-  :root {
-    --bg:#f4f5f7; --card:#ffffff; --card2:#f0f1f3; --border:#dfe1e5;
-    --text:#141414; --muted:#6b7280;
-    --gold:#FFD700; --gold-ink:#8a6d00; --gold-soft:#fff8db;
-    --done:#0f8a4d; --nsw:#c62828; --reag:#b26a00;
-    --head:#0d0d0d; --head-text:#f2f2f2; --head-muted:#9a9a9a; --head-border:#2a2a2a;
-  }
-  * { box-sizing:border-box; }
-  body { font-family:'Segoe UI',Arial,sans-serif; background:var(--bg); color:var(--text); margin:0; padding:0; }
-  .page { padding:24px; max-width:1500px; margin:0 auto; }
+try:
+    from api.pipedrive_client import PipedriveClient
+    from api.front import HTML
+except ImportError:
+    from pipedrive_client import PipedriveClient
+    from front import HTML
 
-  .site-header { background:var(--head); color:var(--head-text); padding:18px 24px 16px; border-bottom:3px solid var(--gold); }
-  .site-header .hdr-top { display:flex; align-items:flex-start; justify-content:space-between; flex-wrap:wrap; gap:12px; }
-  .brand { font-size:13px; font-weight:800; letter-spacing:3px; color:var(--gold); text-transform:uppercase; margin-bottom:4px; }
-  h1 { font-size:23px; margin:6px 0 14px; font-weight:700; letter-spacing:1px; color:var(--head-text); }
-  h1 .sep { color:var(--gold); }
-  h1 .sep { color:var(--gold-ink); }
+app = Flask(__name__, static_folder=None)
 
-  .filters { display:flex; gap:12px; align-items:flex-end; flex-wrap:wrap; background:transparent;
-             border:none; padding:0; margin:0; box-shadow:none; }
-  .field { display:flex; flex-direction:column; gap:4px; }
-  .field label { font-size:11px; color:var(--muted); text-transform:uppercase; letter-spacing:.5px; }
-  select { background:var(--card2); color:var(--text); border:1px solid var(--border);
-           border-radius:8px; padding:8px 10px; font-size:14px; min-width:160px; }
-  select#f-dia { min-width:110px; }
-  select:focus { outline:none; border-color:var(--gold); box-shadow:0 0 0 3px rgba(255,215,0,.18); }
-  button { background:var(--gold); color:#1a1a1a; border:none; border-radius:8px;
-           padding:9px 22px; font-size:14px; font-weight:800; cursor:pointer; letter-spacing:.5px; }
-  button:hover { background:#e6c200; }
-  button:disabled { opacity:.5; cursor:wait; }
-  .updated { color:var(--head-muted); font-size:12px; margin-left:auto; align-self:center; text-align:right; }
-  .auto { color:var(--gold); font-size:11px; }
+def env(nome, padrao=None):
+    """Le variavel de ambiente limpando aspas/espacos (o painel da Vercel e o
+    Import .env costumam trazer o valor entre aspas)."""
+    v = os.environ.get(nome, padrao)
+    if v is None:
+        raise RuntimeError(f"Variavel de ambiente {nome} nao definida")
+    return str(v).strip().strip('"').strip("'").strip()
 
-  .kpi-head { font-size:13px; color:var(--muted); text-transform:uppercase; letter-spacing:.5px; margin:0 0 8px; font-weight:600; }
-  .kpis { display:flex; gap:12px; flex-wrap:wrap; margin-bottom:20px; }
-  .kpi { background:var(--card); border:1px solid var(--border); border-radius:12px; padding:14px 20px; min-width:130px;
-         box-shadow:none; }
-  .kpi.plan { border-color:var(--gold); background:var(--gold-soft); }
-  .kpi .lbl { font-size:11px; color:var(--muted); text-transform:uppercase; letter-spacing:.5px; }
-  .kpi .val { font-size:30px; font-weight:800; line-height:1.1; }
-  .kpi.plan .val{color:var(--text);} .kpi.done .val{color:var(--text);} .kpi.valid .val{color:var(--text);}
-  .kpi.nsw .val{color:var(--text);} .kpi.reag .val{color:var(--text);}
 
-  .month-strip { display:flex; gap:16px; flex-wrap:wrap; align-items:center; background:var(--card);
-                 border:1px solid var(--border); border-left:4px solid var(--gold); border-radius:10px;
-                 padding:10px 16px; margin-bottom:20px; font-size:13px; box-shadow:none; }
-  .month-strip .ms-title { color:var(--gold-ink); text-transform:uppercase; letter-spacing:.5px; font-size:11px; font-weight:700; }
-  .month-strip .ms-item b { font-weight:700; }
+PIPEDRIVE_DOMAIN = env("PIPEDRIVE_DOMAIN")
+PIPEDRIVE_API_TOKEN = env("PIPEDRIVE_API_TOKEN")
+CSV_URL = env("COLABORADORES_CSV_URL")
+PIPEDRIVE_BASE_URL = "https://" + PIPEDRIVE_DOMAIN
+REFRESH_SECONDS = int(env("REFRESH_SECONDS", 1200))  # 20 min
 
-  /* cards de time */
-  .team-cards { display:flex; gap:14px; flex-wrap:wrap; margin-bottom:22px; }
-  .team-card { background:rgba(74,78,86,.95); color:#f2f2f2; border:1px solid rgba(255,255,255,.10);
-               border-left:4px solid var(--gold); border-radius:12px; padding:14px 18px; min-width:290px;
-               box-shadow:0 3px 12px rgba(0,0,0,.14); }
-  .team-card .tc-name { font-size:15px; font-weight:800; letter-spacing:1px; color:var(--gold); margin-bottom:10px; }
-  .team-card .tc-row { display:flex; align-items:baseline; gap:10px; padding:5px 0; font-size:13px; flex-wrap:wrap; }
-  .team-card .tc-row + .tc-row { border-top:1px dashed rgba(255,255,255,.12); }
-  .team-card .tc-lbl { font-size:10px; color:#9a9a9a; text-transform:uppercase; letter-spacing:.5px; min-width:78px; font-weight:700; }
-  .team-card .tc-big { font-size:20px; font-weight:800; color:#ffffff; }
-  .team-card .tc-sub { color:#9a9a9a; }
+# ---- autenticacao do acesso privilegiado ----
+# USUARIOS_PRIVILEGIADOS = "usuario1:hash_sha256,usuario2:hash_sha256"
+#   (hash da senha em sha256 hex; gere com gerar_hash.py)
+# AUTH_SECRET = string aleatoria longa para assinar o token
+def _carrega_usuarios():
+    raw = os.environ.get("USUARIOS_PRIVILEGIADOS", "") or ""
+    raw = raw.strip().strip('"').strip("'").strip()
+    users = {}
+    for par in raw.split(","):
+        par = par.strip()
+        if not par or ":" not in par:
+            continue
+        u, h = par.split(":", 1)
+        users[u.strip().lower()] = h.strip().lower()
+    return users
 
-  .panel { background:var(--card); border:1px solid var(--border); border-radius:12px; padding:16px; margin-bottom:20px;
-           box-shadow:none; }
-  .panel h2 { font-size:14px; margin:0 0 12px; color:var(--gold-ink); text-transform:uppercase; letter-spacing:.5px; font-weight:700; }
-  table { width:100%; border-collapse:collapse; font-size:13px; }
-  th, td { padding:7px 10px; text-align:center; border-bottom:1px solid var(--border); }
-  th { color:var(--muted); font-weight:600; font-size:11px; text-transform:uppercase; letter-spacing:.5px; }
-  td.l, th.l { text-align:left; }
-  tr.total td { font-weight:800; border-top:2px solid var(--gold); background:var(--gold-soft); color:var(--text); }
-  tr.today td { background:var(--gold-soft); }
-  .c-plan{color:var(--text); font-weight:800;} .c-done{color:var(--done);} .c-valid{color:#0a5f36; font-weight:700;} .c-nsw{color:var(--nsw);} .c-reag{color:var(--reag);}
-  .warn { color:var(--nsw); font-size:12px; margin-bottom:16px; }
-  .muted { color:var(--muted); }
+USUARIOS_PRIV = _carrega_usuarios()
+AUTH_SECRET = (os.environ.get("AUTH_SECRET", "") or "troque-este-segredo").encode()
+TOKEN_HORAS = 12  # validade do login
 
-  .matrix-wrap { overflow-x:auto; }
-  table.matrix { border-collapse:collapse; font-size:12px; white-space:nowrap; min-width:100%; }
-  table.matrix th, table.matrix td { padding:8px 12px; border-bottom:1px solid var(--border); text-align:center; }
-  table.matrix th.closer, table.matrix td.closer { position:sticky; left:0; background:var(--card); text-align:left; z-index:2; min-width:150px; font-weight:600; }
-  table.matrix th.team, table.matrix td.team { text-align:left; color:var(--muted); }
-  table.matrix td, table.matrix th { border-left:1px solid #1e1e1e; }
-  table.matrix thead tr.grp th.grp-day, table.matrix thead tr.grp th.grp-tot {
-    border-bottom:1px solid #3a3a3a; border-left:1px solid #3a3a3a;
-    color:#f2f2f2; font-size:11px; letter-spacing:.5px; background:#2a2d33; }
-  table.matrix thead tr.grp th.grp-day .muted { color:#c9c9c9; }
-  table.matrix thead tr.grp th.today { background:var(--gold); color:#1a1a1a; }
-  table.matrix thead tr.grp th.today .muted { color:#5a4a00; }
-  table.matrix tr.sub th { font-size:10px; padding:4px 8px; }
-  table.matrix th.today, table.matrix td.today { background:var(--gold-soft); }
-  table.matrix .mtot { border-left:2px solid var(--gold) !important; }
-  table.matrix tr.foot td { border-top:2px solid var(--gold); background:var(--gold-soft); font-weight:800; }
-  table.matrix tr.foot td.closer { background:var(--gold-soft); }
-  table.matrix tbody tr:hover td, table.matrix tbody tr:hover td.closer { background:#f7f8fa; }
 
-  /* dropdown criador por closer */
-  td.closer .cl-wrap { display:flex; align-items:center; gap:6px; }
-  td.closer .cl-toggle { cursor:pointer; user-select:none; color:var(--muted); font-size:10px;
-                         border:1px solid var(--border); border-radius:4px; padding:1px 5px; line-height:1.4; }
-  td.closer .cl-toggle:hover { color:var(--gold); border-color:var(--gold); }
-  tr.creator-row > td { background:#f7f8fa !important; padding:6px 12px 10px !important; }
-  .creator-wrap { display:flex; gap:28px; flex-wrap:wrap; align-items:stretch; padding-left:6px; }
-  .creator-sep { width:1px; background:var(--border); align-self:stretch; }
-  .creator-col .cc-title { font-size:10px; color:var(--text); text-transform:uppercase; letter-spacing:.5px; margin-bottom:6px; font-weight:700; }
-  .creator-box { display:flex; gap:22px; flex-wrap:wrap; font-size:12px; }
-  .creator-box .ci-lbl { color:var(--muted); text-transform:uppercase; letter-spacing:.5px; font-size:10px; }
-  .creator-box .ci-val { font-size:18px; font-weight:800; color:var(--text); }
-  .creator-box .ci-item { display:flex; flex-direction:column; gap:2px; }
+def _sha256(txt):
+    return hashlib.sha256(txt.encode("utf-8")).hexdigest()
 
-  /* login / acesso privilegiado */
-  .authbar { display:flex; align-items:center; gap:10px; font-size:12px; }
-  .authbar .who { color:var(--gold); }
-  .btn-auth { background:transparent; color:var(--head-muted); border:1px solid var(--head-border); border-radius:8px;
-              padding:6px 14px; font-size:12px; font-weight:600; cursor:pointer; letter-spacing:.3px; }
-  .btn-auth:hover { color:var(--gold); border-color:var(--gold); }
-  .modal-bg { position:fixed; inset:0; background:rgba(0,0,0,.7); display:none; align-items:center;
-              justify-content:center; z-index:100; }
-  .modal-bg.show { display:flex; }
-  .modal { background:#0d0d0d; color:#f2f2f2; border:1px solid #2a2a2a; border-top:3px solid var(--gold);
-           border-radius:14px; padding:24px; width:320px; max-width:90vw; box-shadow:0 10px 40px rgba(0,0,0,.5); }
-  .modal h3 { margin:0 0 16px; font-size:15px; color:var(--gold); text-transform:uppercase; letter-spacing:.5px; }
-  .modal label { display:block; font-size:11px; color:#9a9a9a; text-transform:uppercase; letter-spacing:.5px; margin:10px 0 4px; }
-  .modal input { width:100%; background:#1a1a1a; color:#f2f2f2; border:1px solid #2a2a2a;
-                 border-radius:8px; padding:9px 10px; font-size:14px; }
-  .modal input:focus { outline:none; border-color:var(--gold); }
-  .modal .m-actions { display:flex; gap:10px; margin-top:18px; }
-  .modal .m-actions button { flex:1; padding:9px; border-radius:8px; font-size:13px; font-weight:700; cursor:pointer; border:none; }
-  .modal .m-ok { background:var(--gold); color:#1a1a1a; }
-  .modal .m-cancel { background:#1a1a1a; color:#f2f2f2; border:1px solid #2a2a2a; }
-  .modal .m-erro { color:var(--nsw); font-size:12px; margin-top:10px; min-height:14px; }
 
-  .neg-box { margin-top:12px; padding-top:10px; border-top:1px dashed var(--border); }
-  .neg-box .nb-title { font-size:10px; color:#141414 !important; text-transform:uppercase; letter-spacing:.5px; margin-bottom:6px; font-weight:700; }
-  table.neg-tbl { width:100%; font-size:12px; border-collapse:collapse; }
-  table.neg-tbl { table-layout:fixed; }
-  table.neg-tbl th { font-size:10px; color:var(--muted); text-transform:uppercase; letter-spacing:.5px;
-                     text-align:left; padding:4px 10px; border-bottom:1px solid var(--border); }
-  table.neg-tbl td { padding:5px 10px; border-bottom:1px solid var(--border); text-align:left; }
-  table.neg-tbl a { color:var(--text); text-decoration:none; }
-  table.neg-tbl a:hover { text-decoration:underline; color:var(--gold); }
-  table.neg-tbl tr:hover td { background:#eef0f3; }
-  table.neg-tbl td.neg-hora { color:var(--muted); font-size:10px; white-space:nowrap; }
-  table.neg-tbl td, table.neg-tbl th { overflow:hidden; text-overflow:ellipsis; }
-  table.neg-tbl col.c-hora { width:60px; }
-  table.neg-tbl col.c-id { width:120px; }
-  table.neg-tbl col.c-status { width:90px; }
-  /* linha vertical separando ID do Negocio (2a coluna), alinhada nas duas tabelas */
-  table.neg-tbl th:nth-child(2), table.neg-tbl td:nth-child(2) { border-right:1px solid var(--border); }
-  .status-badge { display:inline-block; padding:2px 8px; border-radius:10px; font-size:10px; font-weight:700;
-                  text-transform:uppercase; letter-spacing:.3px; white-space:nowrap; }
-  .status-badge.st-planejada { background:#eceff1; color:var(--muted); }
-  .status-badge.st-feita { background:#e6f6ee; color:var(--done); }
-  .status-badge.st-validada { background:#e0f2e9; color:#0a5f36; }
-  .status-badge.st-noshow { background:#fdeaea; color:var(--nsw); }
-  .status-badge.st-reagendada { background:#fdf3e3; color:var(--reag); }
-  .status-badge.st-vencida { background:#fdeaea; color:#8a1f1f; }
-  .deal-badge { display:inline-block; padding:2px 8px; border-radius:10px; font-size:10px; font-weight:700;
-                text-transform:uppercase; letter-spacing:.3px; white-space:nowrap; }
-  .deal-badge.dl-aberto { background:#eaf1fb; color:#1a4d8f; }
-  .deal-badge.dl-ganho { background:#e6f6ee; color:var(--done); }
-  .deal-badge.dl-perdido { background:#fdeaea; color:var(--nsw); }
-  tr.dd-click { cursor:pointer; }
-  tr.dd-click:hover td { background:#eef0f3; }
-  td.dd-arrow { color:var(--muted); font-size:10px; text-align:center; width:24px; }
-  tr.dd-detail > td { background:#f7f8fa !important; padding:4px 10px 12px !important; }
-  .dd-box { padding-left:6px; }
-  table.dd-tbl { width:100%; font-size:12px; border-collapse:collapse; }
-  table.dd-tbl th { font-size:10px; color:var(--muted); text-transform:uppercase; letter-spacing:.5px; text-align:left; padding:4px 10px; border-bottom:1px solid var(--border); }
-  table.dd-tbl td { padding:4px 10px; border-bottom:1px solid var(--border); text-align:left; }
-  table.dd-tbl td.neg-hora { color:var(--muted); font-size:10px; white-space:nowrap; }
-  table.dd-tbl a { color:var(--text); text-decoration:none; }
-  table.dd-tbl a:hover { text-decoration:underline; color:var(--gold-ink); }
-  table.dd-tbl tr:hover td { background:#eef0f3; }
+def gera_token(usuario):
+    exp = int(time.time()) + TOKEN_HORAS * 3600
+    corpo = f"{usuario}|{exp}"
+    assinatura = hmac.new(AUTH_SECRET, corpo.encode(), hashlib.sha256).hexdigest()
+    bruto = f"{corpo}|{assinatura}"
+    return base64.urlsafe_b64encode(bruto.encode()).decode()
 
-  /* abas */
-  .tabs { display:flex; gap:6px; margin-bottom:18px; border-bottom:2px solid var(--border); }
-  .tab { padding:9px 18px; font-size:13px; font-weight:700; cursor:pointer; color:var(--muted);
-         border:none; background:transparent; border-bottom:3px solid transparent; margin-bottom:-2px;
-         letter-spacing:.3px; }
-  .tab:hover { color:var(--text); }
-  .tab.active { color:var(--text); border-bottom-color:var(--gold); }
-  .tab.locked { opacity:.5; }
 
-  /* auditoria SDR */
-  .aud-section-title { font-size:12px; font-weight:800; color:var(--muted); text-transform:uppercase;
-                       letter-spacing:1px; margin:22px 0 10px; padding-bottom:6px; border-bottom:2px solid var(--border); }
-  .aud-section-title:first-of-type { margin-top:8px; }
-  .aud-sdr { background:var(--card); border:1px solid var(--border); border-radius:12px; margin-bottom:12px; overflow:hidden; }
-  .aud-head { display:flex; align-items:center; gap:12px; padding:14px 18px; cursor:pointer; user-select:none; }
-  .aud-head:hover { background:#f7f8fa; }
-  .aud-arrow { color:var(--muted); font-size:11px; width:14px; }
-  .aud-name { font-weight:700; font-size:15px; }
-  .aud-team { font-size:11px; color:var(--muted); text-transform:uppercase; letter-spacing:.5px; }
-  .aud-total { margin-left:auto; font-size:13px; color:var(--muted); }
-  .aud-total b { color:var(--text); font-size:16px; }
-  .aud-body { display:none; padding:0 18px 14px; }
-  .aud-body.open { display:block; }
-  table.aud-tbl { width:100%; border-collapse:collapse; font-size:13px; }
-  table.aud-tbl td.aud-negs { font-size:12px; }
-  table.aud-tbl td.aud-negs a { color:var(--text); text-decoration:none; margin-right:6px; }
-  table.aud-tbl td.aud-negs a:hover { text-decoration:underline; color:var(--gold-ink); }
-  table.aud-tbl th { font-size:10px; color:var(--muted); text-transform:uppercase; letter-spacing:.5px; text-align:left; padding:6px 10px; border-bottom:1px solid var(--border); }
-  table.aud-tbl td { padding:7px 10px; border-bottom:1px solid var(--border); }
-  table.aud-tbl td.qtd { font-weight:800; width:70px; }
-  table.aud-tbl .barcell { width:45%; }
-  .aud-bar { height:10px; background:var(--gold); border-radius:6px; }
-  .aud-empty { color:var(--muted); font-size:13px; padding:8px 0; }
+def valida_token(token):
+    """Retorna o usuario se o token for valido e nao expirado; senao None."""
+    if not token:
+        return None
+    try:
+        bruto = base64.urlsafe_b64decode(token.encode()).decode()
+        usuario, exp, assinatura = bruto.rsplit("|", 2)
+        corpo = f"{usuario}|{exp}"
+        esperado = hmac.new(AUTH_SECRET, corpo.encode(), hashlib.sha256).hexdigest()
+        if not hmac.compare_digest(esperado, assinatura):
+            return None
+        if int(exp) < int(time.time()):
+            return None
+        return usuario
+    except Exception:
+        return None
 
-  details.diaria { margin-bottom:20px; border:1px solid var(--border); border-radius:12px; background:var(--card);
-                   box-shadow:none; }
-  details.diaria summary { cursor:pointer; padding:14px 16px; font-size:14px; color:var(--gold-ink);
-                           text-transform:uppercase; letter-spacing:.5px; font-weight:700; list-style:none; }
-  details.diaria summary::-webkit-details-marker { display:none; }
-  details.diaria summary::before { content:'▸ '; }
-  details.diaria[open] summary::before { content:'▾ '; }
-  details.diaria .inner { padding:0 16px 16px; }
-</style>
-</head>
-<body>
-  <div class="modal-bg" id="loginModal">
-    <div class="modal">
-      <h3>Acesso restrito</h3>
-      <label>Usuário</label>
-      <input id="in-user" autocomplete="username" />
-      <label>Senha</label>
-      <input id="in-pass" type="password" autocomplete="current-password" />
-      <div class="m-erro" id="loginErro"></div>
-      <div class="m-actions">
-        <button class="m-cancel" id="loginCancel">Cancelar</button>
-        <button class="m-ok" id="loginOk">Entrar</button>
-      </div>
-    </div>
-  </div>
 
-  <header class="site-header">
-    <div class="hdr-top">
-      <div>
-        <div class="brand">BOARD ACADEMY</div>
-        <h1>REUNIÕES <span class="sep">-</span> CLOSERS</h1>
-      </div>
-      <div class="authbar">
-        <span class="who" id="authWho"></span>
-        <button class="btn-auth" id="btnAuth">Entrar</button>
-      </div>
-    </div>
-    <div class="filters">
-      <div class="field"><label>Mês</label><select id="f-mes"></select></div>
-      <div class="field"><label>Dia</label><select id="f-dia"></select></div>
-      <div class="field"><label>Time</label><select id="f-time"></select></div>
-      <div class="field"><label id="f-closer-label">Closer</label><select id="f-closer"></select></div>
-      <button id="btn">Pesquisar</button>
-      <div class="updated"><div id="updated"></div><div class="auto" id="auto"></div></div>
-    </div>
-  </header>
+def eh_privilegiado(req):
+    """Le o token do header Authorization: Bearer <token>."""
+    auth = req.headers.get("Authorization", "")
+    if auth.startswith("Bearer "):
+        return valida_token(auth[7:]) is not None
+    return False
 
-  <div class="page">
-    <div class="tabs" id="tabs">
-      <button class="tab active" id="tab-reunioes" data-tab="reunioes">Reuniões - Closers</button>
-      <button class="tab" id="tab-sdrs" data-tab="sdrs">Reuniões - SDRs</button>
-      <button class="tab" id="tab-auditoria" data-tab="auditoria">Auditoria SDR</button>
-    </div>
-    <div id="root"><div class="muted">Carregando filtros…</div></div>
-    <div id="root-sdr" style="display:none"><div class="muted">Carregando filtros…</div></div>
-    <div id="root-aud" style="display:none"><div class="muted">Carregando auditoria…</div></div>
-  </div>
+client = PipedriveClient(PIPEDRIVE_DOMAIN, PIPEDRIVE_API_TOKEN)
 
-<script>
-const $ = id => document.getElementById(id);
-const hoje = new Date();
-let TOKEN = sessionStorage.getItem('dash_token') || null;
-let USUARIO = sessionStorage.getItem('dash_user') || null;
+TIMES_VALIDOS = {"SNIPER", "OLYMPUS", "ELITE"}
+SUBAREA_ALIAS = {"MGM": "OLYMPUS"}  # so MGM vira OLYMPUS; o resto passa igual
 
-function authHeaders() {
-  return TOKEN ? { 'Authorization': 'Bearer ' + TOKEN } : {};
+MESES_NOME = ["janeiro", "fevereiro", "março", "abril", "maio", "junho",
+              "julho", "agosto", "setembro", "outubro", "novembro", "dezembro"]
+MES_TO_NUM = {}
+for i, nome in enumerate(MESES_NOME, start=1):
+    MES_TO_NUM[nome] = i
+    MES_TO_NUM[nome[:3]] = i
+
+TTL = 300
+_cache = {"csv": None, "meta": None, "acts": {}, "deals": {}, "current": {}, "campo_validada_opcoes": None}
+_lock = threading.Lock()
+
+
+# ---------- utilidades ----------
+
+def sem_acento(s):
+    s = unicodedata.normalize("NFKD", str(s or ""))
+    return "".join(c for c in s if not unicodedata.combining(c))
+
+
+def norm(s):
+    return sem_acento(s).strip().lower()
+
+
+def parse_mes(v):
+    v = norm(v)
+    if v.isdigit():
+        return int(v)
+    return MES_TO_NUM.get(v) or MES_TO_NUM.get(v[:3])
+
+
+def novo_contador(com_validada=False):
+    base = {"planned": 0, "done": 0, "no_show": 0, "reagendada": 0}
+    if com_validada:
+        base["validada"] = 0
+    return base
+
+
+# campo customizado "Reuniao Validada?" no Pipedrive (id fixo do campo)
+CAMPO_VALIDADA_ID = "7299bf170c5deab9b4fd8c2275f55faf51984dea"
+
+
+def _campo_bruto(a, campo_id):
+    """Le o valor cru de um campo customizado da activity, cobrindo os dois
+    formatos que a API do Pipedrive costuma usar (custom_fields aninhado,
+    ou chave direta no nivel raiz)."""
+    cf = a.get("custom_fields")
+    if isinstance(cf, dict) and campo_id in cf:
+        return cf[campo_id]
+    if campo_id in a:
+        return a[campo_id]
+    return None
+
+
+def _label_do_campo(valor):
+    """Extrai o texto de exibicao de um campo de selecao, cobrindo os
+    formatos comuns: string direta, dict {"label":...}/{"value":...}/{"name":...},
+    ou lista (campo de multipla escolha)."""
+    if valor is None:
+        return None
+    if isinstance(valor, dict):
+        return valor.get("label") or valor.get("value") or valor.get("name")
+    if isinstance(valor, list):
+        for item in valor:
+            lbl = _label_do_campo(item)
+            if lbl:
+                return lbl
+        return None
+    return valor
+
+
+def opcoes_campo_validada():
+    """{option_id: label} do campo "Reuniao Validada?". Cache longo (~1h)
+    quando a busca funciona (a lista de opcoes quase nunca muda); cache
+    curto (~5min, mesmo TTL do resto) quando falha/vem vazia, pra nao
+    ficar 1h inteira sem tentar de novo se foi um erro passageiro."""
+    with _lock:
+        c = _cache.get("campo_validada_opcoes")
+        if c:
+            ttl_efetivo = TTL * 12 if c["opcoes"] else TTL
+            if time.time() - c["ts"] < ttl_efetivo:
+                return c["opcoes"]
+    try:
+        opcoes = client.get_deal_field_options(CAMPO_VALIDADA_ID)
+        if not opcoes:
+            print("[Validada] busca de opcoes do campo voltou vazia")
+    except Exception as e:
+        print("[Validada] Erro ao buscar opcoes do campo Reuniao Validada:", e)
+        opcoes = {}
+    with _lock:
+        _cache["campo_validada_opcoes"] = {"ts": time.time(), "opcoes": opcoes}
+    return opcoes
+
+
+def campo_validado_sim(a):
+    """True se o campo "Reuniao Validada?" do negocio esta como 'Sim'.
+    A API devolve o valor como o ID numerico da opcao escolhida (ex.: 411),
+    entao resolve esse ID pro texto usando as opcoes do campo antes de
+    comparar."""
+    valor = _label_do_campo(_campo_bruto(a, CAMPO_VALIDADA_ID))
+    if valor is None:
+        return False
+    # campo de selecao: valor vem como ID numerico da opcao
+    if isinstance(valor, (int, float)) or (isinstance(valor, str) and valor.strip().lstrip("-").isdigit()):
+        opcoes = opcoes_campo_validada()
+        label = opcoes.get(int(valor))
+        if label is None:
+            return False
+        return str(label).strip().lower() == "sim"
+    # fallback: campo ja veio como texto (label direto)
+    return str(valor).strip().lower() == "sim"
+
+
+def campo_validado_diferente_de_nao(info):
+    """True se o campo "Reuniao Validada?" do negocio NAO esta como 'Nao'
+    -- ou seja, 'Sim' OU em branco/nao preenchido contam como valido; so
+    'Nao' explicito invalida."""
+    valor = _label_do_campo(_campo_bruto(info, CAMPO_VALIDADA_ID))
+    if valor is None:
+        return True  # em branco conta como valido
+    if isinstance(valor, (int, float)) or (isinstance(valor, str) and valor.strip().lstrip("-").isdigit()):
+        opcoes = opcoes_campo_validada()
+        label = opcoes.get(int(valor))
+        if label is None:
+            return True  # opcao desconhecida nao bloqueia
+        valor = label
+    return norm(valor) != "nao"
+
+
+# nomes (alem dos closers) que tambem podem ser proprietarios validos de
+# um negocio para fins de "reuniao validada"
+PROPRIETARIOS_EXTRAS_PERMITIDOS = {"denise mussolin"}
+
+
+def proprietarios_validos_ids(year, month):
+    """ids de quem PODE ser dono valido de um negocio para contar uma
+    reuniao como validada: os closers do mes + PROPRIETARIOS_EXTRAS_PERMITIDOS
+    (ex.: Denise Mussolin). Se o dono do negocio nao estiver nesse conjunto
+    (ex.: for outro SDR, outro Team Leader, etc.), a reuniao nao conta."""
+    users, _ = carrega_meta()
+    closers = closers_do_mes(year, month)
+    extras_norm = {norm(n) for n in PROPRIETARIOS_EXTRAS_PERMITIDOS}
+    ids = set()
+    for nome in closers:
+        uid = users.get(nome.strip().lower())
+        if uid:
+            ids.add(uid)
+    for nome_usuario, uid in users.items():
+        if norm(nome_usuario) in extras_norm:
+            ids.add(uid)
+    return ids
+
+
+def reuniao_vencida(due_date_str, due_time_str):
+    """True se a data/hora de vencimento (due_date + due_time) da atividade
+    ja passou. Sem due_time, considera o fim do dia (23:59:59) -- so vence
+    depois que o dia inteiro passou, evita marcar reuniao de hoje sem hora
+    definida como vencida."""
+    if not due_date_str:
+        return False
+    hora_str = (due_time_str or "23:59:59").strip()[:8]
+    if len(hora_str) < 8:
+        hora_str = "23:59:59"
+    try:
+        due_dt = datetime.strptime(due_date_str + " " + hora_str, "%Y-%m-%d %H:%M:%S")
+    except ValueError:
+        due_dt = datetime.strptime(due_date_str, "%Y-%m-%d")
+    return due_dt < datetime.now()
+
+
+def atividade_e_validada(a, deal_info, proprietarios_ids):
+    """Para a coluna 'Validadas' na tela de Reunioes: feita (type=meeting,
+    done=true), o negocio vinculado tem PROPRIETARIO valido (closer do mes
+    ou PROPRIETARIOS_EXTRAS_PERMITIDOS) E o campo 'Reuniao Validada?' == 'Sim'
+    (estrito -- em branco NAO conta)."""
+    if a.get("type") != "meeting" or not a.get("done"):
+        return False
+    info = deal_info.get(a.get("deal_id")) or {}
+    if info.get("owner_id") not in proprietarios_ids:
+        return False
+    return campo_validado_sim(info)
+
+
+def eh_reuniao_valida_para_auditoria(a, pessoa_id, deal_info, proprietarios_ids):
+    """Reuniao conta na Auditoria SDR/Lideranca quando:
+    - type == "meeting" e done == true (reuniao FEITA)
+    - o RESPONSAVEL (owner_id) da propria atividade e a pessoa auditada
+      -- ja garantido de fora, pois as atividades vem de acts_do_owner(pessoa_id)
+    - o negocio vinculado tem PROPRIETARIO (owner_id do negocio) diferente
+      da pessoa auditada E dentro do conjunto valido (closer do mes ou
+      PROPRIETARIOS_EXTRAS_PERMITIDOS) -- nao conta se o dono e a propria
+      pessoa auditada, nem se o dono for outro SDR/Team Leader qualquer
+    - o campo "Reuniao Validada?" do negocio == 'Sim' (estrito -- em
+      branco NAO conta)."""
+    if a.get("type") != "meeting" or not a.get("done"):
+        return False
+    info = deal_info.get(a.get("deal_id")) or {}
+    dono = info.get("owner_id")
+    if dono == pessoa_id:
+        return False
+    if dono not in proprietarios_ids:
+        return False
+    return campo_validado_sim(info)
+
+
+def soma_em(counter, a, eh_valid=False):
+    tipo = a.get("type")
+    done = a.get("done")
+    counter["planned"] += 1
+    if tipo == "meeting" and done:
+        counter["done"] += 1
+        if eh_valid and "validada" in counter:
+            counter["validada"] += 1
+    elif tipo == "no_show":
+        counter["no_show"] += 1
+    elif tipo == "reagendamento":
+        counter["reagendada"] += 1
+
+
+def soma_contadores(dest, src):
+    for k in dest:
+        dest[k] += src[k]
+
+
+# ---------- CSV de colaboradores ----------
+
+def carrega_csv():
+    with _lock:
+        c = _cache["csv"]
+        if c and time.time() - c["ts"] < TTL:
+            return c["rows"]
+    resp = requests.get(CSV_URL, timeout=30, allow_redirects=True,
+                        headers={"User-Agent": "Mozilla/5.0"})
+    if resp.status_code != 200:
+        print(f"[CSV] {resp.status_code} ao baixar. URL: {CSV_URL[:120]}...")
+        print(f"[CSV] resposta: {resp.text[:200]}")
+        resp.raise_for_status()
+    resp.encoding = "utf-8"
+    reader = csv.DictReader(io.StringIO(resp.text))
+
+    def achar(*nomes):
+        for col in nomes:
+            alvo = norm(col)
+            for h in reader.fieldnames:
+                if norm(h) == alvo:
+                    return h
+        return None
+
+    col_nome = achar("Nome", "NOME")
+    col_sub = achar("Subarea", "SUBAREA")
+    col_cargo = achar("Cargo", "CARGO")
+    col_mes = achar("Mês Referencia", "Mes Referencia", "MÊS REFERIDO")
+    col_ano = achar("Ano Referencia", "ANO REFERIDO")
+    faltando = [n for n, c in [("Nome", col_nome), ("Subarea", col_sub),
+                ("Cargo", col_cargo), ("Mês Referencia", col_mes),
+                ("Ano Referencia", col_ano)] if not c]
+    if faltando:
+        print("[CSV] Colunas nao encontradas:", faltando, "| Cabecalhos:", reader.fieldnames)
+
+    rows = []
+    for r in reader:
+        subarea = (r.get(col_sub) or "").strip().upper()
+        subarea = SUBAREA_ALIAS.get(subarea, subarea)
+        cargo = norm(r.get(col_cargo))
+        mes = parse_mes(r.get(col_mes))
+        ano = norm(r.get(col_ano))
+        ano = int(ano) if ano.isdigit() else None
+        rows.append({
+            "nome": (r.get(col_nome) or "").strip(),
+            "time": subarea,
+            "cargo": cargo,
+            "mes": mes,
+            "ano": ano,
+        })
+    with _lock:
+        _cache["csv"] = {"ts": time.time(), "rows": rows}
+    return rows
+
+
+def closers_do_mes(year, month):
+    """{nome: time} dos closers ativos naquele mes/ano, so times validos."""
+    out = {}
+    for r in carrega_csv():
+        if not r["cargo"].startswith("closer"):   # "closer 1", "closer 2"...
+            continue
+        if r["mes"] != month or r["ano"] != year:
+            continue
+        if r["time"] not in TIMES_VALIDOS:
+            continue
+        if r["nome"]:
+            out[r["nome"]] = r["time"]
+    return out
+
+
+# nomes (normalizados, sem acento/minusculo) excluidos manualmente da auditoria de SDR
+SDR_EXCLUIDOS = {"priscila ribeiro"}
+
+
+def sdrs_do_mes(year, month):
+    """{nome: time} dos SDRs ativos naquele mes/ano (cargo comeca com 'sdr')."""
+    out = {}
+    for r in carrega_csv():
+        if not r["cargo"].startswith("sdr"):
+            continue
+        if r["mes"] != month or r["ano"] != year:
+            continue
+        if norm(r["nome"]) in SDR_EXCLUIDOS:
+            continue
+        if r["nome"]:
+            out[r["nome"]] = r["time"]
+    return out
+
+
+# unica lista de liderancas que entra na auditoria (nome normalizado -> cargo de exibicao)
+LIDERANCAS_PERMITIDAS = {
+    "mylena oliveira": "Team Leader",
+    "stephanie nascimento": "Team Leader",
+    "marlon silva": "Head",
 }
-function ehPriv() { return !!TOKEN; }
-const diaHojeNum = hoje.getDate();
-let CURRENT_MONTH = null;
-let REFRESH_MS = 1200000;
-let LAST_DATA = null;
-let LAST_DATA_SDR = null;
-let MODO_PESSOA = 'closer';  // 'closer' | 'sdr' -- controla o filtro compartilhado e o botao Pesquisar
 
-function opt(sel, arr, getV, getL) {
-  sel.innerHTML = '';
-  for (const item of arr) {
-    const o = document.createElement('option');
-    o.value = getV(item); o.textContent = getL(item);
-    sel.appendChild(o);
-  }
-}
 
-function ehDefaultAtual() {
-  return MODO_PESSOA === 'closer'
-      && $('f-mes').value === CURRENT_MONTH
-      && $('f-time').value === 'Todos'
-      && $('f-closer').value === 'Todos';
-}
+def liderancas_do_mes(year, month):
+    """{nome: cargo} -- so os nomes em LIDERANCAS_PERMITIDAS, com o nome de
+    exibicao (grafia) tirado do CSV daquele mes quando existir."""
+    out = {}
+    for r in carrega_csv():
+        chave = norm(r["nome"])
+        if chave not in LIDERANCAS_PERMITIDAS:
+            continue
+        if r["mes"] != month or r["ano"] != year:
+            continue
+        out[r["nome"]] = LIDERANCAS_PERMITIDAS[chave]
+    return out
 
-function diasNoMes(valorMes) {
-  const [y, m] = valorMes.split('-').map(Number);
-  return new Date(y, m, 0).getDate();
-}
 
-function preencheDias() {
-  const mes = $('f-mes').value;
-  const n = diasNoMes(mes);
-  const arr = [];
-  for (let d = 1; d <= n; d++) arr.push(d);
-  opt($('f-dia'), arr, x=>x, x=>String(x).padStart(2,'0'));
-  $('f-dia').value = (mes === CURRENT_MONTH && diaHojeNum <= n) ? diaHojeNum : 1;
-}
+def meses_disponiveis():
+    pares = set()
+    for r in carrega_csv():
+        if r["mes"] and r["ano"]:
+            pares.add((r["ano"], r["mes"]))
+    hoje = date.today()
+    pares.add((hoje.year, hoje.month))
+    saida = []
+    for ano, mes in sorted(pares, reverse=True):
+        saida.append({"value": f"{ano}-{mes:02d}", "label": f"{MESES_NOME[mes-1]}/{ano}"})
+    return saida
 
-function diaSelecionado() { return parseInt($('f-dia').value, 10); }
 
-async function init() {
-  // valida token salvo (pode ter expirado)
-  if (TOKEN) {
-    try {
-      const me = await (await fetch('/api/me', { headers: authHeaders() })).json();
-      if (!me.privilegiado) { TOKEN = null; USUARIO = null;
-        sessionStorage.removeItem('dash_token'); sessionStorage.removeItem('dash_user'); }
-      else { USUARIO = me.usuario; }
-    } catch (e) {}
-    atualizaAuthUI();
-  }
-  const d = await (await fetch('/api/init')).json();
-  CURRENT_MONTH = d.current;
-  REFRESH_MS = (d.refresh_seconds || 1200) * 1000;
-  opt($('f-mes'), d.months, x=>x.value, x=>x.label);
-  $('f-mes').value = d.current;
-  opt($('f-time'), d.teams, x=>x, x=>x);
-  preencheDias();
-  await carregaPessoas();
-  buscar(false);
-  setInterval(() => { if (ehDefaultAtual()) buscar(true); }, REFRESH_MS);
-}
+# ---------- meta Pipedrive ----------
 
-async function carregaPessoas() {
-  const endpoint = MODO_PESSOA === 'sdr' ? '/api/sdrs' : '/api/closers';
-  const campo = MODO_PESSOA === 'sdr' ? 'sdrs' : 'closers';
-  $('f-closer-label').textContent = MODO_PESSOA === 'sdr' ? 'SDR' : 'Closer';
-  const d = await (await fetch(endpoint + '?month=' + $('f-mes').value)).json();
-  opt($('f-closer'), d[campo], x=>x, x=>x);
-}
+def carrega_meta():
+    with _lock:
+        m = _cache["meta"]
+        if m and time.time() - m["ts"] < TTL:
+            return m["users"], m["pipelines"]
+    users = client.get_users_map()
+    pipelines = client.get_pipelines_map()
+    with _lock:
+        _cache["meta"] = {"ts": time.time(), "users": users, "pipelines": pipelines}
+    return users, pipelines
 
-$('f-mes').addEventListener('change', async () => {
-  preencheDias();
-  await carregaPessoas();
-});
-// dia e so recorte visual: re-renderiza na hora, sem nova requisicao
-$('f-dia').addEventListener('change', () => {
-  if (MODO_PESSOA === 'sdr') { if (LAST_DATA_SDR) renderSdr(LAST_DATA_SDR); }
-  else { if (LAST_DATA) render(LAST_DATA); }
-});
-$('btn').addEventListener('click', () => {
-  if (MODO_PESSOA === 'sdr') buscarSdr(false); else buscar(false);
-});
 
-async function buscar(isAuto) {
-  // virada de dia: se a data mudou desde que a pagina abriu, recarrega
-  if (isAuto) {
-    const agora = new Date();
-    if (agora.getDate() !== diaHojeNum && $('f-mes').value === CURRENT_MONTH) {
-      location.reload();
-      return;
+def acts_do_owner(owner_id, year, month):
+    key = (owner_id, year, month)
+    with _lock:
+        c = _cache["acts"].get(key)
+        if c and time.time() - c["ts"] < TTL:
+            return c["acts"]
+    inicio = (date(year, month, 1) - timedelta(days=31)).strftime("%Y-%m-%dT00:00:00Z")
+    acts = client.get_meeting_activities(owner_id, updated_since=inicio)
+    with _lock:
+        _cache["acts"][key] = {"ts": time.time(), "acts": acts}
+    return acts
+
+
+def _ranking_por_criador(auditados, year, month):
+    """Para cada pessoa em `auditados` ({nome: label}): ranking de closers
+    (donos dos negocios) pra quem as reunioes dela contam como validadas.
+
+    Criterio (conforme definido pelo usuario):
+      - type = meeting
+      - due_date (vencimento) no mes selecionado
+      - RESPONSAVEL (owner_id) da atividade = a propria pessoa auditada
+        -> por isso busca direto com acts_do_owner(pessoa_id), a MESMA
+           funcao/cache ja usada pros closers, so que com o id da pessoa
+      - PROPRIETARIO do negocio (owner_id do deal) DIFERENTE da pessoa
+        auditada -- nao conta reuniao de negocio que e dela mesma
+      - campo "Reuniao Validada?" do negocio DIFERENTE de "Nao"
+        (em branco ou "Sim" contam)
+
+    Funciona pra SDR, Team Leader, Head -- qualquer um que tenha usuario
+    no Pipedrive."""
+    users, _ = carrega_meta()
+    closers = closers_do_mes(year, month)   # nome -> time (so pra exibicao)
+    proprietarios_ids = proprietarios_validos_ids(year, month)
+
+    id_to_closer_nome = {}
+    for nome in closers:
+        uid = users.get(nome.strip().lower())
+        if uid:
+            id_to_closer_nome[uid] = nome
+    # fallback de nome (ex.: Denise Mussolin, que e permitida mas nao e closer)
+    id_to_nome_geral = {}
+    for nome_lower, uid in users.items():
+        id_to_nome_geral.setdefault(uid, nome_lower.title())
+
+    contadores = {nome: defaultdict(int) for nome in auditados}
+    negocios_por = {nome: defaultdict(list) for nome in auditados}  # nome -> {closer: [negocios]}
+    totais = {nome: 0 for nome in auditados}
+
+    for nome_pessoa in auditados:
+        pessoa_id = users.get(nome_pessoa.strip().lower())
+        if not pessoa_id:
+            continue
+        acts = acts_do_owner(pessoa_id, year, month)
+        deal_ids = {a["deal_id"] for a in acts if a.get("deal_id")}
+        deal_info = info_dos_deals(deal_ids)
+        for a in acts:
+            due = a.get("due_date")
+            if not due:
+                continue
+            d = datetime.strptime(due, "%Y-%m-%d").date()
+            if d.year != year or d.month != month:
+                continue
+            if not eh_reuniao_valida_para_auditoria(a, pessoa_id, deal_info, proprietarios_ids):
+                continue
+            deal_id = a.get("deal_id")
+            info = deal_info.get(deal_id) or {}
+            dono_negocio = info.get("owner_id")
+            nome_closer = (id_to_closer_nome.get(dono_negocio)
+                           or id_to_nome_geral.get(dono_negocio)
+                           or f"user {dono_negocio}")
+            contadores[nome_pessoa][nome_closer] += 1
+            totais[nome_pessoa] += 1
+            negocios_por[nome_pessoa][nome_closer].append({
+                "id": deal_id,
+                "title": info.get("title") or ("Negocio " + str(deal_id)),
+                "url": PIPEDRIVE_BASE_URL + "/deal/" + str(deal_id),
+            })
+
+    saida = []
+    for nome, label in sorted(auditados.items()):
+        encontrado = users.get(nome.strip().lower()) is not None
+        ranking = sorted(contadores[nome].items(), key=lambda x: (-x[1], x[0]))
+        saida.append({
+            "nome": nome, "label": label, "encontrado": encontrado,
+            "total": totais[nome],
+            "closers": [
+                {"closer": k, "qtd": v,
+                 "negocios": sorted(negocios_por[nome][k], key=lambda x: x["id"])}
+                for k, v in ranking
+            ],
+        })
+    return saida
+
+
+def build_auditoria_sdr(year, month):
+    sdrs = sdrs_do_mes(year, month)
+    lideres = liderancas_do_mes(year, month)
+    return {
+        "year": year, "month": month,
+        "month_label": f"{MESES_NOME[month-1]}/{year}",
+        "sdrs": _ranking_por_criador(sdrs, year, month),
+        "liderancas": _ranking_por_criador(lideres, year, month),
     }
-  }
-  if (!isAuto) {
-    $('btn').disabled = true;
-    $('root').innerHTML = '<div class="muted">Buscando no Pipedrive… (pode levar alguns segundos)</div>';
-  }
-  const p = new URLSearchParams({
-    month: $('f-mes').value, team: $('f-time').value, closer: $('f-closer').value,
-  });
-  try {
-    const res = await fetch('/api/dashboard?' + p.toString(), { headers: authHeaders() });
-    const data = await res.json();
-    if (data.error) $('root').innerHTML = '<div class="warn">Erro: ' + data.error + '</div>';
-    else { LAST_DATA = data; render(data); }
-  } catch (e) {
-    if (!isAuto) $('root').innerHTML = '<div class="warn">Falha na requisição: ' + e + '</div>';
-  } finally {
-    $('btn').disabled = false;
-  }
-}
 
-async function buscarSdr(isAuto) {
-  if (!isAuto) {
-    $('btn').disabled = true;
-    $('root-sdr').innerHTML = '<div class="muted">Buscando no Pipedrive… (pode levar alguns segundos)</div>';
-  }
-  const p = new URLSearchParams({
-    month: $('f-mes').value, team: $('f-time').value, sdr: $('f-closer').value,
-  });
-  try {
-    const res = await fetch('/api/dashboard_sdr?' + p.toString(), { headers: authHeaders() });
-    const data = await res.json();
-    if (data.error) $('root-sdr').innerHTML = '<div class="warn">Erro: ' + data.error + '</div>';
-    else { LAST_DATA_SDR = data; renderSdr(data); }
-  } catch (e) {
-    if (!isAuto) $('root-sdr').innerHTML = '<div class="warn">Falha na requisição: ' + e + '</div>';
-  } finally {
-    $('btn').disabled = false;
-  }
-}
 
-function dealBadge(status) {
-  const mapa = { 'Aberto': 'dl-aberto', 'Ganho': 'dl-ganho', 'Perdido': 'dl-perdido' };
-  const cls = mapa[status] || 'dl-aberto';
-  return `<span class="deal-badge ${cls}">${status || '—'}</span>`;
-}
+def info_dos_deals(deal_ids):
+    """{deal_id: {"pipeline_id":..., "title":...}} com cache local."""
+    faltando = []
+    with _lock:
+        for d in deal_ids:
+            if d not in _cache["deals"]:
+                faltando.append(d)
+    if faltando:
+        novos = client.get_deals_info(faltando)
+        with _lock:
+            _cache["deals"].update(novos)
+    with _lock:
+        return {d: _cache["deals"].get(d) for d in deal_ids}
 
-function statusBadge(status) {
-  const mapa = {
-    'Planejada': 'st-planejada', 'Feita': 'st-feita', 'Validada': 'st-validada',
-    'No Show': 'st-noshow', 'Reagendada': 'st-reagendada', 'Vencida': 'st-vencida',
-  };
-  const cls = mapa[status] || 'st-planejada';
-  return `<span class="status-badge ${cls}">${status || '—'}</span>`;
-}
 
-function cols(c, comValidada) {
-  const meio = comValidada ? `<td class="c-valid">${c.validada||0}</td>` : '';
-  return `<td class="c-plan">${c.planned}</td><td class="c-done">${c.done}</td>${meio}`
-       + `<td class="c-nsw">${c.no_show}</td><td class="c-reag">${c.reagendada}</td>`;
-}
+# ---------- construcao ----------
 
-function renderGenerico(data, cfg) {
-  $('updated').innerText = 'Atualizado: ' + new Date(data.generated_at).toLocaleString('pt-BR');
-  $('auto').innerText = (cfg.ehAtual && cfg.ehAtual()) ? '● atualiza sozinho a cada ' + Math.round(REFRESH_MS/60000) + ' min' : '';
-  const mt = data.month_total;
-  const nDays = data.days.length;
-  const dSel = Math.min(diaSelecionado() || 1, nDays);
-  const dSelStr = String(dSel).padStart(2,'0');
-  const mesStr = String(data.month).padStart(2,'0');
-  const zero = {planned:0, done:0, validada:0, no_show:0, reagendada:0};
-  const getDia = (lista, n) => { const r = (lista||[]).find(x => x.dia === n); return r ? r.counter : null; };
+# nomes de "criador" cujas atividades devem ser IGNORADAS na contagem
+# (ex.: integracoes/automacoes -- nao sao reunioes marcadas por gente de verdade)
+CRIADORES_EXCLUIDOS = {"matheus paz"}
 
-  const tresDias = [];
-  if (dSel - 1 >= 1)      tresDias.push({n: dSel-1, rot: 'Anterior'});
-  tresDias.push({n: dSel, rot: 'Dia ' + dSelStr});
-  if (dSel + 1 <= nDays)  tresDias.push({n: dSel+1, rot: 'Seguinte'});
 
-  const quatro = (c, mtotCls) => {
-    const meio = cfg.comValidada ? `<td class="c-valid">${c.validada||0}</td>` : '';
-    return `<td class="c-plan${mtotCls?' mtot':''}">${c.planned}</td><td class="c-done">${c.done}</td>${meio}`
-         + `<td class="c-nsw">${c.no_show}</td><td class="c-reag">${c.reagendada}</td>`;
-  };
-  const subHead = extra => {
-    const meio = cfg.comValidada ? `<th class="c-valid">V</th>` : '';
-    return `<th class="c-plan${extra||''}">P</th><th class="c-done">F</th>${meio}<th class="c-nsw">NS</th><th class="c-reag">R</th>`;
-  };
-  const nColsPorBloco = cfg.comValidada ? 5 : 4;
+def ids_criadores_excluidos():
+    """ids do Pipedrive dos nomes em CRIADORES_EXCLUIDOS."""
+    users, _ = carrega_meta()
+    alvo_norm = {norm(n) for n in CRIADORES_EXCLUIDOS}
+    return {uid for nome_lower, uid in users.items() if norm(nome_lower) in alvo_norm}
 
-  const diaCounter = getDia(data.days, dSel) || zero;
 
-  let html = '';
+def build_dashboard(year, month, time_filtro=None, closer_filtro=None, privilegiado=False):
+    closers = closers_do_mes(year, month)
+    if time_filtro and time_filtro.upper() != "TODOS":
+        closers = {n: t for n, t in closers.items() if t == time_filtro.upper()}
+    if closer_filtro and closer_filtro.upper() != "TODOS":
+        closers = {n: t for n, t in closers.items() if n == closer_filtro}
+    return _build_dashboard_generico(
+        closers, year, month, privilegiado, com_validada=False,
+        excluir_criadores_ids=ids_criadores_excluidos(),
+    )
 
-  const kpiValidaHtml = cfg.comValidada
-    ? `<div class="kpi valid"><div class="lbl">Validadas</div><div class="val">${diaCounter.validada||0}</div></div>` : '';
-  html += `<div class="kpi-head">Dia ${dSelStr}/${mesStr}</div>`;
-  html += `<div class="kpis">
-    <div class="kpi plan"><div class="lbl">Planejadas</div><div class="val">${diaCounter.planned}</div></div>
-    <div class="kpi done"><div class="lbl">Feitas</div><div class="val">${diaCounter.done}</div></div>
-    ${kpiValidaHtml}
-    <div class="kpi nsw"><div class="lbl">No Show</div><div class="val">${diaCounter.no_show}</div></div>
-    <div class="kpi reag"><div class="lbl">Reagendadas</div><div class="val">${diaCounter.reagendada}</div></div>
-  </div>`;
 
-  const msValidaHtml = cfg.comValidada
-    ? `<span class="ms-item c-valid">Validadas <b>${mt.validada||0}</b></span>` : '';
-  html += `<div class="month-strip">
-    <span class="ms-title">Total do mês — ${data.month_label}</span>
-    <span class="ms-item c-plan">Planejadas <b>${mt.planned}</b></span>
-    <span class="ms-item c-done">Feitas <b>${mt.done}</b></span>
-    ${msValidaHtml}
-    <span class="ms-item c-nsw">No Show <b>${mt.no_show}</b></span>
-    <span class="ms-item c-reag">Reagendadas <b>${mt.reagendada}</b></span>
-  </div>`;
+def build_dashboard_sdr(year, month, time_filtro=None, sdr_filtro=None, privilegiado=False):
+    sdrs = sdrs_do_mes(year, month)
+    if time_filtro and time_filtro.upper() != "TODOS":
+        sdrs = {n: t for n, t in sdrs.items() if str(t).upper() == time_filtro.upper()}
+    if sdr_filtro and sdr_filtro.upper() != "TODOS":
+        sdrs = {n: t for n, t in sdrs.items() if n == sdr_filtro}
+    return _build_dashboard_generico(sdrs, year, month, privilegiado, com_validada=True)
 
-  const times = Object.keys(data.por_time).sort();
-  if (times.length) {
-    html += '<div class="team-cards">';
-    for (const t of times) {
-      const cd = getDia((data.por_time_days || {})[t], dSel) || zero;
-      const cm = data.por_time[t];
-      html += `<div class="team-card">
-        <div class="tc-name">${t}</div>
-        <div class="tc-row">
-          <span class="tc-lbl">Total dia ${dSelStr}</span>
-          <span class="tc-big">${cd.planned}</span>
-          <span class="tc-sub">plan · <span class="c-done">${cd.done}</span> feitas${cfg.comValidada ? ' · <span class=\"c-valid\">' + (cd.validada||0) + '</span> valid' : ''} · <span class="c-nsw">${cd.no_show}</span> NS · <span class="c-reag">${cd.reagendada}</span> reag</span>
-        </div>
-        <div class="tc-row">
-          <span class="tc-lbl">Total mês</span>
-          <span class="tc-big">${cm.planned}</span>
-          <span class="tc-sub">plan · <span class="c-done">${cm.done}</span> feitas${cfg.comValidada ? ' · <span class=\"c-valid\">' + (cm.validada||0) + '</span> valid' : ''} · <span class="c-nsw">${cm.no_show}</span> NS · <span class="c-reag">${cm.reagendada}</span> reag</span>
-        </div>
-      </div>`;
+
+def _build_dashboard_generico(closers, year, month, privilegiado=False, com_validada=False,
+                               excluir_criadores_ids=None):
+    """Nucleo do dashboard de reunioes -- recebe `closers` ja resolvido
+    ({nome: time}) e calcula dias/KPIs/matriz/etc. Usado tanto pra closers
+    quanto pra SDRs (so muda quem entra no dict de entrada)."""
+    users, pipelines = carrega_meta()
+    proprietarios_ids = proprietarios_validos_ids(year, month) if com_validada else set()
+
+    last_day = calendar.monthrange(year, month)[1]
+    combined_days = {d: novo_contador(com_validada) for d in range(1, last_day + 1)}
+    geral_dia = {d: [] for d in range(1, last_day + 1)}  # dia -> reunioes de todos os closers (so priv)
+    month_total = novo_contador(com_validada)
+    por_closer = []
+    por_time = defaultdict(lambda: novo_contador(com_validada))
+    por_time_days = {}          # time -> {dia: contador}
+    nao_encontrados = []
+
+    for nome, time_c in sorted(closers.items()):
+        if time_c not in por_time_days:
+            por_time_days[time_c] = {d: novo_contador(com_validada) for d in range(1, last_day + 1)}
+
+        owner_id = users.get(nome.strip().lower())
+        if not owner_id:
+            nao_encontrados.append(nome)
+            continue
+
+        acts = acts_do_owner(owner_id, year, month)
+        deal_ids = {a["deal_id"] for a in acts if a.get("deal_id")}
+        deal_info = info_dos_deals(deal_ids)
+
+        c_total = novo_contador(com_validada)
+        c_days = {d: novo_contador(com_validada) for d in range(1, last_day + 1)}
+        c_pipes = defaultdict(lambda: novo_contador(com_validada))
+        c_criadas = {"proprio": 0, "outro": 0}
+        c_criadas_days = {d: {"proprio": 0, "outro": 0} for d in range(1, last_day + 1)}
+        c_negocios_mes = {}   # deal_id -> {id,title,url}  (dedupe do mes)
+        c_negocios_dia = {d: [] for d in range(1, last_day + 1)}  # dia -> lista de reunioes com negocio
+
+        for a in acts:
+            if excluir_criadores_ids and a.get("creator_user_id") in excluir_criadores_ids:
+                continue  # atividade criada por integracao/automacao -- nao conta
+            due = a.get("due_date")
+            deal_id = a.get("deal_id")
+            tipo = a.get("type")
+            done = a.get("done")
+            if not due or not deal_id:
+                continue
+            d = datetime.strptime(due, "%Y-%m-%d").date()
+            if d.year != year or d.month != month:
+                continue
+
+            info = deal_info.get(deal_id) or {}
+            eh_valid = com_validada and atividade_e_validada(a, deal_info, proprietarios_ids)
+
+            soma_em(combined_days[d.day], a, eh_valid)
+            soma_em(month_total, a, eh_valid)
+            soma_em(c_total, a, eh_valid)
+            soma_em(c_days[d.day], a, eh_valid)
+            soma_em(por_time[time_c], a, eh_valid)
+            soma_em(por_time_days[time_c][d.day], a, eh_valid)
+
+            pid = info.get("pipeline_id")
+            pnome = pipelines.get(pid, f"Funil {pid}") if pid else "Sem funil"
+            soma_em(c_pipes[pnome], a, eh_valid)
+
+            chave = "proprio" if a.get("creator_user_id") == owner_id else "outro"
+            c_criadas[chave] += 1
+            c_criadas_days[d.day][chave] += 1
+
+            if privilegiado:
+                titulo = info.get("title") or ("Negocio " + str(deal_id))
+                url = PIPEDRIVE_BASE_URL + "/deal/" + str(deal_id)
+                hora = (a.get("due_time") or "")[:5]  # HH:MM
+                if tipo == "reagendamento":
+                    status = "Reagendada"
+                elif tipo == "no_show":
+                    status = "No Show"
+                elif tipo == "meeting" and done and eh_valid:
+                    status = "Validada"
+                elif tipo == "meeting" and done:
+                    status = "Feita"
+                else:
+                    # ainda nao aconteceu -- confere se o prazo (due_date/due_time)
+                    # ja passou, pra marcar como Vencida em vez de Planejada
+                    status = "Vencida" if reuniao_vencida(due, a.get("due_time")) else "Planejada"
+                # status do NEGOCIO (aberto/ganho/perdido), independente do status da reuniao
+                status_negocio = {"open": "Aberto", "won": "Ganho", "lost": "Perdido"}.get(
+                    info.get("status"), info.get("status") or "—")
+                # dedupe do mes (por negocio) -- guarda o status da 1a reuniao encontrada
+                if deal_id not in c_negocios_mes:
+                    c_negocios_mes[deal_id] = {
+                        "id": deal_id, "title": titulo, "url": url,
+                        "status": status, "status_negocio": status_negocio,
+                    }
+                # lista do dia (uma linha por reuniao, com hora)
+                item_dia = {
+                    "id": deal_id, "title": titulo, "url": url,
+                    "hora": hora, "tipo": tipo, "done": bool(done),
+                    "status": status, "status_negocio": status_negocio,
+                }
+                c_negocios_dia[d.day].append(item_dia)
+                # lista geral (todos os closers) para a secao "dia a dia"
+                geral_dia[d.day].append({**item_dia, "closer": nome, "time": time_c})
+
+        por_closer.append({
+            "name": nome, "time": time_c,
+            "total": c_total,
+            "days": [{"dia": d, "counter": c_days[d]} for d in range(1, last_day + 1)],
+            "by_pipeline": dict(c_pipes),
+            "criadas": c_criadas,
+            "criadas_days": [{"dia": d, "c": c_criadas_days[d]} for d in range(1, last_day + 1)],
+            "negocios": sorted(c_negocios_mes.values(), key=lambda x: x["id"]) if privilegiado else [],
+            "negocios_dia": ([{"dia": d, "itens": sorted(c_negocios_dia[d], key=lambda x: x["hora"])}
+                              for d in range(1, last_day + 1)] if privilegiado else []),
+        })
+
+    dias = [{"dia": d, "counter": combined_days[d]} for d in range(1, last_day + 1)]
+    geral_dia_out = ([{"dia": d, "itens": sorted(geral_dia[d], key=lambda x: (x["hora"], x["closer"]))}
+                      for d in range(1, last_day + 1)] if privilegiado else [])
+    por_closer.sort(key=lambda x: (-x["total"]["planned"], x["name"]))
+
+    por_time_days_out = {
+        t: [{"dia": d, "counter": dd[d]} for d in range(1, last_day + 1)]
+        for t, dd in por_time_days.items()
     }
-    html += '</div>';
-  }
 
-  if (data.por_closer.length) {
-    html += `<div class="panel"><h2>Por ${cfg.label}</h2><div class="matrix-wrap"><table class="matrix">`;
-    html += `<thead><tr class="grp">
-      <th class="closer l" rowspan="2">${cfg.label}</th><th class="team l" rowspan="2">Time</th>`;
-    for (const d of tresDias) {
-      const cls = (d.n === dSel) ? ' today' : '';
-      html += `<th colspan="${nColsPorBloco}" class="grp-day${cls}">${d.rot} <span class="muted">${String(d.n).padStart(2,'0')}</span></th>`;
+    return {
+        "generated_at": datetime.now().isoformat(),
+        "year": year, "month": month,
+        "month_label": f"{MESES_NOME[month-1]}/{year}",
+        "days": dias,
+        "month_total": month_total,
+        "por_time": dict(por_time),
+        "por_time_days": por_time_days_out,
+        "por_closer": por_closer,
+        "geral_dia": geral_dia_out,
+        "nao_encontrados": nao_encontrados,
     }
-    html += `<th colspan="${nColsPorBloco}" class="grp-tot mtot">Total do mês</th></tr>`;
-    html += `<tr class="sub">`;
-    for (const d of tresDias) html += subHead((d.n === dSel) ? ' today' : '');
-    html += subHead(' mtot');
-    html += `</tr></thead><tbody>`;
 
-    const nCols = 2 + tresDias.length * nColsPorBloco + nColsPorBloco;
-    data.por_closer.forEach((c, i) => {
-      const cid = cfg.idPrefix + '-' + i;
-      const nomeCel = cfg.comCriador
-        ? `<span class="cl-wrap"><span class="cl-toggle" data-cr="${cid}" id="${cid}-t">▸ criador</span>${c.name}</span>`
-        : `<span class="cl-wrap"><span class="cl-toggle" data-cr="${cid}" id="${cid}-t">▸ detalhes</span>${c.name}</span>`;
-      html += `<tr><td class="closer l">${nomeCel}</td><td class="team l">${c.time}</td>`;
-      for (const d of tresDias) html += quatro(getDia(c.days, d.n) || zero);
-      const t = c.total;
-      html += `<td class="c-plan mtot">${t.planned}</td><td class="c-done">${t.done}</td><td class="c-nsw">${t.no_show}</td><td class="c-reag">${t.reagendada}</td></tr>`;
 
-      let blocos = '';
-      if (cfg.comCriador) {
-        const crGet = (dia) => ((c.criadas_days || []).find(x => x.dia === dia) || {}).c || {proprio:0, outro:0};
-        const crHoje = crGet(dSel);
-        const dAnt = dSel - 1;
-        const blocoCriador = (titulo, cc) => `
-            <div class="creator-col">
-              <div class="cc-title">${titulo}</div>
-              <div class="creator-box">
-                <div class="ci-item"><span class="ci-lbl">Criadas pelo próprio</span><span class="ci-val">${cc.proprio}</span></div>
-                <div class="ci-item"><span class="ci-lbl">Criadas por outro</span><span class="ci-val">${cc.outro}</span></div>
-                <div class="ci-item"><span class="ci-lbl">Total</span><span class="ci-val">${cc.proprio + cc.outro}</span></div>
-              </div>
-            </div>`;
-        const sep = '<div class="creator-sep"></div>';
-        if (dAnt >= 1) blocos += blocoCriador('Dia anterior ' + String(dAnt).padStart(2,'0') + '/' + mesStr, crGet(dAnt)) + sep;
-        blocos += blocoCriador('Dia ' + dSelStr + '/' + mesStr, crHoje);
-      }
-      let negHtml = '';
-      if (ehPriv()) {
-        // --- negocios do DIA selecionado (com hora) ---
-        const nd = ((c.negocios_dia || []).find(x => x.dia === dSel) || {}).itens || [];
-        negHtml += `<div class="neg-box"><div class="nb-title">Negócios do dia ${dSelStr}/${mesStr} (${nd.length}) — clique para abrir no Pipedrive</div>`;
-        if (nd.length) {
-          negHtml += `<table class="neg-tbl"><colgroup><col class="c-hora"><col class="c-id"><col><col class="c-status"><col class="c-status"></colgroup><tr><th>Hora</th><th>ID</th><th>Negócio</th><th>Status</th><th>Situação</th></tr>`;
-          for (const n of nd) {
-            negHtml += `<tr><td class="neg-hora">${n.hora || '--:--'}</td>
-              <td><a href="${n.url}" target="_blank" rel="noopener">#${n.id}</a></td>
-              <td><a href="${n.url}" target="_blank" rel="noopener">${n.title}</a></td>
-              <td>${statusBadge(n.status)}</td>
-              <td>${dealBadge(n.status_negocio)}</td></tr>`;
-          }
-          negHtml += `</table>`;
-        } else {
-          negHtml += `<div class="muted" style="font-size:12px">Nenhum negócio nesse dia.</div>`;
-        }
-        negHtml += `</div>`;
+def eh_default(year, month, team, closer):
+    hoje = date.today()
+    return (year == hoje.year and month == hoje.month
+            and (not team or team.upper() == "TODOS")
+            and (not closer or closer.upper() == "TODOS"))
 
-        // --- negocios do MES (dedupe) ---
-        const nm = c.negocios || [];
-        negHtml += `<div class="neg-box"><div class="nb-title">Negócios do mês (${nm.length})</div>`;
-        if (nm.length) {
-          negHtml += `<table class="neg-tbl"><colgroup><col class="c-hora"><col class="c-id"><col><col class="c-status"><col class="c-status"></colgroup><tr><th></th><th>ID</th><th>Negócio</th><th>Status</th><th>Situação</th></tr>`;
-          for (const n of nm) {
-            negHtml += `<tr><td class="neg-hora"></td><td><a href="${n.url}" target="_blank" rel="noopener">#${n.id}</a></td>
-              <td><a href="${n.url}" target="_blank" rel="noopener">${n.title}</a></td>
-              <td>${statusBadge(n.status)}</td>
-              <td>${dealBadge(n.status_negocio)}</td></tr>`;
-          }
-          negHtml += `</table>`;
-        } else {
-          negHtml += `<div class="muted" style="font-size:12px">Nenhum negócio no mês.</div>`;
-        }
-        negHtml += `</div>`;
-      }
-      html += `<tr class="creator-row" id="${cid}" style="display:none"><td colspan="${nCols}">
-        <div class="creator-wrap">${blocos}</div>${negHtml}</td></tr>`;
-    });
 
-    html += `<tr class="foot"><td class="closer l">TOTAL</td><td class="team l"></td>`;
-    for (const d of tresDias) html += quatro(getDia(data.days, d.n) || zero);
-    html += quatro(mt, true) + `</tr>`;
-    const legendaValid = cfg.comValidada ? ' · V = validadas' : '';
-    html += `</tbody></table></div>
-      <div class="muted" style="font-size:11px;margin-top:8px">P = planejadas · F = feitas${legendaValid} · NS = no-show · R = reagendadas</div></div>`;
+def refresh_current_loop():
+    """Reconstroi o mes atual a cada REFRESH_SECONDS. So roda LOCAL --
+    na Vercel (serverless) nao existe processo de fundo; o refresh vem do navegador."""
+    while True:
+        try:
+            hoje = date.today()
+            data_comum = build_dashboard(hoje.year, hoje.month, privilegiado=False)
+            data_priv = build_dashboard(hoje.year, hoje.month, privilegiado=True)
+            with _lock:
+                _cache["current"] = {
+                    "ts": time.time(), "key": (hoje.year, hoje.month),
+                    "data": {False: data_comum, True: data_priv},
+                }
+            print(f"[auto] mes atual atualizado {datetime.now():%H:%M:%S}")
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            print("Erro no refresh automatico:", e)
+        time.sleep(REFRESH_SECONDS)
 
-    // ---- distribuicao: Validadas (se disponivel) ou Feitas + % sobre o total de todos ----
-    const metricaDist = cfg.comValidada ? 'validada' : 'done';
-    const tituloDist = cfg.comValidada ? 'reuniões validadas' : 'reuniões feitas';
-    const totalTodos = data.por_closer.reduce((soma, c) => soma + (c.total[metricaDist]||0), 0);
-    const distOrdenada = data.por_closer.slice().sort((a,b) => (b.total[metricaDist]||0) - (a.total[metricaDist]||0));
-    html += `<div class="panel"><h2>Distribuição por ${cfg.label} — ${tituloDist} · ${data.month_label}</h2>
-      <table class="aud-tbl"><tr><th class="l">${cfg.label}</th><th>Quantidade</th><th>%</th><th class="barcell"></th></tr>`;
-    for (const c of distOrdenada) {
-      const qtd = c.total[metricaDist] || 0;
-      const pct = totalTodos ? (qtd / totalTodos * 100) : 0;
-      html += `<tr><td class="l">${c.name}</td><td class="qtd">${qtd}</td>
-        <td>${pct.toFixed(1)}%</td>
-        <td class="barcell"><div class="aud-bar" style="width:${pct}%"></div></td></tr>`;
-    }
-    html += `<tr class="total"><td class="l">TOTAL</td><td class="qtd">${totalTodos}</td><td>100%</td><td></td></tr>`;
-    html += `</table></div>`;
-  }
 
-  const priv = ehPriv();
-  const gdMap = {};
-  if (priv) for (const g of (data.geral_dia || [])) gdMap[g.dia] = g.itens || [];
-  html += `<details class="diaria"><summary>Dia a dia — todos os times (${data.month_label})${priv ? ' · clique num dia para ver as reuniões' : ''}</summary><div class="inner">
-    <table><tr>${priv ? '<th style="width:24px"></th>' : ''}<th class="l">Dia</th><th>Planejado</th><th>Feitas</th>${cfg.comValidada ? '<th>Validadas</th>' : ''}<th>No Show</th><th>Reagendadas</th></tr>`;
+# ---------- rotas ----------
 
-  for (const row of data.days) {
-    const cls = (row.dia === dSel) ? ' class="today"' : '';
-    const itens = priv ? (gdMap[row.dia] || []) : [];
-    const temItens = itens.length > 0;
-    const arrow = priv ? `<td class="dd-arrow">${temItens ? '▸' : ''}</td>` : '';
-    const clickable = (priv && temItens) ? ` class="dd-click${cls ? ' today' : ''}" data-dd="ddrow-${row.dia}"` : cls;
-    html += `<tr${clickable}>${arrow}<td class="l">${String(row.dia).padStart(2,'0')}</td>${cols(row.counter, cfg.comValidada)}</tr>`;
-    if (priv && temItens) {
-      let sub = `<table class="dd-tbl"><tr><th>Hora</th><th>${cfg.label}</th><th>Time</th><th>ID</th><th>Negócio</th></tr>`;
-      for (const it of itens) {
-        sub += `<tr><td class="neg-hora">${it.hora || '--:--'}</td>
-          <td>${it.closer}</td><td class="muted">${it.time}</td>
-          <td><a href="${it.url}" target="_blank" rel="noopener">#${it.id}</a></td>
-          <td><a href="${it.url}" target="_blank" rel="noopener">${it.title}</a></td></tr>`;
-      }
-      sub += `</table>`;
-      const colspan = (cfg.comValidada ? 6 : 5) + 1; // arrow + Dia + colunas
-      html += `<tr class="dd-detail" id="ddrow-${row.dia}" style="display:none"><td colspan="${colspan}"><div class="dd-box">${sub}</div></td></tr>`;
-    }
-  }
-  const totLead = priv ? '<td></td>' : '';
-  html += `<tr class="total">${totLead}<td class="l">TOTAL</td>${cols(mt, cfg.comValidada)}</tr></table></div></details>`;
+@app.route("/api/init")
+def api_init():
+    hoje = date.today()
+    return jsonify({
+        "months": meses_disponiveis(),
+        "current": f"{hoje.year}-{hoje.month:02d}",
+        "teams": ["Todos"] + sorted(TIMES_VALIDOS),
+        "refresh_seconds": REFRESH_SECONDS,
+    })
 
-  if (data.nao_encontrados && data.nao_encontrados.length) {
-    html += `<div class="warn">⚠ Sem correspondência no Pipedrive: ${data.nao_encontrados.join(', ')}</div>`;
-  }
 
-  $(cfg.rootId).innerHTML = html;
-  ligaCriador();
-  ligaDiaADia();
-}
+@app.route("/api/closers")
+def api_closers():
+    mes = request.args.get("month", "")
+    try:
+        year, month = map(int, mes.split("-"))
+    except Exception:
+        hoje = date.today()
+        year, month = hoje.year, hoje.month
+    closers = closers_do_mes(year, month)
+    return jsonify({"closers": ["Todos"] + sorted(closers.keys())})
 
-function render(data) {
-  renderGenerico(data, {
-    rootId: 'root', label: 'Closer', comCriador: true, idPrefix: 'cr',
-    ehAtual: ehDefaultAtual, comValidada: false,
-  });
-}
 
-function renderSdr(data) {
-  renderGenerico(data, {
-    rootId: 'root-sdr', label: 'SDR', comCriador: false, idPrefix: 'sr',
-    ehAtual: null, comValidada: true,
-  });
-}
+@app.route("/api/dashboard")
+def api_dashboard():
+    mes = request.args.get("month", "")
+    try:
+        year, month = map(int, mes.split("-"))
+    except Exception:
+        hoje = date.today()
+        year, month = hoje.year, hoje.month
+    team = request.args.get("team")
+    closer = request.args.get("closer")
+    priv = eh_privilegiado(request)
 
-function ligaCriador() {
-  document.querySelectorAll('.cl-toggle[data-cr]').forEach(el => {
-    el.addEventListener('click', () => {
-      const id = el.getAttribute('data-cr');
-      const row = document.getElementById(id);
-      if (!row) return;
-      const aberto = row.style.display !== 'none';
-      row.style.display = aberto ? 'none' : 'table-row';
-      const rotulo = el.textContent.replace(/^./, '').trim();  // preserva o texto ("criador"/"detalhes")
-      el.textContent = (aberto ? '▸' : '▾') + ' ' + rotulo;
-    });
-  });
-}
+    if eh_default(year, month, team, closer):
+        with _lock:
+            c = _cache["current"]
+            if c and c.get("key") == (year, month) and priv in c["data"]:
+                return jsonify(c["data"][priv])
 
-function ligaDiaADia() {
-  document.querySelectorAll('tr.dd-click[data-dd]').forEach(el => {
-    el.addEventListener('click', () => {
-      const row = document.getElementById(el.getAttribute('data-dd'));
-      if (!row) return;
-      const aberto = row.style.display !== 'none';
-      row.style.display = aberto ? 'none' : 'table-row';
-      const arw = el.querySelector('.dd-arrow');
-      if (arw) arw.textContent = aberto ? '▸' : '▾';
-    });
-  });
-}
+    try:
+        return jsonify(build_dashboard(year, month, team, closer, privilegiado=priv))
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return jsonify({"error": str(e)}), 500
 
-// ---- login ----
-function abreLogin() {
-  $('loginErro').textContent = '';
-  $('in-user').value = ''; $('in-pass').value = '';
-  $('loginModal').classList.add('show');
-  $('in-user').focus();
-}
-function fechaLogin() { $('loginModal').classList.remove('show'); }
 
-async function fazLogin() {
-  const usuario = $('in-user').value.trim();
-  const senha = $('in-pass').value;
-  $('loginErro').textContent = '';
-  try {
-    const res = await fetch('/api/login', {
-      method: 'POST', headers: {'Content-Type':'application/json'},
-      body: JSON.stringify({usuario, senha}),
-    });
-    const d = await res.json();
-    if (!res.ok) { $('loginErro').textContent = d.error || 'Falha no login'; return; }
-    TOKEN = d.token; USUARIO = d.usuario;
-    sessionStorage.setItem('dash_token', TOKEN);
-    sessionStorage.setItem('dash_user', USUARIO);
-    fechaLogin();
-    atualizaAuthUI();
-    buscar(false);  // recarrega ja com os negocios
-  } catch (e) {
-    $('loginErro').textContent = 'Erro de conexão';
-  }
-}
+@app.route("/api/sdrs")
+def api_sdrs():
+    mes = request.args.get("month", "")
+    try:
+        year, month = map(int, mes.split("-"))
+    except Exception:
+        hoje = date.today()
+        year, month = hoje.year, hoje.month
+    sdrs = sdrs_do_mes(year, month)
+    return jsonify({"sdrs": ["Todos"] + sorted(sdrs.keys())})
 
-function logout() {
-  TOKEN = null; USUARIO = null;
-  sessionStorage.removeItem('dash_token');
-  sessionStorage.removeItem('dash_user');
-  atualizaAuthUI();
-  buscar(false);
-}
 
-function atualizaAuthUI() {
-  if (ehPriv()) {
-    $('authWho').textContent = USUARIO ? ('● ' + USUARIO) : '● conectado';
-    $('btnAuth').textContent = 'Sair';
-    $('tab-auditoria').style.display = '';
-  } else {
-    $('authWho').textContent = '';
-    $('btnAuth').textContent = 'Entrar';
-    $('tab-auditoria').style.display = 'none';
-    // se estava na aba auditoria e deslogou, volta pra reunioes
-    if (ABA === 'auditoria') trocaAba('reunioes');
-  }
-}
+@app.route("/api/dashboard_sdr")
+def api_dashboard_sdr():
+    mes = request.args.get("month", "")
+    try:
+        year, month = map(int, mes.split("-"))
+    except Exception:
+        hoje = date.today()
+        year, month = hoje.year, hoje.month
+    team = request.args.get("team")
+    sdr = request.args.get("sdr")
+    priv = eh_privilegiado(request)
+    try:
+        return jsonify(build_dashboard_sdr(year, month, team, sdr, privilegiado=priv))
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return jsonify({"error": str(e)}), 500
 
-$('btnAuth').addEventListener('click', () => { ehPriv() ? logout() : abreLogin(); });
-$('loginCancel').addEventListener('click', fechaLogin);
-$('loginOk').addEventListener('click', fazLogin);
-$('in-pass').addEventListener('keydown', e => { if (e.key === 'Enter') fazLogin(); });
-$('loginModal').addEventListener('click', e => { if (e.target.id === 'loginModal') fechaLogin(); });
 
-// ---- abas ----
-let ABA = 'reunioes';
-let AUD_CARREGADA_MES = null;
+@app.route("/api/auditoria_sdr")
+def api_auditoria_sdr():
+    # auditoria revela pra quem cada SDR marca -> so privilegiado
+    if not eh_privilegiado(request):
+        return jsonify({"error": "acesso restrito", "sdrs": []}), 401
+    mes = request.args.get("month", "")
+    try:
+        year, month = map(int, mes.split("-"))
+    except Exception:
+        hoje = date.today()
+        year, month = hoje.year, hoje.month
+    try:
+        return jsonify(build_auditoria_sdr(year, month))
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return jsonify({"error": str(e)}), 500
 
-async function trocaAba(nome) {
-  if (nome === 'auditoria' && !ehPriv()) return;
-  ABA = nome;
-  $('tab-reunioes').classList.toggle('active', nome === 'reunioes');
-  $('tab-sdrs').classList.toggle('active', nome === 'sdrs');
-  $('tab-auditoria').classList.toggle('active', nome === 'auditoria');
-  $('root').style.display = (nome === 'reunioes') ? '' : 'none';
-  $('root-sdr').style.display = (nome === 'sdrs') ? '' : 'none';
-  $('root-aud').style.display = (nome === 'auditoria') ? '' : 'none';
 
-  if (nome === 'sdrs' && MODO_PESSOA !== 'sdr') {
-    MODO_PESSOA = 'sdr';
-    await carregaPessoas();
-    buscarSdr(false);
-  } else if (nome === 'reunioes' && MODO_PESSOA !== 'closer') {
-    MODO_PESSOA = 'closer';
-    await carregaPessoas();
-    buscar(false);
-  } else if (nome === 'sdrs' && !LAST_DATA_SDR) {
-    buscarSdr(false);
-  }
-  if (nome === 'auditoria') carregaAuditoria();
-}
+@app.route("/api/debug_activity")
+def api_debug_activity():
+    """Diagnostico: mostra o JSON cru de UMA activity, pra ver o formato
+    exato do campo customizado 'Reuniao Validada?'. So privilegiado."""
+    if not eh_privilegiado(request):
+        return jsonify({"error": "acesso restrito"}), 401
+    aid = request.args.get("id")
+    if not aid:
+        return jsonify({"error": "informe ?id=<activity_id>"}), 400
+    try:
+        raw = client.get_activity_raw(aid)
+        return jsonify(raw)
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
-$('tab-reunioes').addEventListener('click', () => trocaAba('reunioes'));
-$('tab-sdrs').addEventListener('click', () => trocaAba('sdrs'));
-$('tab-auditoria').addEventListener('click', () => trocaAba('auditoria'));
 
-async function carregaAuditoria(forcar) {
-  const mes = $('f-mes').value;
-  if (!forcar && AUD_CARREGADA_MES === mes) return;  // ja carregada p/ esse mes
-  $('root-aud').innerHTML = '<div class="muted">Buscando no Pipedrive… (pode levar alguns segundos)</div>';
-  try {
-    const res = await fetch('/api/auditoria_sdr?month=' + mes, { headers: authHeaders() });
-    const data = await res.json();
-    if (data.error) { $('root-aud').innerHTML = '<div class="warn">Erro: ' + data.error + '</div>'; return; }
-    AUD_CARREGADA_MES = mes;
-    renderAuditoria(data);
-  } catch (e) {
-    $('root-aud').innerHTML = '<div class="warn">Falha na requisição: ' + e + '</div>';
-  }
-}
+@app.route("/api/debug_deal")
+def api_debug_deal():
+    """Diagnostico: mostra o JSON cru de UM negocio, caso o campo
+    'Reuniao Validada?' esteja no deal em vez da activity. So privilegiado."""
+    if not eh_privilegiado(request):
+        return jsonify({"error": "acesso restrito"}), 401
+    did = request.args.get("id")
+    if not did:
+        return jsonify({"error": "informe ?id=<deal_id>"}), 400
+    try:
+        raw = client.get_deal_raw(did)
+        return jsonify(raw)
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
-function auditoriaBloco(pessoa, idx, prefixo) {
-  const aid = prefixo + '-' + idx;
-  const maxq = pessoa.closers.length ? pessoa.closers[0].qtd : 1;
-  let linhas = '';
-  if (pessoa.closers.length) {
-    linhas = `<table class="aud-tbl"><tr><th>Closer</th><th>Reuniões marcadas</th><th class="barcell"></th><th>Negócios</th></tr>`;
-    for (const c of pessoa.closers) {
-      const pct = Math.round((c.qtd / maxq) * 100);
-      const negs = (c.negocios || []).map(n =>
-        `<a href="${n.url}" target="_blank" rel="noopener" title="${n.title}">#${n.id}</a>`
-      ).join(', ');
-      linhas += `<tr><td>${c.closer}</td><td class="qtd">${c.qtd}</td>
-        <td class="barcell"><div class="aud-bar" style="width:${pct}%"></div></td>
-        <td class="aud-negs">${negs}</td></tr>`;
-    }
-    linhas += `</table>`;
-  } else if (!pessoa.encontrado) {
-    linhas = `<div class="aud-empty">Sem correspondência no Pipedrive (nome não bateu).</div>`;
-  } else {
-    linhas = `<div class="aud-empty">Nenhuma reunião marcada para closers nesse mês.</div>`;
-  }
-  return `<div class="aud-sdr">
-    <div class="aud-head" data-aud="${aid}">
-      <span class="aud-arrow" id="${aid}-arw">▸</span>
-      <span class="aud-name">${pessoa.nome}</span>
-      <span class="aud-team">${pessoa.label}</span>
-      <span class="aud-total"><b>${pessoa.total}</b> reuniões</span>
-    </div>
-    <div class="aud-body" id="${aid}">${linhas}</div>
-  </div>`;
-}
 
-function renderAuditoria(data) {
-  let html = `<div class="kpi-head">Auditoria — pra quais closers cada pessoa marcou reuniões · ${data.month_label}</div>`;
+@app.route("/api/debug_deal_compare")
+def api_debug_deal_compare():
+    """Diagnostico: busca o MESMO negocio de duas formas -- fetch individual
+    (/deals/{id}) e fetch em lote (/deals?ids=...), que e como o dashboard
+    de verdade busca. O Pipedrive as vezes omite custom_fields na busca em
+    lote; isso mostra se e esse o problema. So privilegiado."""
+    if not eh_privilegiado(request):
+        return jsonify({"error": "acesso restrito"}), 401
+    did = request.args.get("id")
+    if not did:
+        return jsonify({"error": "informe ?id=<deal_id>"}), 400
+    try:
+        individual = client.get_deal_raw(did)
+        lote_map = client.get_deals_info([did])
+        em_lote = lote_map.get(int(did)) if did.isdigit() else None
+        if em_lote is None:
+            em_lote = lote_map.get(did)
+        return jsonify({
+            "busca_individual (GET /deals/{id})": individual,
+            "busca_em_lote (GET /deals?ids=..., como o dashboard usa)": em_lote,
+        })
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
-  html += `<div class="aud-section-title">SDRs</div>`;
-  if (data.sdrs && data.sdrs.length) {
-    const sdrs = data.sdrs.slice().sort((a,b) => b.total - a.total);
-    sdrs.forEach((s, i) => { html += auditoriaBloco(s, i, 'aud-sdr'); });
-  } else {
-    html += '<div class="aud-empty">Nenhum SDR encontrado no CSV para esse mês.</div>';
-  }
 
-  html += `<div class="aud-section-title">Liderança</div>`;
-  if (data.liderancas && data.liderancas.length) {
-    const lids = data.liderancas.slice().sort((a,b) => b.total - a.total);
-    lids.forEach((s, i) => { html += auditoriaBloco(s, i, 'aud-lid'); });
-  } else {
-    html += '<div class="aud-empty">Nenhum Team Leader ou Head encontrado no CSV para esse mês.</div>';
-  }
+@app.route("/api/login", methods=["POST"])
+def api_login():
+    dados = request.get_json(silent=True) or {}
+    usuario = str(dados.get("usuario", "")).strip().lower()
+    senha = str(dados.get("senha", ""))
+    hash_ok = USUARIOS_PRIV.get(usuario)
+    if hash_ok and hmac.compare_digest(hash_ok, _sha256(senha)):
+        return jsonify({"token": gera_token(usuario), "usuario": usuario})
+    return jsonify({"error": "usuario ou senha invalidos"}), 401
 
-  $('root-aud').innerHTML = html;
-  document.querySelectorAll('.aud-head[data-aud]').forEach(el => {
-    el.addEventListener('click', () => {
-      const body = document.getElementById(el.getAttribute('data-aud'));
-      const arw = document.getElementById(el.getAttribute('data-aud') + '-arw');
-      const aberto = body.classList.contains('open');
-      body.classList.toggle('open', !aberto);
-      if (arw) arw.textContent = aberto ? '▸' : '▾';
-    });
-  });
-}
 
-// quando muda o mes, invalida a auditoria carregada
-$('f-mes').addEventListener('change', () => { AUD_CARREGADA_MES = null; if (ABA === 'auditoria') carregaAuditoria(true); });
+@app.route("/api/me")
+def api_me():
+    auth = request.headers.get("Authorization", "")
+    tok = auth[7:] if auth.startswith("Bearer ") else ""
+    u = valida_token(tok)
+    return jsonify({"privilegiado": bool(u), "usuario": u})
 
-atualizaAuthUI();
-init();
-</script>
-</body>
-</html>
-"""
+
+# servir o front (HTML vem embutido em front.py -- garante que vai no bundle)
+# "/" = local; "/api/index" = destino do rewrite da Vercel (vercel.json)
+@app.route("/")
+@app.route("/api/index")
+def index():
+    return Response(HTML, mimetype="text/html")
+
+
+# rotas de API "de verdade" que existem
+_API_ROTAS = ("/api/init", "/api/closers", "/api/dashboard", "/api/sdrs", "/api/dashboard_sdr", "/api/login", "/api/me", "/api/auditoria_sdr", "/api/debug_activity", "/api/debug_deal", "/api/debug_deal_compare")
+
+
+@app.errorhandler(404)
+def not_found(e):
+    # so devolve erro JSON quando bate numa rota de API conhecida com metodo/params errados;
+    # qualquer outro path desconhecido cai no front (SPA-like)
+    if request.path in _API_ROTAS:
+        return jsonify({"error": "rota nao encontrada", "path": request.path}), 404
+    return Response(HTML, mimetype="text/html")
+
+
+# entrypoint explicito para o runtime Python da Vercel (@vercel/python)
+# procura por um objeto WSGI chamado "app", "application" ou "handler"
+application = app
+handler = app
+
+if __name__ == "__main__":
+    threading.Thread(target=refresh_current_loop, daemon=True).start()
+    app.run(debug=True, port=5000, use_reloader=False)

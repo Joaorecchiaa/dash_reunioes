@@ -666,6 +666,8 @@ def _build_dashboard_generico(closers, year, month, privilegiado=False, com_vali
         c_pipes = defaultdict(lambda: novo_contador(com_validada))
         c_criadas = {"proprio": 0, "outro": 0}
         c_criadas_days = {d: {"proprio": 0, "outro": 0} for d in range(1, last_day + 1)}
+        c_proprio_done = 0      # das reunioes FEITAS, quantas foram marcadas pelo proprio
+        c_proprio_validada = 0  # idem, mas das VALIDADAS (so relevante na aba SDR)
         c_negocios_mes = {}   # deal_id -> {id,title,url}  (dedupe do mes)
         c_negocios_dia = {d: [] for d in range(1, last_day + 1)}  # dia -> lista de reunioes com negocio
 
@@ -699,6 +701,10 @@ def _build_dashboard_generico(closers, year, month, privilegiado=False, com_vali
             chave = "proprio" if a.get("creator_user_id") == owner_id else "outro"
             c_criadas[chave] += 1
             c_criadas_days[d.day][chave] += 1
+            if chave == "proprio" and tipo == "meeting" and done:
+                c_proprio_done += 1
+                if eh_valid:
+                    c_proprio_validada += 1
 
             if privilegiado:
                 titulo = info.get("title") or ("Negocio " + str(deal_id))
@@ -742,6 +748,8 @@ def _build_dashboard_generico(closers, year, month, privilegiado=False, com_vali
             "by_pipeline": dict(c_pipes),
             "criadas": c_criadas,
             "criadas_days": [{"dia": d, "c": c_criadas_days[d]} for d in range(1, last_day + 1)],
+            "proprio_done": c_proprio_done,
+            "proprio_validada": c_proprio_validada,
             "negocios": sorted(c_negocios_mes.values(), key=lambda x: x["id"]) if privilegiado else [],
             "negocios_dia": ([{"dia": d, "itens": sorted(c_negocios_dia[d], key=lambda x: x["hora"])}
                               for d in range(1, last_day + 1)] if privilegiado else []),

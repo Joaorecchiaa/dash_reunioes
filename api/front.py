@@ -606,20 +606,28 @@ function renderGenerico(data, cfg) {
       <div class="muted" style="font-size:11px;margin-top:8px">P = planejadas · F = feitas${legendaValid} · NS = no-show · R = reagendadas</div></div>`;
 
     // ---- distribuicao: Validadas (se disponivel) ou Feitas + % sobre o total de todos ----
+    // + quantidade/% do que cada um marcou PRA SI MESMO (creator == owner), mesma metrica
     const metricaDist = cfg.comValidada ? 'validada' : 'done';
+    const campoProprio = cfg.comValidada ? 'proprio_validada' : 'proprio_done';
     const tituloDist = cfg.comValidada ? 'reuniões validadas' : 'reuniões feitas';
     const totalTodos = data.por_closer.reduce((soma, c) => soma + (c.total[metricaDist]||0), 0);
+    const totalProprioTodos = data.por_closer.reduce((soma, c) => soma + (c[campoProprio]||0), 0);
     const distOrdenada = data.por_closer.slice().sort((a,b) => (b.total[metricaDist]||0) - (a.total[metricaDist]||0));
     html += `<div class="panel"><h2>Distribuição por ${cfg.label} — ${tituloDist} · ${data.month_label}</h2>
-      <table class="aud-tbl"><tr><th class="l">${cfg.label}</th><th>Quantidade</th><th>%</th><th class="barcell"></th></tr>`;
+      <table class="aud-tbl"><tr><th class="l">${cfg.label}</th><th>Quantidade</th><th>%</th><th class="barcell"></th><th>Quantidade (próprio)</th><th>% (próprio)</th></tr>`;
     for (const c of distOrdenada) {
       const qtd = c.total[metricaDist] || 0;
       const pct = totalTodos ? (qtd / totalTodos * 100) : 0;
+      const qtdProprio = c[campoProprio] || 0;
+      const pctProprio = totalTodos ? (qtdProprio / totalTodos * 100) : 0;
       html += `<tr><td class="l">${c.name}</td><td class="qtd">${qtd}</td>
         <td>${pct.toFixed(1)}%</td>
-        <td class="barcell"><div class="aud-bar" style="width:${pct}%"></div></td></tr>`;
+        <td class="barcell"><div class="aud-bar" style="width:${pct}%"></div></td>
+        <td class="qtd">${qtdProprio}</td>
+        <td>${pctProprio.toFixed(1)}%</td></tr>`;
     }
-    html += `<tr class="total"><td class="l">TOTAL</td><td class="qtd">${totalTodos}</td><td>100%</td><td></td></tr>`;
+    html += `<tr class="total"><td class="l">TOTAL</td><td class="qtd">${totalTodos}</td><td>100%</td><td></td>
+      <td class="qtd">${totalProprioTodos}</td><td>${totalTodos ? (totalProprioTodos/totalTodos*100).toFixed(1) : '0.0'}%</td></tr>`;
     html += `</table></div>`;
   }
 

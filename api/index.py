@@ -595,12 +595,17 @@ def _cache_deals_owner(owner_id, desde_dt):
     return deals
 
 
+# Pipedrive devolve os timestamps em UTC; Brasilia = UTC-3. Sem esse
+# ajuste, os horarios aparecem 3h ADIANTADOS (confirmado com o usuario).
+AJUSTE_FUSO_HORAS = -3
+
+
 def evolucao_horario_sdr(nome_sdr, desde_str):
-    """Pra UMA SDR especifica (exclusivamente ela): dia a dia, desde
-    `desde_str` (formato YYYY-MM-DD) ate agora, cada lead (negocio) que
-    ela recebeu DENTRO do horario de escala (12h-16h e 18h-23h) -- com
-    o FUNIL (pipeline) e o STATUS ATUAL do negocio (Aberto/Ganho/Perdido),
-    mais se foi Agendado (tem reuniao marcada).
+    """Pra UMA SDR especifica (exclusivamente ela): volume de leads (negocios)
+    que ela recebeu em CADA HORA DO DIA (00h-23h), somando todos os dias
+    desde `desde_str` (formato YYYY-MM-DD) ate agora -- e quantos desses
+    viraram Agendados (tem reuniao marcada). Os horarios ja vem ajustados
+    pro fuso de Brasilia (UTC-3).
 
     "Recebeu" = o negocio tem ela como Proprietario (owner_id) atual, E
     foi CRIADO ou ATUALIZADO desde a data informada (aproximacao -- nao
@@ -608,7 +613,7 @@ def evolucao_horario_sdr(nome_sdr, desde_str):
     users, pipelines = carrega_meta()
     sdr_id = users.get(nome_sdr.strip().lower())
     if not sdr_id:
-        return {"erro": "SDR nao encontrada no Pipedrive", "dias": [], "total": {}}
+        return {"erro": "SDR nao encontrada no Pipedrive", "por_hora": [], "total": {}}
 
     try:
         desde_dt = datetime.strptime(desde_str, "%Y-%m-%d")
@@ -636,11 +641,18 @@ def evolucao_horario_sdr(nome_sdr, desde_str):
         else:
             mes_cursor = date(mes_cursor.year, mes_cursor.month + 1, 1)
 
-    por_dia = {}  # "YYYY-MM-DD" -> [itens]
+    por_hora = {h: {"leads": 0, "agendados": 0} for h in range(24)}
+    por_dia = {}  # mantido pra uso futuro / diagnostico
 
     for d in deals:
         add_dt = _parse_dt_pipedrive(d.get("add_time"))
         upd_dt = _parse_dt_pipedrive(d.get("update_time"))
+        # aplica o ajuste de fuso ANTES de comparar com "desde" e de extrair a hora
+        if add_dt:
+            add_dt = add_dt + timedelta(hours=AJUSTE_FUSO_HORAS)
+        if upd_dt:
+            upd_dt = upd_dt + timedelta(hours=AJUSTE_FUSO_HORAS)
+
         marco = None
         if add_dt and add_dt >= desde_dt:
             marco = add_dt
@@ -648,49 +660,35 @@ def evolucao_horario_sdr(nome_sdr, desde_str):
             marco = upd_dt
         if not marco:
             continue  # fora do periodo
-        if marco.hour not in HORAS_ESCALA_SDR:
-            continue  # fora da escala dela (12-16h / 18-23h)
 
         deal_id = d.get("id")
-        pid = d.get("pipeline_id")
-        pnome = pipelines.get(pid, f"Funil {pid}") if pid else "Sem funil"
-        status_negocio = {"open": "Aberto", "won": "Ganho", "lost": "Perdido"}.get(
-            d.get("status"), d.get("status") or "—")
+        agendado = deal_id in deal_ids_agendados
 
-        item = {
+        por_hora[marco.hour]["leads"] += 1
+        if agendado:
+            por_hora[marco.hour]["agendados"] += 1
+
+        dia_iso = marco.date().isoformat()
+        por_dia.setdefault(dia_iso, []).append({
             "id": deal_id,
             "title": d.get("title") or ("Negocio " + str(deal_id)),
             "hora": marco.strftime("%H:%M"),
-            "pipeline": pnome,
-            "status_negocio": status_negocio,
-            "agendado": deal_id in deal_ids_agendados,
+            "agendado": agendado,
             "url": PIPEDRIVE_BASE_URL + "/deal/" + str(deal_id),
-        }
-        dia_iso = marco.date().isoformat()
-        por_dia.setdefault(dia_iso, []).append(item)
+        })
 
-    dias_out = []
-    for dia_iso in sorted(por_dia.keys()):
-        itens = sorted(por_dia[dia_iso], key=lambda x: x["hora"])
-        resumo = {
-            "entraram": len(itens),
-            "agendados": sum(1 for i in itens if i["agendado"]),
-            "descartados": sum(1 for i in itens if i["status_negocio"] == "Perdido"),
-        }
-        dias_out.append({"dia": dia_iso, "itens": itens, "resumo": resumo})
-
-    total = {
-        "entraram": sum(dd["resumo"]["entraram"] for dd in dias_out),
-        "agendados": sum(dd["resumo"]["agendados"] for dd in dias_out),
-        "descartados": sum(dd["resumo"]["descartados"] for dd in dias_out),
-    }
+    total_leads = sum(v["leads"] for v in por_hora.values())
+    total_agendados = sum(v["agendados"] for v in por_hora.values())
+    taxa_agendamento = round((total_agendados / total_leads * 100), 1) if total_leads else 0.0
 
     return {
         "sdr": nome_sdr,
         "desde": desde_dt.date().isoformat(),
         "ate": agora.date().isoformat(),
-        "dias": dias_out,
-        "total": total,
+        "por_hora": [{"hora": h, "leads": por_hora[h]["leads"], "agendados": por_hora[h]["agendados"]}
+                     for h in range(24)],
+        "total": {"leads": total_leads, "agendados": total_agendados},
+        "taxa_agendamento": taxa_agendamento,
     }
 
 

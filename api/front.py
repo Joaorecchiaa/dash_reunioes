@@ -831,11 +831,7 @@ function preencheSelectSdrEvolucao(data) {
   });
   if (nomes.has(anterior)) sel.value = anterior;
   if (!$('ev-desde').value) {
-    const hoje = new Date();
-    const seg = new Date(hoje);
-    const diff = (hoje.getDay() + 6) % 7; // dias desde a ultima segunda
-    seg.setDate(hoje.getDate() - diff);
-    $('ev-desde').value = seg.toISOString().slice(0, 10);
+    $('ev-desde').value = '2026-08-17'; // segunda-feira combinada como inicio da analise
   }
 }
 
@@ -865,36 +861,33 @@ async function buscaEvolucaoHorario() {
 }
 
 function renderEvolucaoHorario(d) {
-  const blocos = [
-    { titulo: 'Turno 12h–16h', horas: [12,13,14,15] },
-    { titulo: 'Turno 18h–23h', horas: [18,19,20,21,22] },
-  ];
-  const porHora = {};
-  (d.horas || []).forEach(h => { porHora[h.hora] = h; });
+  let html = `<div class="muted" style="margin-bottom:10px">${d.sdr} — de ${d.desde.split('-').reverse().join('/')} até ${d.ate.split('-').reverse().join('/')} · horário de escala (12–16h / 18–23h)</div>`;
 
-  let html = `<div class="muted" style="margin-bottom:10px">${d.sdr} — de ${d.desde.split('-').reverse().join('/')} até ${d.ate.split('-').reverse().join('/')}</div>`;
-
-  for (const bloco of blocos) {
-    html += `<table class="aud-tbl" style="margin-bottom:14px"><tr><th class="l">${bloco.titulo}</th><th>Entraram</th><th>Agendados</th><th>Descarte (perdido)</th></tr>`;
-    for (const h of bloco.horas) {
-      const v = porHora[h] || {entraram:0, agendados:0, descartados:0};
-      html += `<tr><td class="l">${String(h).padStart(2,'0')}:00</td><td class="qtd">${v.entraram}</td>
-        <td class="qtd">${v.agendados}</td><td class="qtd">${v.descartados}</td></tr>`;
+  const dias = d.dias || [];
+  if (!dias.length) {
+    html += `<div class="aud-empty">Nenhum lead recebido nesse período.</div>`;
+  }
+  for (const dia of dias) {
+    const dataFmt = dia.dia.split('-').reverse().join('/');
+    html += `<div class="nb-title" style="margin-top:14px">${dataFmt} — ${dia.resumo.entraram} lead(s) · ${dia.resumo.agendados} agendado(s) · ${dia.resumo.descartados} descarte(s)</div>`;
+    html += `<table class="neg-tbl"><colgroup><col class="c-hora"><col class="c-id"><col><col class="c-hora"><col class="c-status"></colgroup>
+      <tr><th>Hora</th><th>ID</th><th>Negócio</th><th>Funil</th><th>Situação</th></tr>`;
+    for (const it of dia.itens) {
+      html += `<tr><td class="neg-hora">${it.hora}</td>
+        <td><a href="${it.url}" target="_blank" rel="noopener">#${it.id}</a></td>
+        <td><a href="${it.url}" target="_blank" rel="noopener">${it.title}</a>${it.agendado ? ' <span class="status-badge st-feita">agendado</span>' : ''}</td>
+        <td class="muted">${it.pipeline}</td>
+        <td>${dealBadge(it.status_negocio)}</td></tr>`;
     }
     html += `</table>`;
   }
 
   const t = d.total || {entraram:0, agendados:0, descartados:0};
-  html += `<div class="creator-box" style="margin-top:6px">
+  html += `<div class="creator-box" style="margin-top:16px">
     <div class="ci-item"><span class="ci-lbl">Total entraram</span><span class="ci-val">${t.entraram}</span></div>
     <div class="ci-item"><span class="ci-lbl">Total agendados</span><span class="ci-val">${t.agendados}</span></div>
     <div class="ci-item"><span class="ci-lbl">Total descarte</span><span class="ci-val">${t.descartados}</span></div>
   </div>`;
-
-  if (d.fora_da_escala && d.fora_da_escala.entraram) {
-    html += `<div class="muted" style="font-size:11px;margin-top:10px">
-      + ${d.fora_da_escala.entraram} lead(s) fora do horário de escala (12–16h / 18–23h)</div>`;
-  }
 
   $('ev-resultado').innerHTML = html;
 }

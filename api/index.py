@@ -574,6 +574,118 @@ def build_auditoria_sdr(year, month):
     }
 
 
+# escala de trabalho considerada na "evolucao por horario" (horas de INICIO
+# de cada slot; o expediente vai ate a proxima hora cheia apos a ultima)
+HORAS_ESCALA_SDR = [12, 13, 14, 15, 18, 19, 20, 21, 22]
+
+
+def _cache_deals_owner(owner_id, desde_dt):
+    """Busca (com cache) todos os deals de um owner, atualizados desde
+    `desde_dt`. Cache curto (mesmo TTL do resto) pra nao repetir a busca
+    a cada clique."""
+    key = ("deals_owner", owner_id, desde_dt.date().isoformat())
+    with _lock:
+        c = _cache["acts"].get(key)
+        if c and time.time() - c["ts"] < TTL:
+            return c["acts"]
+    updated_since = desde_dt.strftime("%Y-%m-%dT00:00:00Z")
+    deals = client.get_deals_by_owner(owner_id, updated_since=updated_since)
+    with _lock:
+        _cache["acts"][key] = {"ts": time.time(), "acts": deals}
+    return deals
+
+
+def evolucao_horario_sdr(nome_sdr, desde_str):
+    """Pra uma SDR: quantos negocios (leads) ela recebeu em cada hora do
+    dia (desde `desde_str`, formato YYYY-MM-DD, ate agora), quantos desses
+    foram agendados (tem reuniao marcada) e quantos foram descartados
+    (status atual = perdido).
+
+    "Recebeu" = o negocio tem ela como Proprietario (owner_id) atual, E
+    foi CRIADO ou ATUALIZADO desde a data informada (aproximacao -- nao
+    rastreia o changelog exato de troca de dono, conforme combinado)."""
+    users, _ = carrega_meta()
+    sdr_id = users.get(nome_sdr.strip().lower())
+    if not sdr_id:
+        return {"erro": "SDR nao encontrada no Pipedrive", "horas": [], "total": {}}
+
+    try:
+        desde_dt = datetime.strptime(desde_str, "%Y-%m-%d")
+    except Exception:
+        desde_dt = datetime.now() - timedelta(days=7)
+
+    deals = _cache_deals_owner(sdr_id, desde_dt)
+
+    # deal_ids que tem pelo menos uma reuniao (type=meeting) marcada pela SDR
+    # -- reaproveita acts_do_owner, ja cacheado, sem custo extra de API
+    agora = datetime.now()
+    deal_ids_agendados = set()
+    mes_cursor = date(desde_dt.year, desde_dt.month, 1)
+    vistos = set()
+    while mes_cursor <= date(agora.year, agora.month, 1):
+        chave_mes = (mes_cursor.year, mes_cursor.month)
+        if chave_mes not in vistos:
+            vistos.add(chave_mes)
+            acts = acts_do_owner(sdr_id, mes_cursor.year, mes_cursor.month)
+            for a in acts:
+                if a.get("type") == "meeting" and a.get("deal_id"):
+                    deal_ids_agendados.add(a["deal_id"])
+        if mes_cursor.month == 12:
+            mes_cursor = date(mes_cursor.year + 1, 1, 1)
+        else:
+            mes_cursor = date(mes_cursor.year, mes_cursor.month + 1, 1)
+
+    por_hora = {h: {"entraram": 0, "agendados": 0, "descartados": 0} for h in HORAS_ESCALA_SDR}
+    fora_da_escala = {"entraram": 0, "agendados": 0, "descartados": 0}
+    total = {"entraram": 0, "agendados": 0, "descartados": 0}
+
+    for d in deals:
+        add_dt = _parse_dt_pipedrive(d.get("add_time"))
+        upd_dt = _parse_dt_pipedrive(d.get("update_time"))
+        marco = None
+        if add_dt and add_dt >= desde_dt:
+            marco = add_dt
+        elif upd_dt and upd_dt >= desde_dt:
+            marco = upd_dt
+        if not marco:
+            continue  # fora do periodo
+
+        hora = marco.hour
+        bucket = por_hora.get(hora, fora_da_escala)
+
+        bucket["entraram"] += 1
+        total["entraram"] += 1
+        if d.get("id") in deal_ids_agendados:
+            bucket["agendados"] += 1
+            total["agendados"] += 1
+        if d.get("status") == "lost":
+            bucket["descartados"] += 1
+            total["descartados"] += 1
+
+    return {
+        "sdr": nome_sdr,
+        "desde": desde_dt.date().isoformat(),
+        "ate": agora.date().isoformat(),
+        "horas": [{"hora": h, **por_hora[h]} for h in HORAS_ESCALA_SDR],
+        "fora_da_escala": fora_da_escala,
+        "total": total,
+    }
+
+
+def _parse_dt_pipedrive(valor):
+    """Converte a string de data/hora que o Pipedrive devolve (geralmente
+    'YYYY-MM-DD HH:MM:SS') pra datetime. Tolerante a variacoes de formato."""
+    if not valor:
+        return None
+    for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%dT%H:%M:%S%z", "%Y-%m-%dT%H:%M:%SZ", "%Y-%m-%d"):
+        try:
+            dt = datetime.strptime(valor, fmt)
+            return dt.replace(tzinfo=None)
+        except ValueError:
+            continue
+    return None
+
+
 def info_dos_deals(deal_ids):
     """{deal_id: {"pipeline_id":..., "title":...}} com cache local."""
     faltando = []
@@ -908,6 +1020,48 @@ def api_auditoria_sdr():
         return jsonify({"error": str(e)}), 500
 
 
+@app.route("/api/evolucao_sdr")
+def api_evolucao_sdr():
+    # mostra quantos leads entraram por hora -> dado sensivel, so privilegiado
+    if not eh_privilegiado(request):
+        return jsonify({"error": "acesso restrito"}), 401
+    nome_sdr = request.args.get("sdr", "").strip()
+    if not nome_sdr:
+        return jsonify({"error": "informe ?sdr=<nome>"}), 400
+    desde = request.args.get("desde", "").strip()
+    if not desde:
+        # default: segunda-feira desta semana
+        hoje = date.today()
+        segunda = hoje - timedelta(days=hoje.weekday())
+        desde = segunda.isoformat()
+    try:
+        return jsonify(evolucao_horario_sdr(nome_sdr, desde))
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/debug_deals_owner")
+def api_debug_deals_owner():
+    """Diagnostico: mostra os negocios crus (add_time/update_time/status)
+    de um owner, pra conferir o formato real das datas do Pipedrive.
+    So privilegiado."""
+    if not eh_privilegiado(request):
+        return jsonify({"error": "acesso restrito"}), 401
+    oid = request.args.get("owner_id")
+    if not oid:
+        return jsonify({"error": "informe ?owner_id=<id>"}), 400
+    try:
+        deals = client.get_deals_by_owner(int(oid))
+        resumo = [{"id": d.get("id"), "title": d.get("title"),
+                   "add_time": d.get("add_time"), "update_time": d.get("update_time"),
+                   "status": d.get("status")} for d in deals[:20]]
+        return jsonify({"total": len(deals), "amostra": resumo})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
 @app.route("/api/debug_activity")
 def api_debug_activity():
     """Diagnostico: mostra o JSON cru de UMA activity, pra ver o formato
@@ -993,7 +1147,7 @@ def index():
 
 
 # rotas de API "de verdade" que existem
-_API_ROTAS = ("/api/init", "/api/closers", "/api/dashboard", "/api/sdrs", "/api/dashboard_sdr", "/api/login", "/api/me", "/api/auditoria_sdr", "/api/debug_activity", "/api/debug_deal", "/api/debug_deal_compare")
+_API_ROTAS = ("/api/init", "/api/closers", "/api/dashboard", "/api/sdrs", "/api/dashboard_sdr", "/api/login", "/api/me", "/api/auditoria_sdr", "/api/evolucao_sdr", "/api/debug_activity", "/api/debug_deal", "/api/debug_deal_compare", "/api/debug_deals_owner")
 
 
 @app.errorhandler(404)

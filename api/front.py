@@ -816,6 +816,89 @@ async function carregaAuditoria(forcar) {
   }
 }
 
+function preencheSelectSdrEvolucao(data) {
+  const nomes = new Set();
+  (data.sdrs || []).forEach(s => nomes.add(s.nome));
+  (data.liderancas || []).forEach(s => nomes.add(s.nome));
+  const sel = $('ev-sdr');
+  if (!sel) return;
+  const anterior = sel.value;
+  sel.innerHTML = '';
+  Array.from(nomes).sort().forEach(nome => {
+    const o = document.createElement('option');
+    o.value = nome; o.textContent = nome;
+    sel.appendChild(o);
+  });
+  if (nomes.has(anterior)) sel.value = anterior;
+  if (!$('ev-desde').value) {
+    const hoje = new Date();
+    const seg = new Date(hoje);
+    const diff = (hoje.getDay() + 6) % 7; // dias desde a ultima segunda
+    seg.setDate(hoje.getDate() - diff);
+    $('ev-desde').value = seg.toISOString().slice(0, 10);
+  }
+}
+
+function ligaEvolucaoHorario() {
+  const btn = $('ev-buscar');
+  if (!btn) return;
+  btn.addEventListener('click', buscaEvolucaoHorario);
+}
+
+async function buscaEvolucaoHorario() {
+  const sdr = $('ev-sdr').value;
+  const desde = $('ev-desde').value;
+  if (!sdr) return;
+  $('ev-resultado').innerHTML = '<div class="muted">Buscando no Pipedrive… (pode levar alguns segundos)</div>';
+  try {
+    const p = new URLSearchParams({ sdr, desde });
+    const res = await fetch('/api/evolucao_sdr?' + p.toString(), { headers: authHeaders() });
+    const d = await res.json();
+    if (d.erro || d.error) {
+      $('ev-resultado').innerHTML = '<div class="warn">Erro: ' + (d.erro || d.error) + '</div>';
+      return;
+    }
+    renderEvolucaoHorario(d);
+  } catch (e) {
+    $('ev-resultado').innerHTML = '<div class="warn">Falha na requisição: ' + e + '</div>';
+  }
+}
+
+function renderEvolucaoHorario(d) {
+  const blocos = [
+    { titulo: 'Turno 12h–16h', horas: [12,13,14,15] },
+    { titulo: 'Turno 18h–23h', horas: [18,19,20,21,22] },
+  ];
+  const porHora = {};
+  (d.horas || []).forEach(h => { porHora[h.hora] = h; });
+
+  let html = `<div class="muted" style="margin-bottom:10px">${d.sdr} — de ${d.desde.split('-').reverse().join('/')} até ${d.ate.split('-').reverse().join('/')}</div>`;
+
+  for (const bloco of blocos) {
+    html += `<table class="aud-tbl" style="margin-bottom:14px"><tr><th class="l">${bloco.titulo}</th><th>Entraram</th><th>Agendados</th><th>Descarte (perdido)</th></tr>`;
+    for (const h of bloco.horas) {
+      const v = porHora[h] || {entraram:0, agendados:0, descartados:0};
+      html += `<tr><td class="l">${String(h).padStart(2,'0')}:00</td><td class="qtd">${v.entraram}</td>
+        <td class="qtd">${v.agendados}</td><td class="qtd">${v.descartados}</td></tr>`;
+    }
+    html += `</table>`;
+  }
+
+  const t = d.total || {entraram:0, agendados:0, descartados:0};
+  html += `<div class="creator-box" style="margin-top:6px">
+    <div class="ci-item"><span class="ci-lbl">Total entraram</span><span class="ci-val">${t.entraram}</span></div>
+    <div class="ci-item"><span class="ci-lbl">Total agendados</span><span class="ci-val">${t.agendados}</span></div>
+    <div class="ci-item"><span class="ci-lbl">Total descarte</span><span class="ci-val">${t.descartados}</span></div>
+  </div>`;
+
+  if (d.fora_da_escala && d.fora_da_escala.entraram) {
+    html += `<div class="muted" style="font-size:11px;margin-top:10px">
+      + ${d.fora_da_escala.entraram} lead(s) fora do horário de escala (12–16h / 18–23h)</div>`;
+  }
+
+  $('ev-resultado').innerHTML = html;
+}
+
 function auditoriaBloco(pessoa, idx, prefixo) {
   const aid = prefixo + '-' + idx;
   const maxq = pessoa.closers.length ? pessoa.closers[0].qtd : 1;
@@ -867,7 +950,19 @@ function renderAuditoria(data) {
     html += '<div class="aud-empty">Nenhum Team Leader ou Head encontrado no CSV para esse mês.</div>';
   }
 
+  html += `<div class="aud-section-title">Evolução por Horário</div>
+    <div class="panel">
+      <div class="filters" style="padding:0; margin-bottom:14px;">
+        <div class="field"><label>SDR</label><select id="ev-sdr"></select></div>
+        <div class="field"><label>Desde</label><input type="date" id="ev-desde" /></div>
+        <button id="ev-buscar">Buscar</button>
+      </div>
+      <div id="ev-resultado"><div class="muted">Selecione a SDR e clique em Buscar.</div></div>
+    </div>`;
+
   $('root-aud').innerHTML = html;
+  preencheSelectSdrEvolucao(data);
+  ligaEvolucaoHorario();
   document.querySelectorAll('.aud-head[data-aud]').forEach(el => {
     el.addEventListener('click', () => {
       const body = document.getElementById(el.getAttribute('data-aud'));

@@ -11,6 +11,7 @@ HTML = r"""<!DOCTYPE html>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>REUNIÕES - CLOSERS</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.0/chart.umd.min.js"></script>
 <style>
   :root {
     --bg:#f4f5f7; --card:#ffffff; --card2:#f0f1f3; --border:#dfe1e5;
@@ -834,36 +835,44 @@ async function buscaEvolucaoHorario() {
   }
 }
 
+let EV_CHART = null;
+
 function renderEvolucaoHorario(d) {
-  let html = `<div class="muted" style="margin-bottom:10px">${d.sdr} — de ${d.desde.split('-').reverse().join('/')} até ${d.ate.split('-').reverse().join('/')} · horário de escala (12–16h / 18–23h)</div>`;
-
-  const dias = d.dias || [];
-  if (!dias.length) {
-    html += `<div class="aud-empty">Nenhum lead recebido nesse período.</div>`;
-  }
-  for (const dia of dias) {
-    const dataFmt = dia.dia.split('-').reverse().join('/');
-    html += `<div class="nb-title" style="margin-top:14px">${dataFmt} — ${dia.resumo.entraram} lead(s) · ${dia.resumo.agendados} agendado(s) · ${dia.resumo.descartados} descarte(s)</div>`;
-    html += `<table class="neg-tbl"><colgroup><col class="c-hora"><col class="c-id"><col><col class="c-hora"><col class="c-status"></colgroup>
-      <tr><th>Hora</th><th>ID</th><th>Negócio</th><th>Funil</th><th>Situação</th></tr>`;
-    for (const it of dia.itens) {
-      html += `<tr><td class="neg-hora">${it.hora}</td>
-        <td><a href="${it.url}" target="_blank" rel="noopener">#${it.id}</a></td>
-        <td><a href="${it.url}" target="_blank" rel="noopener">${it.title}</a>${it.agendado ? ' <span class="status-badge st-feita">agendado</span>' : ''}</td>
-        <td class="muted">${it.pipeline}</td>
-        <td>${dealBadge(it.status_negocio)}</td></tr>`;
-    }
-    html += `</table>`;
-  }
-
-  const t = d.total || {entraram:0, agendados:0, descartados:0};
-  html += `<div class="creator-box" style="margin-top:16px">
-    <div class="ci-item"><span class="ci-lbl">Total entraram</span><span class="ci-val">${t.entraram}</span></div>
-    <div class="ci-item"><span class="ci-lbl">Total agendados</span><span class="ci-val">${t.agendados}</span></div>
-    <div class="ci-item"><span class="ci-lbl">Total descarte</span><span class="ci-val">${t.descartados}</span></div>
+  const t = d.total || {leads:0, agendados:0};
+  let html = `<div class="muted" style="margin-bottom:10px">${d.sdr} — de ${d.desde.split('-').reverse().join('/')} até ${d.ate.split('-').reverse().join('/')} · todas as horas (00h–23h) · horário de Brasília</div>`;
+  html += `<div class="creator-box" style="margin-bottom:14px">
+    <div class="ci-item"><span class="ci-lbl">Vol. Leads</span><span class="ci-val">${t.leads}</span></div>
+    <div class="ci-item"><span class="ci-lbl">Vol. Agendados</span><span class="ci-val">${t.agendados}</span></div>
+    <div class="ci-item"><span class="ci-lbl">Taxa de Agendamento</span><span class="ci-val">${d.taxa_agendamento}%</span></div>
   </div>`;
+  html += `<div style="max-width:900px"><canvas id="ev-canvas" height="90"></canvas></div>`;
 
   $('ev-resultado').innerHTML = html;
+
+  const horas = (d.por_hora || []).map(h => String(h.hora).padStart(2,'0') + 'h');
+  const leads = (d.por_hora || []).map(h => h.leads);
+  const agendados = (d.por_hora || []).map(h => h.agendados);
+
+  if (EV_CHART) { EV_CHART.destroy(); }
+  const ctx = document.getElementById('ev-canvas').getContext('2d');
+  EV_CHART = new Chart(ctx, {
+    data: {
+      labels: horas,
+      datasets: [
+        { type: 'bar', label: 'Vol. Leads', data: leads, backgroundColor: '#FFD700', order: 2 },
+        { type: 'line', label: 'Vol. Agendados', data: agendados, borderColor: '#0a5f36',
+          backgroundColor: '#0a5f36', tension: 0.35, pointRadius: 3, order: 1 },
+      ],
+    },
+    options: {
+      responsive: true,
+      plugins: { legend: { position: 'top' } },
+      scales: {
+        y: { beginAtZero: true, ticks: { precision: 0 }, title: { display: true, text: 'Vol.' } },
+        x: { title: { display: true, text: 'Hora (00h–23h)' } },
+      },
+    },
+  });
 }
 
 function auditoriaBloco(pessoa, idx, prefixo) {

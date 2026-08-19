@@ -859,16 +859,21 @@ function renderEvolucaoHorario(d) {
     data: {
       labels: horas,
       datasets: [
-        { type: 'bar', label: 'Vol. Leads', data: leads, backgroundColor: '#FFD700', order: 2 },
-        { type: 'line', label: 'Vol. Agendados', data: agendados, borderColor: '#0a5f36',
-          backgroundColor: '#0a5f36', tension: 0.35, pointRadius: 3, order: 1 },
+        { type: 'bar', label: 'Vol. Leads', data: leads, backgroundColor: '#FFD700',
+          yAxisID: 'y', order: 2 },
+        { type: 'line', label: 'Vol. Agendados', data: agendados, borderColor: '#141414',
+          backgroundColor: '#141414', tension: 0.35, pointRadius: 3, pointBackgroundColor: '#141414',
+          borderWidth: 2, yAxisID: 'y1', order: 1 },
       ],
     },
     options: {
       responsive: true,
       plugins: { legend: { position: 'top' } },
       scales: {
-        y: { beginAtZero: true, ticks: { precision: 0 }, title: { display: true, text: 'Vol.' } },
+        y: { beginAtZero: true, ticks: { precision: 0 }, title: { display: true, text: 'Vol. Leads' },
+             position: 'left' },
+        y1: { beginAtZero: true, ticks: { precision: 0 }, title: { display: true, text: 'Vol. Agendados' },
+              position: 'right', grid: { drawOnChartArea: false } },
         x: { title: { display: true, text: 'Hora (00h–23h)' } },
       },
     },

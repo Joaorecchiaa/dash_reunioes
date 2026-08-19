@@ -863,7 +863,7 @@ function renderEvolucaoHorario(d) {
         { type: 'bar', label: 'Vol. Leads', data: leads, backgroundColor: '#FFD700',
           borderRadius: 3, yAxisID: 'y', order: 2 },
         { type: 'line', label: 'Vol. Agendados', data: agendados, borderColor: '#141414',
-          backgroundColor: '#141414', stepped: 'middle', pointRadius: 4, pointHoverRadius: 5,
+          backgroundColor: '#141414', stepped: 'middle', borderDash: [6, 4], pointRadius: 4, pointHoverRadius: 5,
           pointBackgroundColor: '#141414', borderWidth: 2.5, yAxisID: 'y1', order: 1 },
       ],
     },

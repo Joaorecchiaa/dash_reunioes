@@ -816,35 +816,9 @@ async function carregaAuditoria(forcar) {
   }
 }
 
-function preencheSelectSdrEvolucao(data) {
-  const nomes = new Set();
-  (data.sdrs || []).forEach(s => nomes.add(s.nome));
-  (data.liderancas || []).forEach(s => nomes.add(s.nome));
-  const sel = $('ev-sdr');
-  if (!sel) return;
-  const anterior = sel.value;
-  sel.innerHTML = '';
-  Array.from(nomes).sort().forEach(nome => {
-    const o = document.createElement('option');
-    o.value = nome; o.textContent = nome;
-    sel.appendChild(o);
-  });
-  if (nomes.has(anterior)) sel.value = anterior;
-  if (!$('ev-desde').value) {
-    $('ev-desde').value = '2026-08-17'; // segunda-feira combinada como inicio da analise
-  }
-}
-
-function ligaEvolucaoHorario() {
-  const btn = $('ev-buscar');
-  if (!btn) return;
-  btn.addEventListener('click', buscaEvolucaoHorario);
-}
-
 async function buscaEvolucaoHorario() {
-  const sdr = $('ev-sdr').value;
-  const desde = $('ev-desde').value;
-  if (!sdr) return;
+  const sdr = 'Bruna Goes';
+  const desde = '2026-08-17'; // segunda-feira combinada como inicio da analise
   $('ev-resultado').innerHTML = '<div class="muted">Buscando no Pipedrive… (pode levar alguns segundos)</div>';
   try {
     const p = new URLSearchParams({ sdr, desde });
@@ -943,19 +917,13 @@ function renderAuditoria(data) {
     html += '<div class="aud-empty">Nenhum Team Leader ou Head encontrado no CSV para esse mês.</div>';
   }
 
-  html += `<div class="aud-section-title">Evolução por Horário</div>
+  html += `<div class="aud-section-title">Evolução por Horário — Bruna Goes</div>
     <div class="panel">
-      <div class="filters" style="padding:0; margin-bottom:14px;">
-        <div class="field"><label>SDR</label><select id="ev-sdr"></select></div>
-        <div class="field"><label>Desde</label><input type="date" id="ev-desde" /></div>
-        <button id="ev-buscar">Buscar</button>
-      </div>
-      <div id="ev-resultado"><div class="muted">Selecione a SDR e clique em Buscar.</div></div>
+      <div id="ev-resultado"><div class="muted">Carregando…</div></div>
     </div>`;
 
   $('root-aud').innerHTML = html;
-  preencheSelectSdrEvolucao(data);
-  ligaEvolucaoHorario();
+  buscaEvolucaoHorario();
   document.querySelectorAll('.aud-head[data-aud]').forEach(el => {
     el.addEventListener('click', () => {
       const body = document.getElementById(el.getAttribute('data-aud'));

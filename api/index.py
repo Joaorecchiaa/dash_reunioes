@@ -596,18 +596,19 @@ def _cache_deals_owner(owner_id, desde_dt):
 
 
 def evolucao_horario_sdr(nome_sdr, desde_str):
-    """Pra uma SDR: quantos negocios (leads) ela recebeu em cada hora do
-    dia (desde `desde_str`, formato YYYY-MM-DD, ate agora), quantos desses
-    foram agendados (tem reuniao marcada) e quantos foram descartados
-    (status atual = perdido).
+    """Pra UMA SDR especifica (exclusivamente ela): dia a dia, desde
+    `desde_str` (formato YYYY-MM-DD) ate agora, cada lead (negocio) que
+    ela recebeu DENTRO do horario de escala (12h-16h e 18h-23h) -- com
+    o FUNIL (pipeline) e o STATUS ATUAL do negocio (Aberto/Ganho/Perdido),
+    mais se foi Agendado (tem reuniao marcada).
 
     "Recebeu" = o negocio tem ela como Proprietario (owner_id) atual, E
     foi CRIADO ou ATUALIZADO desde a data informada (aproximacao -- nao
     rastreia o changelog exato de troca de dono, conforme combinado)."""
-    users, _ = carrega_meta()
+    users, pipelines = carrega_meta()
     sdr_id = users.get(nome_sdr.strip().lower())
     if not sdr_id:
-        return {"erro": "SDR nao encontrada no Pipedrive", "horas": [], "total": {}}
+        return {"erro": "SDR nao encontrada no Pipedrive", "dias": [], "total": {}}
 
     try:
         desde_dt = datetime.strptime(desde_str, "%Y-%m-%d")
@@ -635,9 +636,7 @@ def evolucao_horario_sdr(nome_sdr, desde_str):
         else:
             mes_cursor = date(mes_cursor.year, mes_cursor.month + 1, 1)
 
-    por_hora = {h: {"entraram": 0, "agendados": 0, "descartados": 0} for h in HORAS_ESCALA_SDR}
-    fora_da_escala = {"entraram": 0, "agendados": 0, "descartados": 0}
-    total = {"entraram": 0, "agendados": 0, "descartados": 0}
+    por_dia = {}  # "YYYY-MM-DD" -> [itens]
 
     for d in deals:
         add_dt = _parse_dt_pipedrive(d.get("add_time"))
@@ -649,25 +648,48 @@ def evolucao_horario_sdr(nome_sdr, desde_str):
             marco = upd_dt
         if not marco:
             continue  # fora do periodo
+        if marco.hour not in HORAS_ESCALA_SDR:
+            continue  # fora da escala dela (12-16h / 18-23h)
 
-        hora = marco.hour
-        bucket = por_hora.get(hora, fora_da_escala)
+        deal_id = d.get("id")
+        pid = d.get("pipeline_id")
+        pnome = pipelines.get(pid, f"Funil {pid}") if pid else "Sem funil"
+        status_negocio = {"open": "Aberto", "won": "Ganho", "lost": "Perdido"}.get(
+            d.get("status"), d.get("status") or "—")
 
-        bucket["entraram"] += 1
-        total["entraram"] += 1
-        if d.get("id") in deal_ids_agendados:
-            bucket["agendados"] += 1
-            total["agendados"] += 1
-        if d.get("status") == "lost":
-            bucket["descartados"] += 1
-            total["descartados"] += 1
+        item = {
+            "id": deal_id,
+            "title": d.get("title") or ("Negocio " + str(deal_id)),
+            "hora": marco.strftime("%H:%M"),
+            "pipeline": pnome,
+            "status_negocio": status_negocio,
+            "agendado": deal_id in deal_ids_agendados,
+            "url": PIPEDRIVE_BASE_URL + "/deal/" + str(deal_id),
+        }
+        dia_iso = marco.date().isoformat()
+        por_dia.setdefault(dia_iso, []).append(item)
+
+    dias_out = []
+    for dia_iso in sorted(por_dia.keys()):
+        itens = sorted(por_dia[dia_iso], key=lambda x: x["hora"])
+        resumo = {
+            "entraram": len(itens),
+            "agendados": sum(1 for i in itens if i["agendado"]),
+            "descartados": sum(1 for i in itens if i["status_negocio"] == "Perdido"),
+        }
+        dias_out.append({"dia": dia_iso, "itens": itens, "resumo": resumo})
+
+    total = {
+        "entraram": sum(dd["resumo"]["entraram"] for dd in dias_out),
+        "agendados": sum(dd["resumo"]["agendados"] for dd in dias_out),
+        "descartados": sum(dd["resumo"]["descartados"] for dd in dias_out),
+    }
 
     return {
         "sdr": nome_sdr,
         "desde": desde_dt.date().isoformat(),
         "ate": agora.date().isoformat(),
-        "horas": [{"hora": h, **por_hora[h]} for h in HORAS_ESCALA_SDR],
-        "fora_da_escala": fora_da_escala,
+        "dias": dias_out,
         "total": total,
     }
 

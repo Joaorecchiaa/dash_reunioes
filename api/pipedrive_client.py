@@ -101,3 +101,23 @@ class PipedriveClient:
         campo = data.get("data") or {}
         opcoes = campo.get("options") or []
         return {o["id"]: o["label"] for o in opcoes}
+
+    def get_deals_by_owner(self, owner_id, updated_since=None):
+        """Todos os negocios (deals) cujo owner_id (Proprietario) e o
+        informado, paginado. Usado pra achar leads recebidos por uma SDR
+        (metrica de evolucao por horario)."""
+        deals = []
+        cursor = None
+        while True:
+            params = {"owner_id": owner_id, "limit": 100}
+            if updated_since:
+                params["updated_since"] = updated_since
+            if cursor:
+                params["cursor"] = cursor
+            data = self._get(self.base_v2, "/deals", params)
+            for d in data.get("data") or []:
+                deals.append(d)
+            cursor = (data.get("additional_data") or {}).get("next_cursor")
+            if not cursor:
+                break
+        return deals

@@ -601,11 +601,14 @@ AJUSTE_FUSO_HORAS = -3
 
 
 def evolucao_horario_sdr(nome_sdr, desde_str):
-    """Pra UMA SDR especifica (exclusivamente ela): volume de leads (negocios)
-    que ela recebeu em CADA HORA DO DIA (00h-23h), somando todos os dias
-    desde `desde_str` (formato YYYY-MM-DD) ate agora -- e quantos desses
-    viraram Agendados (tem reuniao marcada). Os horarios ja vem ajustados
-    pro fuso de Brasilia (UTC-3).
+    """Pra UMA SDR especifica (exclusivamente ela), somando todos os dias
+    desde `desde_str` (formato YYYY-MM-DD) ate agora:
+    - Vol. Leads por HORA: quantos negocios ela recebeu em cada hora
+      (hora em que o negocio foi criado/atualizado pra ela).
+    - Vol. Agendados por HORA: quantas reunioes ela CRIOU em cada hora
+      (hora em que a ATIVIDADE de reuniao foi criada -- nao a hora do
+      lead nem a hora marcada pra reuniao acontecer).
+    Os horarios ja vem ajustados pro fuso de Brasilia (UTC-3).
 
     "Recebeu" = o negocio tem ela como Proprietario (owner_id) atual, E
     foi CRIADO ou ATUALIZADO desde a data informada (aproximacao -- nao
@@ -621,11 +624,14 @@ def evolucao_horario_sdr(nome_sdr, desde_str):
         desde_dt = datetime.now() - timedelta(days=7)
 
     deals = _cache_deals_owner(sdr_id, desde_dt)
+    deal_ids_dela = {d.get("id") for d in deals}
 
-    # deal_ids que tem pelo menos uma reuniao (type=meeting) marcada pela SDR
+    # pra cada deal_id dela: hora em que a PRIMEIRA reuniao foi CRIADA
+    # (add_time da activity, nao da atividade due_date/due_time, nem do lead)
     # -- reaproveita acts_do_owner, ja cacheado, sem custo extra de API
     agora = datetime.now()
     deal_ids_agendados = set()
+    hora_criacao_agendamento = {}  # deal_id -> datetime (menor add_time entre as reunioes)
     mes_cursor = date(desde_dt.year, desde_dt.month, 1)
     vistos = set()
     while mes_cursor <= date(agora.year, agora.month, 1):
@@ -634,8 +640,15 @@ def evolucao_horario_sdr(nome_sdr, desde_str):
             vistos.add(chave_mes)
             acts = acts_do_owner(sdr_id, mes_cursor.year, mes_cursor.month)
             for a in acts:
-                if a.get("type") == "meeting" and a.get("deal_id"):
-                    deal_ids_agendados.add(a["deal_id"])
+                deal_id = a.get("deal_id")
+                if a.get("type") == "meeting" and deal_id:
+                    deal_ids_agendados.add(deal_id)
+                    criada_em = _parse_dt_pipedrive(a.get("add_time"))
+                    if criada_em:
+                        criada_em = criada_em + timedelta(hours=AJUSTE_FUSO_HORAS)
+                        atual = hora_criacao_agendamento.get(deal_id)
+                        if atual is None or criada_em < atual:
+                            hora_criacao_agendamento[deal_id] = criada_em
         if mes_cursor.month == 12:
             mes_cursor = date(mes_cursor.year + 1, 1, 1)
         else:
@@ -665,8 +678,6 @@ def evolucao_horario_sdr(nome_sdr, desde_str):
         agendado = deal_id in deal_ids_agendados
 
         por_hora[marco.hour]["leads"] += 1
-        if agendado:
-            por_hora[marco.hour]["agendados"] += 1
 
         dia_iso = marco.date().isoformat()
         por_dia.setdefault(dia_iso, []).append({
@@ -676,6 +687,12 @@ def evolucao_horario_sdr(nome_sdr, desde_str):
             "agendado": agendado,
             "url": PIPEDRIVE_BASE_URL + "/deal/" + str(deal_id),
         })
+
+    # Vol. Agendados: conta na hora que a ATIVIDADE de reuniao foi criada,
+    # so pra deals que sao leads dela dentro do periodo analisado
+    for deal_id, criada_em in hora_criacao_agendamento.items():
+        if deal_id in deal_ids_dela and criada_em >= desde_dt:
+            por_hora[criada_em.hour]["agendados"] += 1
 
     total_leads = sum(v["leads"] for v in por_hora.values())
     total_agendados = sum(v["agendados"] for v in por_hora.values())

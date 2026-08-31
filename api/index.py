@@ -406,12 +406,15 @@ SDR_EXCLUIDOS = {"priscila ribeiro"}
 
 
 def sdrs_do_mes(year, month):
-    """{nome: time} dos SDRs ativos naquele mes/ano (cargo comeca com 'sdr')."""
+    """{nome: time} dos SDRs ativos naquele mes/ano (cargo comeca com 'sdr'),
+    so times validos (mesmo filtro dos closers -- exclui times como LATAM)."""
     out = {}
     for r in carrega_csv():
         if not r["cargo"].startswith("sdr"):
             continue
         if r["mes"] != month or r["ano"] != year:
+            continue
+        if r["time"] not in TIMES_VALIDOS:
             continue
         if norm(r["nome"]) in SDR_EXCLUIDOS:
             continue

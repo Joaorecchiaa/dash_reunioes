@@ -531,7 +531,7 @@ def _ranking_por_criador(auditados, year, month):
             due = a.get("due_date")
             if not due:
                 continue
-            d = datetime.strptime(due, "%Y-%m-%d").date()
+            d = data_ajustada_br(due, a.get("due_time"))
             if d.year != year or d.month != month:
                 continue
             if not eh_reuniao_valida_para_auditoria(a, pessoa_id, deal_info, proprietarios_ids):
@@ -623,6 +623,27 @@ def hora_br(due_time_str):
         return texto[:5]
     t = t + timedelta(hours=AJUSTE_FUSO_HORAS)
     return t.strftime("%H:%M")
+
+
+def data_ajustada_br(due_date_str, due_time_str):
+    """Data do agendamento (due_date), ajustada pro fuso de Brasilia.
+    O Pipedrive devolve due_date/due_time no horario americano (UTC),
+    3h a mais que o Brasil -- entao uma reuniao marcada pra 00:00-02:59
+    de um dia, no Brasil cai no dia ANTERIOR (21:00-23:59). Usada pra
+    decidir em qual DIA a reuniao e contabilizada -- nao so a hora
+    exibida (hora_br), senao a reuniao aparecia no dia errado.
+    Sem due_time (reuniao sem hora definida), mantem a data como veio,
+    sem ajuste (nao ha hora suficiente pra saber se cruzou a virada)."""
+    if due_time_str:
+        texto = due_time_str.strip()
+        for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M"):
+            try:
+                dt = datetime.strptime(due_date_str + " " + texto[:8], fmt)
+                dt = dt + timedelta(hours=AJUSTE_FUSO_HORAS)
+                return dt.date()
+            except ValueError:
+                continue
+    return datetime.strptime(due_date_str, "%Y-%m-%d").date()
 
 
 def evolucao_horario_sdr(nome_sdr, desde_str):
@@ -854,7 +875,7 @@ def _build_dashboard_generico(closers, year, month, privilegiado=False, com_vali
             done = a.get("done")
             if not due or not deal_id:
                 continue
-            d = datetime.strptime(due, "%Y-%m-%d").date()
+            d = data_ajustada_br(due, a.get("due_time"))
             if d.year != year or d.month != month:
                 continue
 
@@ -1229,4 +1250,3 @@ handler = app
 if __name__ == "__main__":
     threading.Thread(target=refresh_current_loop, daemon=True).start()
     app.run(debug=True, port=5000, use_reloader=False)
-

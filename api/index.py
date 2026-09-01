@@ -603,6 +603,28 @@ def _cache_deals_owner(owner_id, desde_dt):
 AJUSTE_FUSO_HORAS = -3
 
 
+def hora_br(due_time_str):
+    """Formata um due_time (HH:MM:SS, cru do Pipedrive) pro horario de
+    Brasilia, aplicando AJUSTE_FUSO_HORAS. Devolve 'HH:MM' (ou '' se nao
+    tiver due_time). Cuida da virada de dia (ex.: 01:30 - 3h = 22:30 do
+    dia anterior) usando um datetime auxiliar."""
+    if not due_time_str:
+        return ""
+    texto = due_time_str.strip()
+    t = None
+    try:
+        t = datetime.strptime(texto[:8], "%H:%M:%S")
+    except ValueError:
+        try:
+            t = datetime.strptime(texto[:5], "%H:%M")
+        except ValueError:
+            pass
+    if t is None:
+        return texto[:5]
+    t = t + timedelta(hours=AJUSTE_FUSO_HORAS)
+    return t.strftime("%H:%M")
+
+
 def evolucao_horario_sdr(nome_sdr, desde_str):
     """Pra UMA SDR especifica (exclusivamente ela), somando todos os dias
     desde `desde_str` (formato YYYY-MM-DD) ate agora:
@@ -861,7 +883,7 @@ def _build_dashboard_generico(closers, year, month, privilegiado=False, com_vali
             if privilegiado:
                 titulo = info.get("title") or ("Negocio " + str(deal_id))
                 url = PIPEDRIVE_BASE_URL + "/deal/" + str(deal_id)
-                hora = (a.get("due_time") or "")[:5]  # HH:MM
+                hora = hora_br(a.get("due_time"))  # HH:MM ja ajustado pro fuso de Brasilia
                 if tipo == "reagendamento":
                     status = "Reagendada"
                 elif tipo == "no_show":

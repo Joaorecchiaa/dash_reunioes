@@ -209,6 +209,11 @@ HTML = r"""<!DOCTYPE html>
   .aud-body { display:none; padding:0 18px 14px; }
   .aud-body.open { display:block; }
   table.aud-tbl { width:100%; border-collapse:collapse; font-size:13px; }
+  table.aud-tbl th .th-sub { display:block; font-weight:400; font-size:10px; text-transform:none;
+                             letter-spacing:0; margin-top:2px; }
+  table.aud-tbl td.qtd-pct { text-align:center; padding:6px 10px; }
+  table.aud-tbl td.qtd-pct .qtd { font-weight:800; font-size:14px; color:var(--text); line-height:1.2; }
+  table.aud-tbl td.qtd-pct .pct-sub { font-size:11px; line-height:1.2; margin-top:1px; }
   table.aud-tbl td.aud-negs { font-size:12px; }
   table.aud-tbl td.aud-negs a { color:var(--text); text-decoration:none; margin-right:6px; }
   table.aud-tbl td.aud-negs a:hover { text-decoration:underline; color:var(--gold-ink); }
@@ -606,30 +611,65 @@ function renderGenerico(data, cfg) {
     html += `</tbody></table></div>
       <div class="muted" style="font-size:11px;margin-top:8px">P = planejadas · F = feitas${legendaValid} · NS = no-show · R = reagendadas</div></div>`;
 
-    // ---- distribuicao: Validadas (se disponivel) ou Feitas + % sobre o total de todos ----
-    // + quantidade/% do que cada um marcou PRA SI MESMO (creator == owner), mesma metrica
+    // ---- distribuicao: Validadas (se disponivel) ou Feitas -- numero+% empilhados na mesma celula ----
     const metricaDist = cfg.comValidada ? 'validada' : 'done';
     const campoProprio = cfg.comValidada ? 'proprio_validada' : 'proprio_done';
+    const campoGanhos = cfg.comValidada ? 'ganhos_validada' : 'ganhos_done';
     const tituloDist = cfg.comValidada ? 'reuniões validadas' : 'reuniões feitas';
     const totalTodos = data.por_closer.reduce((soma, c) => soma + (c.total[metricaDist]||0), 0);
     const totalProprioTodos = data.por_closer.reduce((soma, c) => soma + (c[campoProprio]||0), 0);
+    const totalGanhosTodos = data.por_closer.reduce((soma, c) => soma + (c[campoGanhos]||0), 0);
     const distOrdenada = data.por_closer.slice().sort((a,b) => (b.total[metricaDist]||0) - (a.total[metricaDist]||0));
+    const celula = (num, pct) => `<td class="qtd-pct"><div class="qtd">${num}</div><div class="muted pct-sub">${pct.toFixed(1)}%</div></td>`;
     html += `<div class="panel"><h2>Distribuição por ${cfg.label} — ${tituloDist} · ${data.month_label}</h2>
-      <table class="aud-tbl"><tr><th class="l">${cfg.label}</th><th>Quantidade</th><th>%</th><th class="barcell"></th><th>Quantidade (próprio)</th><th>% (próprio)</th></tr>`;
+      <table class="aud-tbl">
+      <tr>
+        <th class="l" rowspan="2">${cfg.label}</th>
+        <th colspan="2">Reuniões ${cfg.comValidada ? 'validadas' : 'feitas'} do closer<br><span class="muted th-sub">quantidade e % do total do time</span></th>
+        <th colspan="1">Marcadas pelo próprio<br><span class="muted th-sub">criador = responsável, % do total do time</span></th>
+        <th colspan="1">Ganhos<br><span class="muted th-sub">taxa de conversão sobre as feitas do closer</span></th>
+      </tr>
+      <tr><th></th><th class="barcell"></th><th></th><th></th></tr>`;
     for (const c of distOrdenada) {
       const qtd = c.total[metricaDist] || 0;
       const pct = totalTodos ? (qtd / totalTodos * 100) : 0;
       const qtdProprio = c[campoProprio] || 0;
       const pctProprio = totalTodos ? (qtdProprio / totalTodos * 100) : 0;
-      html += `<tr><td class="l">${c.name}</td><td class="qtd">${qtd}</td>
-        <td>${pct.toFixed(1)}%</td>
+      const qtdGanhos = c[campoGanhos] || 0;
+      const taxaConversao = qtd ? (qtdGanhos / qtd * 100) : 0;
+      html += `<tr><td class="l">${c.name}</td>
+        ${celula(qtd, pct)}
         <td class="barcell"><div class="aud-bar" style="width:${pct}%"></div></td>
-        <td class="qtd">${qtdProprio}</td>
-        <td>${pctProprio.toFixed(1)}%</td></tr>`;
+        ${celula(qtdProprio, pctProprio)}
+        ${celula(qtdGanhos, taxaConversao)}</tr>`;
     }
-    html += `<tr class="total"><td class="l">TOTAL</td><td class="qtd">${totalTodos}</td><td>100%</td><td></td>
-      <td class="qtd">${totalProprioTodos}</td><td>${totalTodos ? (totalProprioTodos/totalTodos*100).toFixed(1) : '0.0'}%</td></tr>`;
+    const taxaConversaoTotal = totalTodos ? (totalGanhosTodos / totalTodos * 100) : 0;
+    html += `<tr class="total"><td class="l">TOTAL</td>
+      ${celula(totalTodos, 100)}
+      <td></td>
+      ${celula(totalProprioTodos, totalTodos ? (totalProprioTodos/totalTodos*100) : 0)}
+      ${celula(totalGanhosTodos, taxaConversaoTotal)}</tr>`;
     html += `</table></div>`;
+
+    // ---- distribuicao QUEBRADA POR TIME: total do time + closers dentro dele ----
+    const times = Array.from(new Set(data.por_closer.map(c => c.time))).sort();
+    html += `<div class="panel"><h2>Reuniões ${cfg.comValidada ? 'validadas' : 'feitas'} por Time · ${data.month_label}</h2>`;
+    for (const time of times) {
+      const doTime = data.por_closer.filter(c => c.time === time)
+        .slice().sort((a,b) => (b.total[metricaDist]||0) - (a.total[metricaDist]||0));
+      const totalTime = doTime.reduce((soma, c) => soma + (c.total[metricaDist]||0), 0);
+      html += `<div class="nb-title" style="margin-top:14px">${time} — ${totalTime} reunião(ões) no total</div>
+        <table class="aud-tbl"><tr><th class="l">${cfg.label}</th><th>Quantidade</th><th>% do time</th><th class="barcell"></th></tr>`;
+      for (const c of doTime) {
+        const qtd = c.total[metricaDist] || 0;
+        const pctTime = totalTime ? (qtd / totalTime * 100) : 0;
+        html += `<tr><td class="l">${c.name}</td>
+          ${celula(qtd, pctTime)}
+          <td class="barcell"><div class="aud-bar" style="width:${pctTime}%"></div></td></tr>`;
+      }
+      html += `</table>`;
+    }
+    html += `</div>`;
   }
 
   const priv = ehPriv();

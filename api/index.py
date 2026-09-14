@@ -863,6 +863,8 @@ def _build_dashboard_generico(closers, year, month, privilegiado=False, com_vali
         c_criadas_days = {d: {"proprio": 0, "outro": 0} for d in range(1, last_day + 1)}
         c_proprio_done = 0      # das reunioes FEITAS, quantas foram marcadas pelo proprio
         c_proprio_validada = 0  # idem, mas das VALIDADAS (so relevante na aba SDR)
+        c_ganhos_done = 0       # das reunioes FEITAS, quantas tem o negocio Ganho hoje
+        c_ganhos_validada = 0   # idem, mas das VALIDADAS
         c_negocios_mes = {}   # deal_id -> {id,title,url}  (dedupe do mes)
         c_negocios_dia = {d: [] for d in range(1, last_day + 1)}  # dia -> lista de reunioes com negocio
 
@@ -900,6 +902,13 @@ def _build_dashboard_generico(closers, year, month, privilegiado=False, com_vali
                 c_proprio_done += 1
                 if eh_valid:
                     c_proprio_validada += 1
+
+            # Ganhos: do total de reunioes FEITAS (e das VALIDADAS), quantas tem
+            # o negocio hoje com status "Ganho" -- publico, nao depende de login
+            if tipo == "meeting" and done and info.get("status") == "won":
+                c_ganhos_done += 1
+                if eh_valid:
+                    c_ganhos_validada += 1
 
             if privilegiado:
                 titulo = info.get("title") or ("Negocio " + str(deal_id))
@@ -945,6 +954,8 @@ def _build_dashboard_generico(closers, year, month, privilegiado=False, com_vali
             "criadas_days": [{"dia": d, "c": c_criadas_days[d]} for d in range(1, last_day + 1)],
             "proprio_done": c_proprio_done,
             "proprio_validada": c_proprio_validada,
+            "ganhos_done": c_ganhos_done,
+            "ganhos_validada": c_ganhos_validada,
             "negocios": sorted(c_negocios_mes.values(), key=lambda x: x["id"]) if privilegiado else [],
             "negocios_dia": ([{"dia": d, "itens": sorted(c_negocios_dia[d], key=lambda x: x["hora"])}
                               for d in range(1, last_day + 1)] if privilegiado else []),

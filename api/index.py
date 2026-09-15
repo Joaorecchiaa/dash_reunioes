@@ -681,11 +681,13 @@ def evolucao_horario_sdr(nome_sdr, desde_str, ate_str=None):
     deal_ids_dela = {d.get("id") for d in deals}
 
     # pra cada deal_id dela: hora em que a PRIMEIRA reuniao foi CRIADA
-    # (add_time da activity, nao da atividade due_date/due_time, nem do lead)
+    # *dentro do periodo analisado* (nao a primeira da vida do negocio --
+    # um negocio que ja teve reuniao antes do periodo, mas ganhou uma NOVA
+    # reuniao dentro do periodo, agora conta; reagendamentos multiplos
+    # dentro do MESMO periodo contam so uma vez, pela mais antiga)
     # -- reaproveita acts_do_owner, ja cacheado, sem custo extra de API
-    deal_ids_agendados = set()
-    hora_criacao_agendamento = {}  # deal_id -> datetime (menor add_time entre as reunioes)
-    due_date_agendamento = {}      # deal_id -> due_date (str) da MESMA reuniao mais antiga
+    hora_criacao_agendamento = {}  # deal_id -> datetime (menor add_time DENTRO do periodo)
+    due_date_agendamento = {}      # deal_id -> due_date (str) dessa mesma reuniao
     mes_cursor = date(desde_dt.year, desde_dt.month, 1)
     vistos = set()
     while mes_cursor <= date(ate_dt.year, ate_dt.month, 1):
@@ -695,19 +697,24 @@ def evolucao_horario_sdr(nome_sdr, desde_str, ate_str=None):
             acts = acts_do_owner(sdr_id, mes_cursor.year, mes_cursor.month)
             for a in acts:
                 deal_id = a.get("deal_id")
-                if a.get("type") == "meeting" and deal_id:
-                    deal_ids_agendados.add(deal_id)
-                    criada_em = _parse_dt_pipedrive(a.get("add_time"))
-                    if criada_em:
-                        criada_em = criada_em + timedelta(hours=AJUSTE_FUSO_HORAS)
-                        atual = hora_criacao_agendamento.get(deal_id)
-                        if atual is None or criada_em < atual:
-                            hora_criacao_agendamento[deal_id] = criada_em
-                            due_date_agendamento[deal_id] = a.get("due_date")
+                if a.get("type") != "meeting" or not deal_id:
+                    continue
+                criada_em = _parse_dt_pipedrive(a.get("add_time"))
+                if not criada_em:
+                    continue
+                criada_em = criada_em + timedelta(hours=AJUSTE_FUSO_HORAS)
+                if not (desde_dt <= criada_em <= ate_dt):
+                    continue  # essa reuniao foi criada FORA do periodo -- ignora
+                atual = hora_criacao_agendamento.get(deal_id)
+                if atual is None or criada_em < atual:
+                    hora_criacao_agendamento[deal_id] = criada_em
+                    due_date_agendamento[deal_id] = a.get("due_date")
         if mes_cursor.month == 12:
             mes_cursor = date(mes_cursor.year + 1, 1, 1)
         else:
             mes_cursor = date(mes_cursor.year, mes_cursor.month + 1, 1)
+
+    deal_ids_agendados = set(hora_criacao_agendamento.keys())
 
     por_hora = {h: {"leads": 0, "agendados": 0} for h in range(24)}
     por_dia = {}  # mantido pra uso futuro / diagnostico

@@ -659,9 +659,11 @@ def evolucao_horario_sdr(nome_sdr, desde_str, ate_str=None):
       SEGUINTE, e quantos mais pra frente (due_date - dia da criacao).
     Os horarios ja vem ajustados pro fuso de Brasilia (UTC-3).
 
-    "Recebeu" = o negocio tem ela como Proprietario (owner_id) atual, E
-    foi CRIADO ou ATUALIZADO dentro do periodo informado (aproximacao --
-    nao rastreia o changelog exato de troca de dono, conforme combinado)."""
+    "Recebeu" = o negocio tem ela como Proprietario (owner_id) atual, E foi
+    CRIADO ou TROCOU DE ETAPA (stage_change_time) dentro do periodo informado
+    (aproximacao -- nao rastreia o changelog exato de troca de dono; usa
+    stage_change_time em vez de update_time pra nao inflar com negocios
+    antigos que so tiveram nota/campo editado, sem de fato "chegar" pra ela)."""
     users, pipelines = carrega_meta()
     sdr_id = users.get(nome_sdr.strip().lower())
     if not sdr_id:
@@ -721,18 +723,22 @@ def evolucao_horario_sdr(nome_sdr, desde_str, ate_str=None):
 
     for d in deals:
         add_dt = _parse_dt_pipedrive(d.get("add_time"))
-        upd_dt = _parse_dt_pipedrive(d.get("update_time"))
+        # usa stage_change_time (so muda quando o negocio TROCA DE ETAPA) em
+        # vez de update_time (que muda em QUALQUER edicao -- nota, campo,
+        # automacao -- e inflava demais o volume de "leads" em janelas
+        # longas, contando negocios antigos so tocados, nao recebidos)
+        estagio_dt = _parse_dt_pipedrive(d.get("stage_change_time"))
         # aplica o ajuste de fuso ANTES de comparar com "desde"/"ate" e de extrair a hora
         if add_dt:
             add_dt = add_dt + timedelta(hours=AJUSTE_FUSO_HORAS)
-        if upd_dt:
-            upd_dt = upd_dt + timedelta(hours=AJUSTE_FUSO_HORAS)
+        if estagio_dt:
+            estagio_dt = estagio_dt + timedelta(hours=AJUSTE_FUSO_HORAS)
 
         marco = None
         if add_dt and desde_dt <= add_dt <= ate_dt:
             marco = add_dt
-        elif upd_dt and desde_dt <= upd_dt <= ate_dt:
-            marco = upd_dt
+        elif estagio_dt and desde_dt <= estagio_dt <= ate_dt:
+            marco = estagio_dt
         if not marco:
             continue  # fora do periodo
 
@@ -1299,5 +1305,3 @@ handler = app
 if __name__ == "__main__":
     threading.Thread(target=refresh_current_loop, daemon=True).start()
     app.run(debug=True, port=5000, use_reloader=False)
-
-

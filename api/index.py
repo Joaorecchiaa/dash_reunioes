@@ -756,11 +756,17 @@ def evolucao_horario_sdr(nome_sdr, desde_str, ate_str=None):
             "url": PIPEDRIVE_BASE_URL + "/deal/" + str(deal_id),
         })
 
-    # Vol. Agendados: conta na hora que a ATIVIDADE de reuniao foi criada,
-    # so pra deals que sao leads dela dentro do periodo analisado
+    # Vol. Agendados: conta na hora que a ATIVIDADE de reuniao foi criada.
+    # NAO checa mais "o negocio ainda e dela hoje" (deal_id in deal_ids_dela)
+    # -- isso descartava agendamentos legitimos sempre que o negocio e
+    # repassado pro closer depois da reuniao marcada (fluxo normal de SDR),
+    # fazendo o Vol. Agendados ficar artificialmente perto de zero. A
+    # atividade ja veio de acts_do_owner(sdr_id), entao ja sabemos que ela
+    # e a Responsavel -- checar o dono do negocio de novo era redundante
+    # e incorreto.
     prazo = {"mesmo_dia": 0, "dia_seguinte": 0, "mais_adiante": 0, "sem_data": 0}
     for deal_id, criada_em in hora_criacao_agendamento.items():
-        if deal_id in deal_ids_dela and desde_dt <= criada_em <= ate_dt:
+        if desde_dt <= criada_em <= ate_dt:
             por_hora[criada_em.hour]["agendados"] += 1
 
             due_str = due_date_agendamento.get(deal_id)

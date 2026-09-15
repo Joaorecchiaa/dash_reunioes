@@ -858,50 +858,72 @@ async function carregaAuditoria(forcar) {
   }
 }
 
+const EV_SDRS = ['Bruna Goes', 'Vitor Soares'];
+const EV_DESDE = '2026-08-17'; // segunda-feira combinada como inicio da analise
+let EV_CHARTS = {}; // canvasId -> instancia do Chart
+
 async function buscaEvolucaoHorario() {
-  const sdr = 'Bruna Goes';
-  const desde = '2026-08-17'; // segunda-feira combinada como inicio da analise
   $('ev-resultado').innerHTML = '<div class="muted">Buscando no Pipedrive… (pode levar alguns segundos)</div>';
   try {
-    const p = new URLSearchParams({ sdr, desde });
-    const res = await fetch('/api/evolucao_sdr?' + p.toString(), { headers: authHeaders() });
-    const d = await res.json();
-    if (d.erro || d.error) {
-      $('ev-resultado').innerHTML = '<div class="warn">Erro: ' + (d.erro || d.error) + '</div>';
-      return;
-    }
-    renderEvolucaoHorario(d);
+    const resultados = await Promise.all(EV_SDRS.map(sdr => {
+      const p = new URLSearchParams({ sdr, desde: EV_DESDE });
+      return fetch('/api/evolucao_sdr?' + p.toString(), { headers: authHeaders() }).then(r => r.json());
+    }));
+    renderEvolucaoComparativo(resultados);
   } catch (e) {
     $('ev-resultado').innerHTML = '<div class="warn">Falha na requisição: ' + e + '</div>';
   }
 }
 
-let EV_CHART = null;
+function renderEvolucaoComparativo(resultados) {
+  const validos = resultados.filter(d => !d.erro && !d.error);
+  const comErro = resultados.filter(d => d.erro || d.error);
 
-function renderEvolucaoHorario(d) {
-  const t = d.total || {leads:0, agendados:0};
-  let html = `<div class="muted" style="margin-bottom:10px">${d.sdr} — de ${d.desde.split('-').reverse().join('/')} até ${d.ate.split('-').reverse().join('/')} · todas as horas (00h–23h) · horário de Brasília</div>`;
-  html += `<div class="creator-box" style="margin-bottom:14px">
-    <div class="ci-item"><span class="ci-lbl">Vol. Leads</span><span class="ci-val">${t.leads}</span></div>
-    <div class="ci-item"><span class="ci-lbl">Vol. Agendados</span><span class="ci-val">${t.agendados}</span></div>
-    <div class="ci-item"><span class="ci-lbl">Taxa de Agendamento</span><span class="ci-val">${d.taxa_agendamento}%</span></div>
-  </div>`;
-  html += `<div style="max-width:1000px"><canvas id="ev-canvas" height="60"></canvas></div>`;
+  if (!validos.length) {
+    $('ev-resultado').innerHTML = '<div class="warn">Nenhum dado encontrado.</div>';
+    return;
+  }
+
+  let html = `<div class="muted" style="margin-bottom:10px">de ${validos[0].desde.split('-').reverse().join('/')} até ${validos[0].ate.split('-').reverse().join('/')} · todas as horas (00h–23h) · horário de Brasília</div>`;
+
+  // ---- quadro comparativo no topo ----
+  html += `<table class="aud-tbl" style="margin-bottom:20px">
+    <tr><th class="l">SDR</th><th>Vol. Leads</th><th>Vol. Agendados</th><th>Taxa de Agendamento</th></tr>`;
+  for (const d of validos) {
+    const t = d.total || {leads:0, agendados:0};
+    html += `<tr><td class="l">${d.sdr}</td><td class="qtd">${t.leads}</td>
+      <td class="qtd">${t.agendados}</td><td class="qtd">${d.taxa_agendamento}%</td></tr>`;
+  }
+  html += `</table>`;
+  for (const d of comErro) {
+    html += `<div class="muted" style="font-size:11px;margin-bottom:10px">${d.sdr || 'SDR'}: ${d.erro || d.error}</div>`;
+  }
+
+  // ---- um grafico por SDR, empilhados ----
+  for (let i = 0; i < validos.length; i++) {
+    html += `<div class="nb-title" style="margin-top:18px">${validos[i].sdr}</div>
+      <div style="max-width:1000px"><canvas id="ev-canvas-${i}" height="60"></canvas></div>`;
+  }
 
   $('ev-resultado').innerHTML = html;
 
-  const horas = (d.por_hora || []).map(h => String(h.hora).padStart(2,'0') + 'h');
-  const leads = (d.por_hora || []).map(h => h.leads);
-  const agendados = (d.por_hora || []).map(h => h.agendados);
-
-  if (EV_CHART) { EV_CHART.destroy(); }
-  const canvasEl = document.getElementById('ev-canvas');
-  const ctx = canvasEl.getContext('2d');
   if (window.ChartDataLabels && !Chart._boardAcademyDatalabelsRegistrado) {
     Chart.register(window.ChartDataLabels);
     Chart._boardAcademyDatalabelsRegistrado = true;
   }
-  EV_CHART = new Chart(ctx, {
+  for (let i = 0; i < validos.length; i++) {
+    desenhaGraficoEvolucao('ev-canvas-' + i, validos[i]);
+  }
+}
+
+function desenhaGraficoEvolucao(canvasId, d) {
+  const horas = (d.por_hora || []).map(h => String(h.hora).padStart(2,'0') + 'h');
+  const leads = (d.por_hora || []).map(h => h.leads);
+  const agendados = (d.por_hora || []).map(h => h.agendados);
+
+  if (EV_CHARTS[canvasId]) { EV_CHARTS[canvasId].destroy(); }
+  const ctx = document.getElementById(canvasId).getContext('2d');
+  EV_CHARTS[canvasId] = new Chart(ctx, {
     data: {
       labels: horas,
       datasets: [
@@ -984,7 +1006,7 @@ function renderAuditoria(data) {
     html += '<div class="aud-empty">Nenhum Team Leader ou Head encontrado no CSV para esse mês.</div>';
   }
 
-  html += `<div class="aud-section-title">Evolução por Horário — Bruna Goes</div>
+  html += `<div class="aud-section-title">Evolução por Horário — Comparativo (Bruna Goes x Vitor Soares)</div>
     <div class="panel">
       <div id="ev-resultado"><div class="muted">Carregando…</div></div>
     </div>`;

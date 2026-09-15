@@ -646,19 +646,22 @@ def data_ajustada_br(due_date_str, due_time_str):
     return datetime.strptime(due_date_str, "%Y-%m-%d").date()
 
 
-def evolucao_horario_sdr(nome_sdr, desde_str):
-    """Pra UMA SDR especifica (exclusivamente ela), somando todos os dias
-    desde `desde_str` (formato YYYY-MM-DD) ate agora:
+def evolucao_horario_sdr(nome_sdr, desde_str, ate_str=None):
+    """Pra UMA SDR especifica (exclusivamente ela), somando os dias entre
+    `desde_str` e `ate_str` (formato YYYY-MM-DD; sem ate_str, vai ate agora):
     - Vol. Leads por HORA: quantos negocios ela recebeu em cada hora
       (hora em que o negocio foi criado/atualizado pra ela).
     - Vol. Agendados por HORA: quantas reunioes ela CRIOU em cada hora
       (hora em que a ATIVIDADE de reuniao foi criada -- nao a hora do
       lead nem a hora marcada pra reuniao acontecer).
+    - Prazo de agendamento: dos leads que ela agendou, quantos ela marcou
+      pra acontecer no MESMO DIA que criou a reuniao, quantos pro DIA
+      SEGUINTE, e quantos mais pra frente (due_date - dia da criacao).
     Os horarios ja vem ajustados pro fuso de Brasilia (UTC-3).
 
     "Recebeu" = o negocio tem ela como Proprietario (owner_id) atual, E
-    foi CRIADO ou ATUALIZADO desde a data informada (aproximacao -- nao
-    rastreia o changelog exato de troca de dono, conforme combinado)."""
+    foi CRIADO ou ATUALIZADO dentro do periodo informado (aproximacao --
+    nao rastreia o changelog exato de troca de dono, conforme combinado)."""
     users, pipelines = carrega_meta()
     sdr_id = users.get(nome_sdr.strip().lower())
     if not sdr_id:
@@ -669,18 +672,23 @@ def evolucao_horario_sdr(nome_sdr, desde_str):
     except Exception:
         desde_dt = datetime.now() - timedelta(days=7)
 
+    try:
+        ate_dt = datetime.strptime(ate_str, "%Y-%m-%d") + timedelta(hours=23, minutes=59, seconds=59)
+    except Exception:
+        ate_dt = datetime.now()
+
     deals = _cache_deals_owner(sdr_id, desde_dt)
     deal_ids_dela = {d.get("id") for d in deals}
 
     # pra cada deal_id dela: hora em que a PRIMEIRA reuniao foi CRIADA
     # (add_time da activity, nao da atividade due_date/due_time, nem do lead)
     # -- reaproveita acts_do_owner, ja cacheado, sem custo extra de API
-    agora = datetime.now()
     deal_ids_agendados = set()
     hora_criacao_agendamento = {}  # deal_id -> datetime (menor add_time entre as reunioes)
+    due_date_agendamento = {}      # deal_id -> due_date (str) da MESMA reuniao mais antiga
     mes_cursor = date(desde_dt.year, desde_dt.month, 1)
     vistos = set()
-    while mes_cursor <= date(agora.year, agora.month, 1):
+    while mes_cursor <= date(ate_dt.year, ate_dt.month, 1):
         chave_mes = (mes_cursor.year, mes_cursor.month)
         if chave_mes not in vistos:
             vistos.add(chave_mes)
@@ -695,6 +703,7 @@ def evolucao_horario_sdr(nome_sdr, desde_str):
                         atual = hora_criacao_agendamento.get(deal_id)
                         if atual is None or criada_em < atual:
                             hora_criacao_agendamento[deal_id] = criada_em
+                            due_date_agendamento[deal_id] = a.get("due_date")
         if mes_cursor.month == 12:
             mes_cursor = date(mes_cursor.year + 1, 1, 1)
         else:
@@ -706,16 +715,16 @@ def evolucao_horario_sdr(nome_sdr, desde_str):
     for d in deals:
         add_dt = _parse_dt_pipedrive(d.get("add_time"))
         upd_dt = _parse_dt_pipedrive(d.get("update_time"))
-        # aplica o ajuste de fuso ANTES de comparar com "desde" e de extrair a hora
+        # aplica o ajuste de fuso ANTES de comparar com "desde"/"ate" e de extrair a hora
         if add_dt:
             add_dt = add_dt + timedelta(hours=AJUSTE_FUSO_HORAS)
         if upd_dt:
             upd_dt = upd_dt + timedelta(hours=AJUSTE_FUSO_HORAS)
 
         marco = None
-        if add_dt and add_dt >= desde_dt:
+        if add_dt and desde_dt <= add_dt <= ate_dt:
             marco = add_dt
-        elif upd_dt and upd_dt >= desde_dt:
+        elif upd_dt and desde_dt <= upd_dt <= ate_dt:
             marco = upd_dt
         if not marco:
             continue  # fora do periodo
@@ -736,22 +745,43 @@ def evolucao_horario_sdr(nome_sdr, desde_str):
 
     # Vol. Agendados: conta na hora que a ATIVIDADE de reuniao foi criada,
     # so pra deals que sao leads dela dentro do periodo analisado
+    prazo = {"mesmo_dia": 0, "dia_seguinte": 0, "mais_adiante": 0, "sem_data": 0}
     for deal_id, criada_em in hora_criacao_agendamento.items():
-        if deal_id in deal_ids_dela and criada_em >= desde_dt:
+        if deal_id in deal_ids_dela and desde_dt <= criada_em <= ate_dt:
             por_hora[criada_em.hour]["agendados"] += 1
+
+            due_str = due_date_agendamento.get(deal_id)
+            if not due_str:
+                prazo["sem_data"] += 1
+                continue
+            try:
+                due_data = datetime.strptime(due_str, "%Y-%m-%d").date()
+                gap = (due_data - criada_em.date()).days
+            except ValueError:
+                prazo["sem_data"] += 1
+                continue
+            if gap <= 0:
+                prazo["mesmo_dia"] += 1
+            elif gap == 1:
+                prazo["dia_seguinte"] += 1
+            else:
+                prazo["mais_adiante"] += 1
 
     total_leads = sum(v["leads"] for v in por_hora.values())
     total_agendados = sum(v["agendados"] for v in por_hora.values())
     taxa_agendamento = round((total_agendados / total_leads * 100), 1) if total_leads else 0.0
+    pct_dia_seguinte = round((prazo["dia_seguinte"] / total_agendados * 100), 1) if total_agendados else 0.0
 
     return {
         "sdr": nome_sdr,
         "desde": desde_dt.date().isoformat(),
-        "ate": agora.date().isoformat(),
+        "ate": ate_dt.date().isoformat(),
         "por_hora": [{"hora": h, "leads": por_hora[h]["leads"], "agendados": por_hora[h]["agendados"]}
                      for h in range(24)],
         "total": {"leads": total_leads, "agendados": total_agendados},
         "taxa_agendamento": taxa_agendamento,
+        "prazo_agendamento": prazo,
+        "pct_agendado_dia_seguinte": pct_dia_seguinte,
     }
 
 
@@ -1128,8 +1158,9 @@ def api_evolucao_sdr():
         hoje = date.today()
         segunda = hoje - timedelta(days=hoje.weekday())
         desde = segunda.isoformat()
+    ate = request.args.get("ate", "").strip() or None  # opcional -- sem isso, vai ate agora
     try:
-        return jsonify(evolucao_horario_sdr(nome_sdr, desde))
+        return jsonify(evolucao_horario_sdr(nome_sdr, desde, ate))
     except Exception as e:
         import traceback
         traceback.print_exc()

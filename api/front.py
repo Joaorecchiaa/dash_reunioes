@@ -12,6 +12,7 @@ HTML = r"""<!DOCTYPE html>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>REUNIÕES - CLOSERS</title>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.0/chart.umd.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/chartjs-plugin-datalabels/2.2.0/chartjs-plugin-datalabels.min.js"></script>
 <style>
   :root {
     --bg:#f4f5f7; --card:#ffffff; --card2:#f0f1f3; --border:#dfe1e5;
@@ -896,15 +897,21 @@ function renderEvolucaoHorario(d) {
   if (EV_CHART) { EV_CHART.destroy(); }
   const canvasEl = document.getElementById('ev-canvas');
   const ctx = canvasEl.getContext('2d');
+  if (window.ChartDataLabels && !Chart._boardAcademyDatalabelsRegistrado) {
+    Chart.register(window.ChartDataLabels);
+    Chart._boardAcademyDatalabelsRegistrado = true;
+  }
   EV_CHART = new Chart(ctx, {
     data: {
       labels: horas,
       datasets: [
         { type: 'bar', label: 'Vol. Leads', data: leads, backgroundColor: '#FFD700',
-          borderRadius: 3, yAxisID: 'y', order: 2 },
+          borderRadius: 3, yAxisID: 'y', order: 2, datalabels: { display: false } },
         { type: 'line', label: 'Vol. Agendados', data: agendados, borderColor: '#141414',
-          backgroundColor: '#141414', stepped: 'middle', borderDash: [6, 4], pointRadius: 4, pointHoverRadius: 5,
-          pointBackgroundColor: '#141414', borderWidth: 2.5, yAxisID: 'y1', order: 1 },
+          backgroundColor: '#141414', tension: 0, borderDash: [6, 4], pointRadius: 4, pointHoverRadius: 5,
+          pointBackgroundColor: '#141414', borderWidth: 2.5, yAxisID: 'y1', order: 1,
+          datalabels: { align: 'top', anchor: 'end', color: '#141414', font: { weight: 'bold', size: 11 },
+                        formatter: (v) => v > 0 ? v : '' } },
       ],
     },
     options: {

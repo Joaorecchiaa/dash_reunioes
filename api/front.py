@@ -277,10 +277,12 @@ HTML = r"""<!DOCTYPE html>
       <button class="tab active" id="tab-reunioes" data-tab="reunioes">Reuniões - Closers</button>
       <button class="tab" id="tab-sdrs" data-tab="sdrs">Reuniões - SDRs</button>
       <button class="tab" id="tab-auditoria" data-tab="auditoria">Auditoria SDR</button>
+      <button class="tab" id="tab-distribuicao" data-tab="distribuicao">Distribuição</button>
     </div>
     <div id="root"><div class="muted">Carregando filtros…</div></div>
     <div id="root-sdr" style="display:none"><div class="muted">Carregando filtros…</div></div>
     <div id="root-aud" style="display:none"><div class="muted">Carregando auditoria…</div></div>
+    <div id="root-dist" style="display:none"><div class="muted">Carregando distribuição…</div></div>
   </div>
 
 <script>
@@ -346,6 +348,7 @@ async function init() {
   const d = await (await fetch('/api/init')).json();
   CURRENT_MONTH = d.current;
   REFRESH_MS = (d.refresh_seconds || 1200) * 1000;
+  MESES_DISPONIVEIS = d.months;
   opt($('f-mes'), d.months, x=>x.value, x=>x.label);
   $('f-mes').value = d.current;
   opt($('f-time'), d.teams, x=>x, x=>x);
@@ -814,16 +817,20 @@ $('loginModal').addEventListener('click', e => { if (e.target.id === 'loginModal
 // ---- abas ----
 let ABA = 'reunioes';
 let AUD_CARREGADA_MES = null;
+let MESES_DISPONIVEIS = [];
+let DIST_CARREGADA_MES = null;
 
 async function trocaAba(nome) {
-  if (nome === 'auditoria' && !ehPriv()) return;
+  if ((nome === 'auditoria' || nome === 'distribuicao') && !ehPriv()) return;
   ABA = nome;
   $('tab-reunioes').classList.toggle('active', nome === 'reunioes');
   $('tab-sdrs').classList.toggle('active', nome === 'sdrs');
   $('tab-auditoria').classList.toggle('active', nome === 'auditoria');
+  $('tab-distribuicao').classList.toggle('active', nome === 'distribuicao');
   $('root').style.display = (nome === 'reunioes') ? '' : 'none';
   $('root-sdr').style.display = (nome === 'sdrs') ? '' : 'none';
   $('root-aud').style.display = (nome === 'auditoria') ? '' : 'none';
+  $('root-dist').style.display = (nome === 'distribuicao') ? '' : 'none';
 
   if (nome === 'sdrs' && MODO_PESSOA !== 'sdr') {
     MODO_PESSOA = 'sdr';
@@ -837,11 +844,13 @@ async function trocaAba(nome) {
     buscarSdr(false);
   }
   if (nome === 'auditoria') carregaAuditoria();
+  if (nome === 'distribuicao') carregaDistribuicaoAba();
 }
 
 $('tab-reunioes').addEventListener('click', () => trocaAba('reunioes'));
 $('tab-sdrs').addEventListener('click', () => trocaAba('sdrs'));
 $('tab-auditoria').addEventListener('click', () => trocaAba('auditoria'));
+$('tab-distribuicao').addEventListener('click', () => trocaAba('distribuicao'));
 
 async function carregaAuditoria(forcar) {
   const mes = $('f-mes').value;
@@ -955,13 +964,30 @@ function desenhaGraficoEvolucao(canvasId, d) {
   });
 }
 
-async function buscaDistribuicaoLeads() {
+function carregaDistribuicaoAba() {
+  if (!document.getElementById('dist-mes')) {
+    let html = `<div class="filters" style="margin-bottom:14px">
+      <div class="field"><label>Mês (log)</label><select id="dist-mes"></select></div>
+    </div>
+    <div id="dist-resultado"><div class="muted">Carregando…</div></div>`;
+    $('root-dist').innerHTML = html;
+    opt($('dist-mes'), MESES_DISPONIVEIS, x=>x.value, x=>x.label);
+    $('dist-mes').value = CURRENT_MONTH;
+    $('dist-mes').addEventListener('change', () => buscaDistribuicaoLeads(true));
+  }
+  buscaDistribuicaoLeads();
+}
+
+async function buscaDistribuicaoLeads(forcar) {
+  const mes = $('dist-mes').value;
+  if (!forcar && DIST_CARREGADA_MES === mes) return;  // ja carregada p/ esse mes
   $('dist-resultado').innerHTML = '<div class="muted">Buscando na planilha… (pode levar alguns segundos)</div>';
   try {
     const [resResumo, resLog] = await Promise.all([
       fetch('/api/distribuicao_resumo', { headers: authHeaders() }).then(r => r.json()),
-      fetch('/api/distribuicao_log?limit=50', { headers: authHeaders() }).then(r => r.json()),
+      fetch('/api/distribuicao_log?month=' + mes, { headers: authHeaders() }).then(r => r.json()),
     ]);
+    DIST_CARREGADA_MES = mes;
     renderDistribuicaoLeads(resResumo, resLog);
   } catch (e) {
     $('dist-resultado').innerHTML = '<div class="warn">Falha na requisição: ' + e + '</div>';
@@ -999,7 +1025,7 @@ function renderDistribuicaoLeads(resResumo, resLog) {
     html += `<div class="warn" style="margin-top:14px">Erro no log: ${resLog.erro || resLog.error}</div>`;
   } else {
     const log = resLog.log || [];
-    html += `<div class="nb-title" style="margin-top:18px">Log de distribuição — ${log.length} de ${resLog.total} registro(s) (mais recentes primeiro)</div>
+    html += `<div class="nb-title" style="margin-top:18px">Log de distribuição — ${resLog.total} registro(s) no mês (mais recentes primeiro)</div>
       <table class="neg-tbl"><colgroup><col class="c-hora"><col class="c-id"><col><col><col class="c-status"></colgroup>
       <tr><th>Data/Hora</th><th>Deal</th><th>Colaborador</th><th>Funil</th><th>Situação</th></tr>`;
     for (const l of log) {
@@ -1077,14 +1103,8 @@ function renderAuditoria(data) {
       <div id="ev-resultado"><div class="muted">Carregando…</div></div>
     </div>`;
 
-  html += `<div class="aud-section-title">Distribuição de Leads</div>
-    <div class="panel">
-      <div id="dist-resultado"><div class="muted">Carregando…</div></div>
-    </div>`;
-
   $('root-aud').innerHTML = html;
   buscaEvolucaoHorario();
-  buscaDistribuicaoLeads();
   document.querySelectorAll('.aud-head[data-aud]').forEach(el => {
     el.addEventListener('click', () => {
       const body = document.getElementById(el.getAttribute('data-aud'));

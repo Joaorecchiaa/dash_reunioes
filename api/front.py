@@ -955,6 +955,72 @@ function desenhaGraficoEvolucao(canvasId, d) {
   });
 }
 
+async function buscaDistribuicaoLeads() {
+  $('dist-resultado').innerHTML = '<div class="muted">Buscando na planilha… (pode levar alguns segundos)</div>';
+  try {
+    const [resResumo, resLog] = await Promise.all([
+      fetch('/api/distribuicao_resumo', { headers: authHeaders() }).then(r => r.json()),
+      fetch('/api/distribuicao_log?limit=50', { headers: authHeaders() }).then(r => r.json()),
+    ]);
+    renderDistribuicaoLeads(resResumo, resLog);
+  } catch (e) {
+    $('dist-resultado').innerHTML = '<div class="warn">Falha na requisição: ' + e + '</div>';
+  }
+}
+
+function renderDistribuicaoLeads(resResumo, resLog) {
+  if (resResumo.erro || resResumo.error) {
+    $('dist-resultado').innerHTML = '<div class="warn">Erro: ' + (resResumo.erro || resResumo.error) + '</div>';
+    return;
+  }
+
+  let html = '';
+
+  // ---- resumo por colaborador ----
+  html += `<div class="nb-title">Resumo por colaborador</div>
+    <table class="aud-tbl"><tr><th class="l">Nome</th><th class="l">Cargo</th>
+      <th>Meta de reuniões</th><th>Recebidas hoje</th><th class="barcell"></th><th>Reuniões atuais hoje</th></tr>`;
+  const resumo = resResumo.resumo || [];
+  for (const r of resumo) {
+    const pct = r.qtd_reunioes ? Math.min(100, Math.round((r.recebidas_hoje / r.qtd_reunioes) * 100)) : 0;
+    html += `<tr><td class="l">${r.nome}</td><td class="l muted">${r.cargo}</td>
+      <td class="qtd">${r.qtd_reunioes}</td>
+      <td class="qtd">${r.recebidas_hoje}</td>
+      <td class="barcell"><div class="aud-bar" style="width:${pct}%"></div></td>
+      <td class="qtd">${r.reunioes_atuais_hoje}</td></tr>`;
+  }
+  if (!resumo.length) {
+    html += `<tr><td colspan="6" class="aud-empty">Sem dados no resumo.</td></tr>`;
+  }
+  html += `</table>`;
+
+  // ---- log detalhado ----
+  if (resLog.erro || resLog.error) {
+    html += `<div class="warn" style="margin-top:14px">Erro no log: ${resLog.erro || resLog.error}</div>`;
+  } else {
+    const log = resLog.log || [];
+    html += `<div class="nb-title" style="margin-top:18px">Log de distribuição — ${log.length} de ${resLog.total} registro(s) (mais recentes primeiro)</div>
+      <table class="neg-tbl"><colgroup><col class="c-hora"><col class="c-id"><col><col><col class="c-status"></colgroup>
+      <tr><th>Data/Hora</th><th>Deal</th><th>Colaborador</th><th>Funil</th><th>Situação</th></tr>`;
+    for (const l of log) {
+      const situacao = l.alterado
+        ? `<span class="status-badge st-reagendada">alterado → ${l.novo_proprietario || '—'}</span>`
+        : `<span class="muted">—</span>`;
+      html += `<tr><td class="neg-hora">${l.data_hora}</td>
+        <td><a href="${l.url}" target="_blank" rel="noopener">#${l.deal_id}</a></td>
+        <td>${l.colaborador}</td>
+        <td class="muted">${l.funil}</td>
+        <td>${situacao}</td></tr>`;
+    }
+    if (!log.length) {
+      html += `<tr><td colspan="5" class="aud-empty">Sem registros no log.</td></tr>`;
+    }
+    html += `</table>`;
+  }
+
+  $('dist-resultado').innerHTML = html;
+}
+
 function auditoriaBloco(pessoa, idx, prefixo) {
   const aid = prefixo + '-' + idx;
   const maxq = pessoa.closers.length ? pessoa.closers[0].qtd : 1;
@@ -1011,8 +1077,14 @@ function renderAuditoria(data) {
       <div id="ev-resultado"><div class="muted">Carregando…</div></div>
     </div>`;
 
+  html += `<div class="aud-section-title">Distribuição de Leads</div>
+    <div class="panel">
+      <div id="dist-resultado"><div class="muted">Carregando…</div></div>
+    </div>`;
+
   $('root-aud').innerHTML = html;
   buscaEvolucaoHorario();
+  buscaDistribuicaoLeads();
   document.querySelectorAll('.aud-head[data-aud]').forEach(el => {
     el.addEventListener('click', () => {
       const body = document.getElementById(el.getAttribute('data-aud'));

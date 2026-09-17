@@ -42,6 +42,8 @@ def env(nome, padrao=None):
 PIPEDRIVE_DOMAIN = env("PIPEDRIVE_DOMAIN")
 PIPEDRIVE_API_TOKEN = env("PIPEDRIVE_API_TOKEN")
 CSV_URL = env("COLABORADORES_CSV_URL")
+DISTRIBUICAO_RESUMO_CSV_URL = env("DISTRIBUICAO_RESUMO_CSV_URL")
+DISTRIBUICAO_LOG_CSV_URL = env("DISTRIBUICAO_LOG_CSV_URL")
 PIPEDRIVE_BASE_URL = "https://" + PIPEDRIVE_DOMAIN
 REFRESH_SECONDS = int(env("REFRESH_SECONDS", 1200))  # 20 min
 
@@ -383,6 +385,80 @@ def carrega_csv():
         })
     with _lock:
         _cache["csv"] = {"ts": time.time(), "rows": rows}
+    return rows
+
+
+def carrega_distribuicao_resumo():
+    """Le a aba de resumo de distribuicao de leads (planilha config_dashs):
+    por colaborador, quantos leads ele deveria receber (QTD_REUNIOES),
+    quantos ja recebeu hoje (RECEBIDAS_HOJE) e quantas reunioes atuais
+    ele tem hoje (REUNIOES_ATUAIS_HOJE)."""
+    with _lock:
+        c = _cache.get("dist_resumo")
+        if c and time.time() - c["ts"] < TTL:
+            return c["rows"]
+    resp = requests.get(DISTRIBUICAO_RESUMO_CSV_URL, timeout=30, allow_redirects=True,
+                        headers={"User-Agent": "Mozilla/5.0"})
+    resp.raise_for_status()
+    resp.encoding = "utf-8"
+    reader = csv.DictReader(io.StringIO(resp.text))
+
+    def _int(v):
+        v = (v or "").strip()
+        return int(v) if v.lstrip("-").isdigit() else 0
+
+    rows = []
+    for r in reader:
+        rows.append({
+            "nome": (r.get("NOME") or "").strip(),
+            "email": (r.get("EMAIL") or "").strip(),
+            "cargo": (r.get("CARGO") or "").strip(),
+            "qtd_reunioes": _int(r.get("QTD_REUNIOES")),
+            "recebidas_hoje": _int(r.get("RECEBIDAS_HOJE")),
+            "reunioes_atuais_hoje": _int(r.get("REUNIOES_ATUAIS_HOJE")),
+        })
+    with _lock:
+        _cache["dist_resumo"] = {"ts": time.time(), "rows": rows}
+    return rows
+
+
+def carrega_distribuicao_log():
+    """Le a aba de log detalhado de distribuicao de leads (planilha
+    config_dashs): cada linha e um lead distribuido a alguem, com
+    DATA_HORA exata -- inclui trocas de proprietario (ALTERADO='Sim',
+    NOVO_PROPRIETARIO preenchido). Este e o registro historico de
+    "quando o lead mudou de dono" que o Pipedrive nao guarda sozinho."""
+    with _lock:
+        c = _cache.get("dist_log")
+        if c and time.time() - c["ts"] < TTL:
+            return c["rows"]
+    resp = requests.get(DISTRIBUICAO_LOG_CSV_URL, timeout=30, allow_redirects=True,
+                        headers={"User-Agent": "Mozilla/5.0"})
+    resp.raise_for_status()
+    resp.encoding = "utf-8"
+    reader = csv.DictReader(io.StringIO(resp.text))
+
+    rows = []
+    for r in reader:
+        data_hora_str = (r.get("DATA_HORA") or "").strip()
+        dt = None
+        try:
+            dt = datetime.strptime(data_hora_str, "%d/%m/%Y, %H:%M:%S")
+        except ValueError:
+            pass
+        reunioes_dia = (r.get("REUNIOES_DO_DIA") or "").strip()
+        rows.append({
+            "data_hora": data_hora_str,
+            "dt": dt,  # objeto datetime p/ ordenar -- nao serializavel, remover antes de devolver via API
+            "deal_id": (r.get("DEAL_ID") or "").strip(),
+            "colaborador": (r.get("COLABORADOR") or "").strip(),
+            "funil": (r.get("FUNIL") or "").strip(),
+            "reunioes_do_dia": int(reunioes_dia) if reunioes_dia.isdigit() else None,
+            "alterado": (r.get("ALTERADO") or "").strip().lower() == "sim",
+            "novo_proprietario": (r.get("NOVO_PROPRIETARIO") or "").strip() or None,
+        })
+    with _lock:
+        _cache["dist_log"] = {"ts": time.time(), "rows": rows}
     return rows
 
 
@@ -1206,6 +1282,49 @@ def api_debug_deals_owner():
         return jsonify({"error": str(e)}), 500
 
 
+@app.route("/api/distribuicao_resumo")
+def api_distribuicao_resumo():
+    """Resumo por colaborador de quantos leads deveria receber, ja
+    recebeu hoje, e reunioes atuais hoje (aba de config_dashs). So
+    privilegiado -- dado operacional interno."""
+    if not eh_privilegiado(request):
+        return jsonify({"error": "acesso restrito"}), 401
+    try:
+        rows = carrega_distribuicao_resumo()
+        rows = sorted(rows, key=lambda r: r["qtd_reunioes"], reverse=True)
+        return jsonify({"resumo": rows})
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/distribuicao_log")
+def api_distribuicao_log():
+    """Log detalhado de distribuicao de leads (cada linha = um lead
+    distribuido a alguem, com timestamp exato; ALTERADO=true quando o
+    lead foi repassado depois pra outra pessoa). Mais recentes primeiro.
+    So privilegiado -- dado operacional interno."""
+    if not eh_privilegiado(request):
+        return jsonify({"error": "acesso restrito"}), 401
+    try:
+        rows = carrega_distribuicao_log()
+        rows = sorted(rows, key=lambda r: r["dt"] or datetime.min, reverse=True)
+        limit = int(request.args.get("limit", "200") or "200")
+        out = [{
+            "data_hora": r["data_hora"], "deal_id": r["deal_id"],
+            "url": (PIPEDRIVE_BASE_URL + "/deal/" + r["deal_id"]) if r["deal_id"] else None,
+            "colaborador": r["colaborador"], "funil": r["funil"],
+            "reunioes_do_dia": r["reunioes_do_dia"],
+            "alterado": r["alterado"], "novo_proprietario": r["novo_proprietario"],
+        } for r in rows[:limit]]
+        return jsonify({"log": out, "total": len(rows)})
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return jsonify({"error": str(e)}), 500
+
+
 @app.route("/api/debug_activity")
 def api_debug_activity():
     """Diagnostico: mostra o JSON cru de UMA activity, pra ver o formato
@@ -1291,7 +1410,7 @@ def index():
 
 
 # rotas de API "de verdade" que existem
-_API_ROTAS = ("/api/init", "/api/closers", "/api/dashboard", "/api/sdrs", "/api/dashboard_sdr", "/api/login", "/api/me", "/api/auditoria_sdr", "/api/evolucao_sdr", "/api/debug_activity", "/api/debug_deal", "/api/debug_deal_compare", "/api/debug_deals_owner")
+_API_ROTAS = ("/api/init", "/api/closers", "/api/dashboard", "/api/sdrs", "/api/dashboard_sdr", "/api/login", "/api/me", "/api/auditoria_sdr", "/api/evolucao_sdr", "/api/debug_activity", "/api/debug_deal", "/api/debug_deal_compare", "/api/debug_deals_owner", "/api/distribuicao_resumo", "/api/distribuicao_log")
 
 
 @app.errorhandler(404)
@@ -1311,4 +1430,3 @@ handler = app
 if __name__ == "__main__":
     threading.Thread(target=refresh_current_loop, daemon=True).start()
     app.run(debug=True, port=5000, use_reloader=False)
-    

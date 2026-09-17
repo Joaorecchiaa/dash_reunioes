@@ -1026,7 +1026,7 @@ function renderDistribuicaoLeads(resResumo, resLog) {
   } else {
     const log = resLog.log || [];
     html += `<div class="nb-title" style="margin-top:18px">Log de distribuição — ${resLog.total} registro(s) no mês (mais recentes primeiro)</div>
-      <table class="neg-tbl"><colgroup><col class="c-hora"><col class="c-id"><col><col><col class="c-status"></colgroup>
+      <table class="neg-tbl"><colgroup><col class="c-hora"><col class="c-id"><col><col><col></colgroup>
       <tr><th>Data/Hora</th><th>Deal</th><th>Colaborador</th><th>Funil</th><th>Situação</th></tr>`;
     for (const l of log) {
       const situacao = l.alterado

@@ -42,8 +42,10 @@ def env(nome, padrao=None):
 PIPEDRIVE_DOMAIN = env("PIPEDRIVE_DOMAIN")
 PIPEDRIVE_API_TOKEN = env("PIPEDRIVE_API_TOKEN")
 CSV_URL = env("COLABORADORES_CSV_URL")
-DISTRIBUICAO_RESUMO_CSV_URL = env("DISTRIBUICAO_RESUMO_CSV_URL")
-DISTRIBUICAO_LOG_CSV_URL = env("DISTRIBUICAO_LOG_CSV_URL")
+# opcionais -- se nao configuradas ainda, a secao "Distribuicao de Leads"
+# simplesmente devolve um erro tratado nessa rota, sem derrubar o resto do app
+DISTRIBUICAO_RESUMO_CSV_URL = env("DISTRIBUICAO_RESUMO_CSV_URL", "")
+DISTRIBUICAO_LOG_CSV_URL = env("DISTRIBUICAO_LOG_CSV_URL", "")
 PIPEDRIVE_BASE_URL = "https://" + PIPEDRIVE_DOMAIN
 REFRESH_SECONDS = int(env("REFRESH_SECONDS", 1200))  # 20 min
 
@@ -393,6 +395,8 @@ def carrega_distribuicao_resumo():
     por colaborador, quantos leads ele deveria receber (QTD_REUNIOES),
     quantos ja recebeu hoje (RECEBIDAS_HOJE) e quantas reunioes atuais
     ele tem hoje (REUNIOES_ATUAIS_HOJE)."""
+    if not DISTRIBUICAO_RESUMO_CSV_URL:
+        raise RuntimeError("DISTRIBUICAO_RESUMO_CSV_URL nao configurada")
     with _lock:
         c = _cache.get("dist_resumo")
         if c and time.time() - c["ts"] < TTL:
@@ -428,6 +432,8 @@ def carrega_distribuicao_log():
     DATA_HORA exata -- inclui trocas de proprietario (ALTERADO='Sim',
     NOVO_PROPRIETARIO preenchido). Este e o registro historico de
     "quando o lead mudou de dono" que o Pipedrive nao guarda sozinho."""
+    if not DISTRIBUICAO_LOG_CSV_URL:
+        raise RuntimeError("DISTRIBUICAO_LOG_CSV_URL nao configurada")
     with _lock:
         c = _cache.get("dist_log")
         if c and time.time() - c["ts"] < TTL:
@@ -1303,14 +1309,22 @@ def api_distribuicao_resumo():
 def api_distribuicao_log():
     """Log detalhado de distribuicao de leads (cada linha = um lead
     distribuido a alguem, com timestamp exato; ALTERADO=true quando o
-    lead foi repassado depois pra outra pessoa). Mais recentes primeiro.
-    So privilegiado -- dado operacional interno."""
+    lead foi repassado depois pra outra pessoa). Filtrado pelo mes de
+    referencia (?month=YYYY-MM; sem isso, usa o mes atual), mais
+    recentes primeiro. So privilegiado -- dado operacional interno."""
     if not eh_privilegiado(request):
         return jsonify({"error": "acesso restrito"}), 401
+    mes = request.args.get("month", "")
+    try:
+        year, month = map(int, mes.split("-"))
+    except Exception:
+        hoje = date.today()
+        year, month = hoje.year, hoje.month
     try:
         rows = carrega_distribuicao_log()
-        rows = sorted(rows, key=lambda r: r["dt"] or datetime.min, reverse=True)
-        limit = int(request.args.get("limit", "200") or "200")
+        rows = [r for r in rows if r["dt"] and r["dt"].year == year and r["dt"].month == month]
+        rows = sorted(rows, key=lambda r: r["dt"], reverse=True)
+        limit = int(request.args.get("limit", "5000") or "5000")
         out = [{
             "data_hora": r["data_hora"], "deal_id": r["deal_id"],
             "url": (PIPEDRIVE_BASE_URL + "/deal/" + r["deal_id"]) if r["deal_id"] else None,
@@ -1318,7 +1332,7 @@ def api_distribuicao_log():
             "reunioes_do_dia": r["reunioes_do_dia"],
             "alterado": r["alterado"], "novo_proprietario": r["novo_proprietario"],
         } for r in rows[:limit]]
-        return jsonify({"log": out, "total": len(rows)})
+        return jsonify({"log": out, "total": len(rows), "year": year, "month": month})
     except Exception as e:
         import traceback
         traceback.print_exc()

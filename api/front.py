@@ -971,9 +971,13 @@ function carregaDistribuicaoAba() {
     </div>
     <div id="dist-resultado"><div class="muted">Carregando…</div></div>`;
     $('root-dist').innerHTML = html;
+    $('dist-mes').addEventListener('change', () => buscaDistribuicaoLeads(true));
+  }
+  // repovoa as opcoes sempre que ainda estiverem vazias -- evita ficar vazio
+  // pra sempre se essa aba foi aberta antes de MESES_DISPONIVEIS carregar
+  if (MESES_DISPONIVEIS.length && $('dist-mes').options.length === 0) {
     opt($('dist-mes'), MESES_DISPONIVEIS, x=>x.value, x=>x.label);
     $('dist-mes').value = CURRENT_MONTH;
-    $('dist-mes').addEventListener('change', () => buscaDistribuicaoLeads(true));
   }
   buscaDistribuicaoLeads();
 }
@@ -1025,7 +1029,9 @@ function renderDistribuicaoLeads(resResumo, resLog) {
     html += `<div class="warn" style="margin-top:14px">Erro no log: ${resLog.erro || resLog.error}</div>`;
   } else {
     const log = resLog.log || [];
-    html += `<div class="nb-title" style="margin-top:18px">Log de distribuição — ${resLog.total} registro(s) no mês (mais recentes primeiro)</div>
+    html += `<div class="nb-title" id="dist-log-toggle" style="margin-top:18px; cursor:pointer">
+      <span class="aud-arrow" id="dist-log-arw">▸</span> Log de distribuição — ${resLog.total} registro(s) no mês (mais recentes primeiro)</div>
+      <div id="dist-log-body" style="display:none">
       <table class="neg-tbl"><colgroup><col class="c-hora"><col class="c-id"><col><col><col></colgroup>
       <tr><th>Data/Hora</th><th>Deal</th><th>Colaborador</th><th>Funil</th><th>Situação</th></tr>`;
     for (const l of log) {
@@ -1041,10 +1047,21 @@ function renderDistribuicaoLeads(resResumo, resLog) {
     if (!log.length) {
       html += `<tr><td colspan="5" class="aud-empty">Sem registros no log.</td></tr>`;
     }
-    html += `</table>`;
+    html += `</table></div>`;
   }
 
   $('dist-resultado').innerHTML = html;
+
+  const togg = document.getElementById('dist-log-toggle');
+  if (togg) {
+    togg.addEventListener('click', () => {
+      const body = document.getElementById('dist-log-body');
+      const arw = document.getElementById('dist-log-arw');
+      const aberto = body.style.display !== 'none';
+      body.style.display = aberto ? 'none' : '';
+      arw.textContent = aberto ? '▸' : '▾';
+    });
+  }
 }
 
 function auditoriaBloco(pessoa, idx, prefixo) {

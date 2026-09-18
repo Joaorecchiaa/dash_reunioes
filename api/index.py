@@ -1343,14 +1343,41 @@ def api_debug_deals_owner():
 @app.route("/api/distribuicao_resumo")
 def api_distribuicao_resumo():
     """Resumo por colaborador de quantos leads deveria receber, ja
-    recebeu hoje, e reunioes atuais hoje (aba de config_dashs). So
-    privilegiado -- dado operacional interno."""
+    recebeu hoje, reunioes atuais hoje, e quantos negocios voltaram pra
+    ele HOJE (redistribuicao -- ALTERADO=Sim no log, mesmo escopo do
+    resto do resumo). So privilegiado -- dado operacional interno."""
     if not eh_privilegiado(request):
         return jsonify({"error": "acesso restrito"}), 401
     try:
         rows = carrega_distribuicao_resumo()
+
+        # quantos negocios voltaram pra cada colaborador HOJE -- cruza
+        # com o log de distribuicao (ALTERADO=Sim, DATA_HORA de hoje)
+        hoje = date.today()
+        voltaram_por_pessoa = {}
+        try:
+            log = carrega_distribuicao_log()
+            for r in log:
+                if r["alterado"] and r["dt"] and r["dt"].date() == hoje:
+                    nome = r["novo_proprietario"]
+                    if nome:
+                        voltaram_por_pessoa[nome] = voltaram_por_pessoa.get(nome, 0) + 1
+        except Exception:
+            pass  # log ainda nao configurado -- so fica sem essa coluna preenchida
+
+        for r in rows:
+            r["voltaram_hoje"] = voltaram_por_pessoa.get(r["nome"], 0)
+
         rows = sorted(rows, key=lambda r: r["qtd_reunioes"], reverse=True)
-        return jsonify({"resumo": rows})
+
+        total = {
+            "qtd_reunioes": sum(r["qtd_reunioes"] for r in rows),
+            "recebidas_hoje": sum(r["recebidas_hoje"] for r in rows),
+            "reunioes_atuais_hoje": sum(r["reunioes_atuais_hoje"] for r in rows),
+            "voltaram_hoje": sum(r["voltaram_hoje"] for r in rows),
+        }
+
+        return jsonify({"resumo": rows, "total": total})
     except Exception as e:
         import traceback
         traceback.print_exc()

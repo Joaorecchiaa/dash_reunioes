@@ -1009,7 +1009,8 @@ function renderDistribuicaoLeads(resResumo, resLog) {
   // ---- resumo por colaborador ----
   html += `<div class="nb-title">Resumo por colaborador</div>
     <table class="aud-tbl"><tr><th class="l">Nome</th><th class="l">Cargo</th>
-      <th>Meta de reuniões</th><th>Recebidas hoje</th><th class="barcell"></th><th>Reuniões atuais hoje</th></tr>`;
+      <th>Meta de reuniões</th><th>Recebidas hoje</th><th class="barcell"></th>
+      <th>Reuniões atuais hoje</th><th>Voltaram hoje</th></tr>`;
   const resumo = resResumo.resumo || [];
   for (const r of resumo) {
     const pct = r.qtd_reunioes ? Math.min(100, Math.round((r.recebidas_hoje / r.qtd_reunioes) * 100)) : 0;
@@ -1017,10 +1018,20 @@ function renderDistribuicaoLeads(resResumo, resLog) {
       <td class="qtd">${r.qtd_reunioes}</td>
       <td class="qtd">${r.recebidas_hoje}</td>
       <td class="barcell"><div class="aud-bar" style="width:${pct}%"></div></td>
-      <td class="qtd">${r.reunioes_atuais_hoje}</td></tr>`;
+      <td class="qtd">${r.reunioes_atuais_hoje}</td>
+      <td class="qtd">${r.voltaram_hoje || 0}</td></tr>`;
   }
   if (!resumo.length) {
-    html += `<tr><td colspan="6" class="aud-empty">Sem dados no resumo.</td></tr>`;
+    html += `<tr><td colspan="7" class="aud-empty">Sem dados no resumo.</td></tr>`;
+  }
+  const t = resResumo.total || {};
+  if (resumo.length) {
+    html += `<tr class="total"><td class="l">TOTAL</td><td></td>
+      <td class="qtd">${t.qtd_reunioes || 0}</td>
+      <td class="qtd">${t.recebidas_hoje || 0}</td>
+      <td></td>
+      <td class="qtd">${t.reunioes_atuais_hoje || 0}</td>
+      <td class="qtd">${t.voltaram_hoje || 0}</td></tr>`;
   }
   html += `</table>`;
 

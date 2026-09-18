@@ -281,6 +281,58 @@ def reuniao_vencida(due_date_str, due_time_str):
     return due_dt < datetime.now()
 
 
+def status_simples_atividade(a):
+    """Classifica uma atividade (meeting/no_show/reagendamento) em um dos
+    status Feita/No Show/Reagendada/Planejada/Vencida -- versao simples
+    sem o conceito de 'Validada' (usado no cruzamento do log de
+    distribuicao de leads, que nao depende de negocio/proprietario)."""
+    tipo = a.get("type")
+    if tipo == "reagendamento":
+        return "Reagendada"
+    if tipo == "no_show":
+        return "No Show"
+    if tipo == "meeting" and a.get("done"):
+        return "Feita"
+    if tipo == "meeting":
+        return "Vencida" if reuniao_vencida(a.get("due_date"), a.get("due_time")) else "Planejada"
+    return "—"
+
+
+def status_reuniao_mais_recente_do_deal(deal_id):
+    """Desfecho mais ATUAL da reuniao de um negocio: busca todas as
+    atividades meeting/no_show/reagendamento vinculadas a ele (qualquer
+    Responsavel, inclusive apos reatribuicoes), pega a mais recente (por
+    due_date+due_time) e devolve o status dela. Cache curto por deal_id
+    -- cada consulta ao log de distribuicao pode bater varias vezes na
+    API, entao vale cachear mesmo por poucos minutos."""
+    with _lock:
+        c = _cache["acts"].get(("status_deal", deal_id))
+        if c and time.time() - c["ts"] < TTL:
+            return c["status"]
+    try:
+        acts = client.get_activities_by_deal(deal_id)
+    except Exception:
+        acts = []
+    mais_recente, mais_recente_dt = None, None
+    for a in acts:
+        due = a.get("due_date")
+        if not due:
+            continue
+        hora = (a.get("due_time") or "00:00:00").strip()[:8]
+        if len(hora) < 8:
+            hora = "00:00:00"
+        try:
+            dt = datetime.strptime(due + " " + hora, "%Y-%m-%d %H:%M:%S")
+        except ValueError:
+            continue
+        if mais_recente_dt is None or dt > mais_recente_dt:
+            mais_recente_dt, mais_recente = dt, a
+    status = status_simples_atividade(mais_recente) if mais_recente else "—"
+    with _lock:
+        _cache["acts"][("status_deal", deal_id)] = {"ts": time.time(), "status": status}
+    return status
+
+
 def atividade_e_validada(a, deal_info, proprietarios_ids):
     """Para a coluna 'Validadas' na tela de Reunioes: feita (type=meeting,
     done=true), o negocio vinculado tem PROPRIETARIO valido (closer do mes
@@ -1325,13 +1377,27 @@ def api_distribuicao_log():
         rows = [r for r in rows if r["dt"] and r["dt"].year == year and r["dt"].month == month]
         rows = sorted(rows, key=lambda r: r["dt"], reverse=True)
         limit = int(request.args.get("limit", "5000") or "5000")
+        rows = rows[:limit]
+
+        # status da reuniao (Feita/No Show/Reagendada/...) -- cruza com o
+        # Pipedrive, dedupe por deal_id pra nao bater a API 2x pro mesmo negocio
+        status_por_deal = {}
+        for r in rows:
+            did = r["deal_id"]
+            if did and did not in status_por_deal:
+                try:
+                    status_por_deal[did] = status_reuniao_mais_recente_do_deal(int(did))
+                except (ValueError, TypeError):
+                    status_por_deal[did] = "—"
+
         out = [{
             "data_hora": r["data_hora"], "deal_id": r["deal_id"],
             "url": (PIPEDRIVE_BASE_URL + "/deal/" + r["deal_id"]) if r["deal_id"] else None,
             "colaborador": r["colaborador"], "funil": r["funil"],
             "reunioes_do_dia": r["reunioes_do_dia"],
             "alterado": r["alterado"], "novo_proprietario": r["novo_proprietario"],
-        } for r in rows[:limit]]
+            "status_reuniao": status_por_deal.get(r["deal_id"], "—"),
+        } for r in rows]
         return jsonify({"log": out, "total": len(rows), "year": year, "month": month})
     except Exception as e:
         import traceback

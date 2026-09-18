@@ -10,7 +10,7 @@ HTML = r"""<!DOCTYPE html>
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>REUNIÕES - CLOSERS</title>
+<title>REUNIÕES</title>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.0/chart.umd.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/chartjs-plugin-datalabels/2.2.0/chartjs-plugin-datalabels.min.js"></script>
 <style>
@@ -255,7 +255,7 @@ HTML = r"""<!DOCTYPE html>
     <div class="hdr-top">
       <div>
         <div class="brand">BOARD ACADEMY</div>
-        <h1>REUNIÕES <span class="sep">-</span> CLOSERS</h1>
+        <h1>REUNIÕES</h1>
       </div>
       <div class="authbar">
         <span class="who" id="authWho"></span>
@@ -1032,8 +1032,8 @@ function renderDistribuicaoLeads(resResumo, resLog) {
     html += `<div class="nb-title" id="dist-log-toggle" style="margin-top:18px; cursor:pointer">
       <span class="aud-arrow" id="dist-log-arw">▸</span> Log de distribuição — ${resLog.total} registro(s) no mês (mais recentes primeiro)</div>
       <div id="dist-log-body" style="display:none">
-      <table class="neg-tbl"><colgroup><col class="c-hora"><col class="c-id"><col><col><col></colgroup>
-      <tr><th>Data/Hora</th><th>Deal</th><th>Colaborador</th><th>Funil</th><th>Situação</th></tr>`;
+      <table class="neg-tbl"><colgroup><col class="c-hora"><col class="c-id"><col><col><col><col></colgroup>
+      <tr><th>Data/Hora</th><th>Deal</th><th>Colaborador</th><th>Funil</th><th>Status</th><th>Situação</th></tr>`;
     for (const l of log) {
       const situacao = l.alterado
         ? `<span class="status-badge st-reagendada">alterado → ${l.novo_proprietario || '—'}</span>`
@@ -1042,10 +1042,11 @@ function renderDistribuicaoLeads(resResumo, resLog) {
         <td><a href="${l.url}" target="_blank" rel="noopener">#${l.deal_id}</a></td>
         <td>${l.colaborador}</td>
         <td class="muted">${l.funil}</td>
+        <td>${statusBadge(l.status_reuniao)}</td>
         <td>${situacao}</td></tr>`;
     }
     if (!log.length) {
-      html += `<tr><td colspan="5" class="aud-empty">Sem registros no log.</td></tr>`;
+      html += `<tr><td colspan="6" class="aud-empty">Sem registros no log.</td></tr>`;
     }
     html += `</table></div>`;
   }

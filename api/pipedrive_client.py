@@ -121,3 +121,24 @@ class PipedriveClient:
             if not cursor:
                 break
         return deals
+
+    def get_activities_by_deal(self, deal_id):
+        """Todas as atividades (meeting/no_show/reagendamento) vinculadas
+        a um negocio especifico -- usado pra achar o desfecho mais recente
+        da reuniao daquele negocio, independente de quem e o Responsavel
+        atual (SDR/closer que reagendar/receber depois)."""
+        tipos = {"meeting", "no_show", "reagendamento"}
+        activities = []
+        cursor = None
+        while True:
+            params = {"deal_id": deal_id, "limit": 500}
+            if cursor:
+                params["cursor"] = cursor
+            data = self._get(self.base_v2, "/activities", params)
+            for a in data.get("data") or []:
+                if a.get("type") in tipos:
+                    activities.append(a)
+            cursor = (data.get("additional_data") or {}).get("next_cursor")
+            if not cursor:
+                break
+        return activities

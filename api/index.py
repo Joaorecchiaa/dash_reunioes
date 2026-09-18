@@ -1352,7 +1352,11 @@ def api_distribuicao_resumo():
         rows = carrega_distribuicao_resumo()
 
         # quantos negocios voltaram pra cada colaborador HOJE -- cruza
-        # com o log de distribuicao (ALTERADO=Sim, DATA_HORA de hoje)
+        # com o log de distribuicao (ALTERADO=Sim, DATA_HORA de hoje).
+        # compara por nome NORMALIZADO (sem acento/maiusculas) -- as duas
+        # abas da planilha (resumo e log) podem grafar o mesmo nome de
+        # forma diferente (ex.: "Caique Klein" vs "Caíque Klein"), o que
+        # fazia a contagem falhar silenciosamente pra quem tinha acento.
         hoje = date.today()
         voltaram_por_pessoa = {}
         try:
@@ -1361,12 +1365,13 @@ def api_distribuicao_resumo():
                 if r["alterado"] and r["dt"] and r["dt"].date() == hoje:
                     nome = r["novo_proprietario"]
                     if nome:
-                        voltaram_por_pessoa[nome] = voltaram_por_pessoa.get(nome, 0) + 1
+                        chave = norm(nome)
+                        voltaram_por_pessoa[chave] = voltaram_por_pessoa.get(chave, 0) + 1
         except Exception:
             pass  # log ainda nao configurado -- so fica sem essa coluna preenchida
 
         for r in rows:
-            r["voltaram_hoje"] = voltaram_por_pessoa.get(r["nome"], 0)
+            r["voltaram_hoje"] = voltaram_por_pessoa.get(norm(r["nome"]), 0)
 
         rows = sorted(rows, key=lambda r: r["qtd_reunioes"], reverse=True)
 

@@ -1357,12 +1357,27 @@ def api_distribuicao_resumo():
         # abas da planilha (resumo e log) podem grafar o mesmo nome de
         # forma diferente (ex.: "Caique Klein" vs "Caíque Klein"), o que
         # fazia a contagem falhar silenciosamente pra quem tinha acento.
+        #
+        # o MESMO deal pode aparecer varias vezes seguidas no log (tentativas
+        # de distribuicao ate fechar com alguem, confirmado com o usuario) --
+        # entao so a ULTIMA linha (maior DATA_HORA) de cada deal_id no dia
+        # representa o resultado final; as anteriores sao so tentativas e
+        # NAO devem contar.
         hoje = date.today()
         voltaram_por_pessoa = {}
         try:
             log = carrega_distribuicao_log()
+            ultima_do_dia_por_deal = {}  # deal_id -> linha com maior dt, dentre as de hoje
             for r in log:
-                if r["alterado"] and r["dt"] and r["dt"].date() == hoje:
+                if not (r["dt"] and r["dt"].date() == hoje):
+                    continue
+                did = r["deal_id"]
+                atual = ultima_do_dia_por_deal.get(did)
+                if atual is None or r["dt"] > atual["dt"]:
+                    ultima_do_dia_por_deal[did] = r
+
+            for r in ultima_do_dia_por_deal.values():
+                if r["alterado"]:
                     nome = r["novo_proprietario"]
                     if nome:
                         chave = norm(nome)

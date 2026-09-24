@@ -514,6 +514,7 @@ def carrega_distribuicao_log():
             "reunioes_do_dia": int(reunioes_dia) if reunioes_dia.isdigit() else None,
             "alterado": (r.get("ALTERADO") or "").strip().lower() == "sim",
             "novo_proprietario": (r.get("NOVO_PROPRIETARIO") or "").strip() or None,
+            "agendada_outro_dia": (r.get("AGENDADA_OUTRO_DIA") or "").strip().lower() == "sim",
         })
     with _lock:
         _cache["dist_log"] = {"ts": time.time(), "rows": rows}
@@ -1443,6 +1444,7 @@ def api_distribuicao_log():
             "colaborador": r["colaborador"], "funil": r["funil"],
             "reunioes_do_dia": r["reunioes_do_dia"],
             "alterado": r["alterado"], "novo_proprietario": r["novo_proprietario"],
+            "agendada_outro_dia": r["agendada_outro_dia"],
             "status_reuniao": status_por_deal.get(r["deal_id"], "—"),
         } for r in rows]
         return jsonify({"log": out, "total": len(rows), "year": year, "month": month})
@@ -1557,4 +1559,3 @@ handler = app
 if __name__ == "__main__":
     threading.Thread(target=refresh_current_loop, daemon=True).start()
     app.run(debug=True, port=5000, use_reloader=False)
-    

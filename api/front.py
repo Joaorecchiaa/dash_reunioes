@@ -1043,21 +1043,25 @@ function renderDistribuicaoLeads(resResumo, resLog) {
     html += `<div class="nb-title" id="dist-log-toggle" style="margin-top:18px; cursor:pointer">
       <span class="aud-arrow" id="dist-log-arw">▸</span> Log de distribuição — ${resLog.total} registro(s) no mês (mais recentes primeiro)</div>
       <div id="dist-log-body" style="display:none">
-      <table class="neg-tbl"><colgroup><col class="c-hora"><col class="c-id"><col><col><col><col></colgroup>
-      <tr><th>Data/Hora</th><th>Deal</th><th>Colaborador</th><th>Funil</th><th>Status</th><th>Situação</th></tr>`;
+      <table class="neg-tbl"><colgroup><col class="c-hora"><col class="c-id"><col><col><col><col><col></colgroup>
+      <tr><th>Data/Hora</th><th>Deal</th><th>Colaborador</th><th>Funil</th><th>Status</th><th>Situação</th><th>Outro dia</th></tr>`;
     for (const l of log) {
       const situacao = l.alterado
         ? `<span class="status-badge st-reagendada">alterado → ${l.novo_proprietario || '—'}</span>`
+        : `<span class="muted">—</span>`;
+      const outroDia = l.agendada_outro_dia
+        ? `<span class="status-badge st-reagendada">Sim</span>`
         : `<span class="muted">—</span>`;
       html += `<tr><td class="neg-hora">${l.data_hora}</td>
         <td><a href="${l.url}" target="_blank" rel="noopener">#${l.deal_id}</a></td>
         <td>${l.colaborador}</td>
         <td class="muted">${l.funil}</td>
         <td>${statusBadge(l.status_reuniao)}</td>
-        <td>${situacao}</td></tr>`;
+        <td>${situacao}</td>
+        <td>${outroDia}</td></tr>`;
     }
     if (!log.length) {
-      html += `<tr><td colspan="6" class="aud-empty">Sem registros no log.</td></tr>`;
+      html += `<tr><td colspan="7" class="aud-empty">Sem registros no log.</td></tr>`;
     }
     html += `</table></div>`;
   }

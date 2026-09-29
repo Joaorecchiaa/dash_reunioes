@@ -46,6 +46,9 @@ CSV_URL = env("COLABORADORES_CSV_URL")
 # simplesmente devolve um erro tratado nessa rota, sem derrubar o resto do app
 DISTRIBUICAO_RESUMO_CSV_URL = env("DISTRIBUICAO_RESUMO_CSV_URL", "")
 DISTRIBUICAO_LOG_CSV_URL = env("DISTRIBUICAO_LOG_CSV_URL", "")
+# aba "escala_comercial" da planilha config_dashs -- Entrada/Saida de cada SDR;
+# usada na aba "Taxas %" pra saber se uma reuniao foi marcada apos o turno
+ESCALA_COMERCIAL_CSV_URL = env("ESCALA_COMERCIAL_CSV_URL", "")
 PIPEDRIVE_BASE_URL = "https://" + PIPEDRIVE_DOMAIN
 REFRESH_SECONDS = int(env("REFRESH_SECONDS", 1200))  # 20 min
 
@@ -151,6 +154,11 @@ def novo_contador(com_validada=False):
 
 # campo customizado "Reuniao Validada?" no Pipedrive (id fixo do campo)
 CAMPO_VALIDADA_ID = "7299bf170c5deab9b4fd8c2275f55faf51984dea"
+
+# campo customizado "Data da ultima aplicacao" no NEGOCIO -- usado na aba
+# "Taxas %" pra filtrar "leads do mes" (inclui reaplicacoes, nao so negocios
+# criados no mes -- confirmado com o usuario). Formato: texto "DD/MM/AAAA HH:MM:SS"
+CAMPO_DATA_ULTIMA_APLICACAO_ID = "23de049432e523993f69ecd456a3f755c0f07f3d"
 
 
 def _campo_bruto(a, campo_id):
@@ -519,6 +527,78 @@ def carrega_distribuicao_log():
     with _lock:
         _cache["dist_log"] = {"ts": time.time(), "rows": rows}
     return rows
+
+
+def carrega_escala_comercial():
+    """Le a aba "escala_comercial" da planilha config_dashs: Entrada/Saida
+    de turno de cada pessoa comercial. Usada na aba "Taxas %" pra saber se
+    uma reuniao foi marcada DEPOIS do fim do turno de quem marcou.
+    Nomes de coluna tolerantes a grafia/acento (ex.: "Saida" ou "Saída")."""
+    if not ESCALA_COMERCIAL_CSV_URL:
+        raise RuntimeError("ESCALA_COMERCIAL_CSV_URL nao configurada")
+    with _lock:
+        c = _cache.get("escala")
+        if c and time.time() - c["ts"] < TTL:
+            return c["rows"]
+    resp = requests.get(ESCALA_COMERCIAL_CSV_URL, timeout=30, allow_redirects=True,
+                        headers={"User-Agent": "Mozilla/5.0"})
+    resp.raise_for_status()
+    resp.encoding = "utf-8"
+    reader = csv.DictReader(io.StringIO(resp.text))
+
+    def achar(*nomes):
+        for col in nomes:
+            alvo = norm(col)
+            for h in reader.fieldnames or []:
+                if norm(h) == alvo:
+                    return h
+        return None
+
+    col_nome = achar("Nome", "NOME")
+    col_entrada = achar("Entrada", "ENTRADA")
+    col_saida = achar("Saida", "Saída", "SAIDA", "SAÍDA")
+    col_cargo = achar("Cargo", "CARGO")
+    col_time = achar("Subarea", "Time", "Equipe", "SUBAREA", "TIME")
+    faltando = [n for n, c in [("Nome", col_nome), ("Saida", col_saida)] if not c]
+    if faltando:
+        print("[escala_comercial] Colunas nao encontradas:", faltando, "| Cabecalhos:", reader.fieldnames)
+
+    rows = []
+    for r in reader:
+        nome = (r.get(col_nome) or "").strip() if col_nome else ""
+        if not nome:
+            continue
+        rows.append({
+            "nome": nome,
+            "entrada": (r.get(col_entrada) or "").strip() if col_entrada else "",
+            "saida": (r.get(col_saida) or "").strip() if col_saida else "",
+            "cargo": norm(r.get(col_cargo)) if col_cargo else "",
+            "time": (r.get(col_time) or "").strip().upper() if col_time else "",
+        })
+    with _lock:
+        _cache["escala"] = {"ts": time.time(), "rows": rows}
+    return rows
+
+
+def escala_saida_por_nome():
+    """{nome_normalizado: 'HH:MM:SS'} -- horario de fim de turno de cada
+    pessoa, tirado da escala comercial."""
+    out = {}
+    for r in carrega_escala_comercial():
+        if r["saida"]:
+            out[norm(r["nome"])] = r["saida"]
+    return out
+
+
+def _parse_hora_hhmmss(texto):
+    """Converte 'HH:MM' ou 'HH:MM:SS' num datetime.time. None se invalido/vazio."""
+    texto = (texto or "").strip()
+    for fmt in ("%H:%M:%S", "%H:%M"):
+        try:
+            return datetime.strptime(texto[:8], fmt).time()
+        except ValueError:
+            continue
+    return None
 
 
 def closers_do_mes(year, month):
@@ -968,6 +1048,104 @@ def info_dos_deals(deal_ids):
         return {d: _cache["deals"].get(d) for d in deal_ids}
 
 
+def reunioes_fora_da_escala(year, month):
+    """Aba "Taxas %": pra cada SDR do mes, quantas reunioes (type=meeting)
+    ela mesma CRIOU (creator_user_id = a propria, o mesmo criterio de
+    "criadas pelo proprio" usado na Distribuicao por Closer) cujo NEGOCIO
+    tem a "Data da ultima aplicacao" dentro do mes/ano pedido -- esse campo
+    inclui reaplicacoes, nao so negocios criados no mes (confirmado com o
+    usuario) -- e, dessas, quantas foram CRIADAS depois do horario de Saida
+    dela na escala comercial.
+
+    Comparacao: hora de criacao da ATIVIDADE (add_time, ajustado pro fuso
+    de Brasilia) vs. o campo Saida (fim de turno) da planilha
+    escala_comercial. Reaproveita acts_do_owner (mesma cache/janela ja
+    usada em outras metricas, ex. auditoria) -- o Pipedrive nao tem filtro
+    por criador, entao filtra-se aqui pelo creator_user_id de cada
+    atividade."""
+    users, _ = carrega_meta()
+    try:
+        saida_por_nome = escala_saida_por_nome()
+        escala_ok = True
+    except RuntimeError:
+        saida_por_nome = {}
+        escala_ok = False
+
+    sdrs = sdrs_do_mes(year, month)
+    mes_str = f"{month:02d}/{year}"
+    resultado = []
+
+    for nome_sdr, time_sdr in sorted(sdrs.items()):
+        sdr_id = users.get(nome_sdr.strip().lower())
+        if not sdr_id:
+            resultado.append({
+                "nome": nome_sdr, "time": time_sdr, "saida": None,
+                "total_mes": 0, "fora_da_escala": 0, "pct_fora_escala": 0.0,
+                "exemplos": [], "erro": "SDR nao encontrada no Pipedrive",
+            })
+            continue
+
+        saida_str = saida_por_nome.get(norm(nome_sdr))
+        saida_time = _parse_hora_hhmmss(saida_str) if saida_str else None
+
+        acts = [a for a in acts_do_owner(sdr_id, year, month)
+                if a.get("type") == "meeting" and a.get("creator_user_id") == sdr_id]
+        deal_ids = [a.get("deal_id") for a in acts if a.get("deal_id")]
+        deals_info = info_dos_deals(deal_ids) if deal_ids else {}
+
+        total_mes = 0
+        fora = 0
+        exemplos = []
+        for a in acts:
+            deal_id = a.get("deal_id")
+            deal = deals_info.get(deal_id) or {}
+            cf = (deal.get("custom_fields") or {})
+            data_aplicacao = cf.get(CAMPO_DATA_ULTIMA_APLICACAO_ID)
+            if not data_aplicacao or mes_str not in str(data_aplicacao):
+                continue  # negocio nao e "lead do mes" pela ultima aplicacao
+
+            criada_em = _parse_dt_pipedrive(a.get("add_time"))
+            if not criada_em:
+                continue
+            criada_em_br = criada_em + timedelta(hours=AJUSTE_FUSO_HORAS)
+
+            total_mes += 1
+            esta_fora = bool(saida_time) and criada_em_br.time() > saida_time
+            if esta_fora:
+                fora += 1
+                if len(exemplos) < 15:
+                    exemplos.append({
+                        "deal_id": deal_id,
+                        "titulo": deal.get("title") or ("Negocio " + str(deal_id)),
+                        "data_hora_criacao": criada_em_br.strftime("%d/%m/%Y %H:%M"),
+                        "url": PIPEDRIVE_BASE_URL + "/deal/" + str(deal_id),
+                    })
+
+        resultado.append({
+            "nome": nome_sdr,
+            "time": time_sdr,
+            "saida": saida_str,
+            "total_mes": total_mes,
+            "fora_da_escala": fora,
+            "pct_fora_escala": round((fora / total_mes * 100), 1) if total_mes else 0.0,
+            "exemplos": exemplos,
+        })
+
+    total_geral = sum(r["total_mes"] for r in resultado)
+    fora_geral = sum(r["fora_da_escala"] for r in resultado)
+    return {
+        "ano": year, "mes": month,
+        "month_label": f"{MESES_NOME[month-1]}/{year}",
+        "escala_configurada": escala_ok,
+        "sdrs": resultado,
+        "total": {
+            "total_mes": total_geral,
+            "fora_da_escala": fora_geral,
+            "pct_fora_escala": round((fora_geral / total_geral * 100), 1) if total_geral else 0.0,
+        },
+    }
+
+
 # ---------- construcao ----------
 
 # nomes de "criador" cujas atividades devem ser IGNORADAS na contagem
@@ -1321,6 +1499,25 @@ def api_evolucao_sdr():
         return jsonify({"error": str(e)}), 500
 
 
+@app.route("/api/taxas_escala")
+def api_taxas_escala():
+    # reunioes fora do horario de escala -- dado operacional interno, so privilegiado
+    if not eh_privilegiado(request):
+        return jsonify({"error": "acesso restrito"}), 401
+    mes = request.args.get("month", "")
+    try:
+        year, month = map(int, mes.split("-"))
+    except Exception:
+        hoje = date.today()
+        year, month = hoje.year, hoje.month
+    try:
+        return jsonify(reunioes_fora_da_escala(year, month))
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return jsonify({"error": str(e)}), 500
+
+
 @app.route("/api/debug_deals_owner")
 def api_debug_deals_owner():
     """Diagnostico: mostra os negocios crus (add_time/update_time/status)
@@ -1539,7 +1736,7 @@ def index():
 
 
 # rotas de API "de verdade" que existem
-_API_ROTAS = ("/api/init", "/api/closers", "/api/dashboard", "/api/sdrs", "/api/dashboard_sdr", "/api/login", "/api/me", "/api/auditoria_sdr", "/api/evolucao_sdr", "/api/debug_activity", "/api/debug_deal", "/api/debug_deal_compare", "/api/debug_deals_owner", "/api/distribuicao_resumo", "/api/distribuicao_log")
+_API_ROTAS = ("/api/init", "/api/closers", "/api/dashboard", "/api/sdrs", "/api/dashboard_sdr", "/api/login", "/api/me", "/api/auditoria_sdr", "/api/evolucao_sdr", "/api/debug_activity", "/api/debug_deal", "/api/debug_deal_compare", "/api/debug_deals_owner", "/api/distribuicao_resumo", "/api/distribuicao_log", "/api/taxas_escala")
 
 
 @app.errorhandler(404)

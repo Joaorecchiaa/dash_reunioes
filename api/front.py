@@ -278,11 +278,13 @@ HTML = r"""<!DOCTYPE html>
       <button class="tab" id="tab-sdrs" data-tab="sdrs">Reuniões - SDRs</button>
       <button class="tab" id="tab-auditoria" data-tab="auditoria">Auditoria SDR</button>
       <button class="tab" id="tab-distribuicao" data-tab="distribuicao">Distribuição</button>
+      <button class="tab" id="tab-taxas" data-tab="taxas">Taxas %</button>
     </div>
     <div id="root"><div class="muted">Carregando filtros…</div></div>
     <div id="root-sdr" style="display:none"><div class="muted">Carregando filtros…</div></div>
     <div id="root-aud" style="display:none"><div class="muted">Carregando auditoria…</div></div>
     <div id="root-dist" style="display:none"><div class="muted">Carregando distribuição…</div></div>
+    <div id="root-taxas" style="display:none"><div class="muted">Carregando taxas…</div></div>
   </div>
 
 <script>
@@ -799,12 +801,14 @@ function atualizaAuthUI() {
     $('authWho').textContent = USUARIO ? ('● ' + USUARIO) : '● conectado';
     $('btnAuth').textContent = 'Sair';
     $('tab-auditoria').style.display = '';
+    $('tab-taxas').style.display = '';
   } else {
     $('authWho').textContent = '';
     $('btnAuth').textContent = 'Entrar';
     $('tab-auditoria').style.display = 'none';
-    // se estava na aba auditoria e deslogou, volta pra reunioes
-    if (ABA === 'auditoria') trocaAba('reunioes');
+    $('tab-taxas').style.display = 'none';
+    // se estava numa aba privilegiada e deslogou, volta pra reunioes
+    if (ABA === 'auditoria' || ABA === 'taxas') trocaAba('reunioes');
   }
 }
 
@@ -821,16 +825,18 @@ let MESES_DISPONIVEIS = [];
 let DIST_CARREGADA_MES = null;
 
 async function trocaAba(nome) {
-  if ((nome === 'auditoria' || nome === 'distribuicao') && !ehPriv()) return;
+  if ((nome === 'auditoria' || nome === 'distribuicao' || nome === 'taxas') && !ehPriv()) return;
   ABA = nome;
   $('tab-reunioes').classList.toggle('active', nome === 'reunioes');
   $('tab-sdrs').classList.toggle('active', nome === 'sdrs');
   $('tab-auditoria').classList.toggle('active', nome === 'auditoria');
   $('tab-distribuicao').classList.toggle('active', nome === 'distribuicao');
+  $('tab-taxas').classList.toggle('active', nome === 'taxas');
   $('root').style.display = (nome === 'reunioes') ? '' : 'none';
   $('root-sdr').style.display = (nome === 'sdrs') ? '' : 'none';
   $('root-aud').style.display = (nome === 'auditoria') ? '' : 'none';
   $('root-dist').style.display = (nome === 'distribuicao') ? '' : 'none';
+  $('root-taxas').style.display = (nome === 'taxas') ? '' : 'none';
 
   if (nome === 'sdrs' && MODO_PESSOA !== 'sdr') {
     MODO_PESSOA = 'sdr';
@@ -845,12 +851,14 @@ async function trocaAba(nome) {
   }
   if (nome === 'auditoria') carregaAuditoria();
   if (nome === 'distribuicao') carregaDistribuicaoAba();
+  if (nome === 'taxas') carregaTaxasAba();
 }
 
 $('tab-reunioes').addEventListener('click', () => trocaAba('reunioes'));
 $('tab-sdrs').addEventListener('click', () => trocaAba('sdrs'));
 $('tab-auditoria').addEventListener('click', () => trocaAba('auditoria'));
 $('tab-distribuicao').addEventListener('click', () => trocaAba('distribuicao'));
+$('tab-taxas').addEventListener('click', () => trocaAba('taxas'));
 
 async function carregaAuditoria(forcar) {
   const mes = $('f-mes').value;
@@ -1078,6 +1086,128 @@ function renderDistribuicaoLeads(resResumo, resLog) {
       arw.textContent = aberto ? '▸' : '▾';
     });
   }
+}
+
+// ---- Taxas % -- reune num so lugar as taxas ja calculadas em outras abas,
+// mais a nova metrica principal (reunioes agendadas fora da escala) ----
+let TAXAS_CARREGADA_MES = null;
+
+function carregaTaxasAba() {
+  if (!document.getElementById('taxas-mes')) {
+    let html = `<div class="filters" style="margin-bottom:14px">
+      <div class="field"><label>Mês</label><select id="taxas-mes"></select></div>
+    </div>
+    <div id="taxas-resultado"><div class="muted">Carregando…</div></div>`;
+    $('root-taxas').innerHTML = html;
+    $('taxas-mes').addEventListener('change', () => buscaTaxasAba(true));
+  }
+  if (MESES_DISPONIVEIS.length && $('taxas-mes').options.length === 0) {
+    opt($('taxas-mes'), MESES_DISPONIVEIS, x=>x.value, x=>x.label);
+    $('taxas-mes').value = CURRENT_MONTH;
+  }
+  buscaTaxasAba();
+}
+
+async function buscaTaxasAba(forcar) {
+  const mes = $('taxas-mes').value;
+  if (!forcar && TAXAS_CARREGADA_MES === mes) return;
+  $('taxas-resultado').innerHTML = '<div class="muted">Buscando no Pipedrive… (pode levar alguns segundos)</div>';
+  try {
+    const [resEscala, resDash, ...resEvolucoes] = await Promise.all([
+      fetch('/api/taxas_escala?month=' + mes, { headers: authHeaders() }).then(r => r.json()),
+      fetch('/api/dashboard?month=' + mes, { headers: authHeaders() }).then(r => r.json()),
+      ...EV_SDRS.map(sdr => {
+        const p = new URLSearchParams({ sdr, desde: EV_DESDE });
+        return fetch('/api/evolucao_sdr?' + p.toString(), { headers: authHeaders() }).then(r => r.json());
+      }),
+    ]);
+    TAXAS_CARREGADA_MES = mes;
+    renderTaxasAba(resEscala, resDash, resEvolucoes);
+  } catch (e) {
+    $('taxas-resultado').innerHTML = '<div class="warn">Falha na requisição: ' + e + '</div>';
+  }
+}
+
+function renderTaxasAba(resEscala, resDash, resEvolucoes) {
+  let html = '';
+
+  // ---- 1) reunioes agendadas fora da escala (metrica principal, nova) ----
+  html += `<div class="nb-title">Reuniões agendadas fora da escala — ${resEscala.month_label || ''}</div>`;
+  if (resEscala.error || resEscala.erro) {
+    html += `<div class="warn">Erro: ${resEscala.error || resEscala.erro}</div>`;
+  } else {
+    if (!resEscala.escala_configurada) {
+      html += `<div class="warn" style="margin-bottom:8px">A escala comercial ainda não está configurada (ESCALA_COMERCIAL_CSV_URL) — o total de reuniões do mês aparece, mas "fora da escala" fica zerado até isso ser configurado.</div>`;
+    }
+    html += `<div class="muted" style="margin-bottom:8px">Conta, por SDR, quantas reuniões (de leads/reaplicações do mês, pela "Data da última aplicação") ela mesma agendou depois do horário de saída dela na escala comercial.</div>`;
+    html += `<table class="aud-tbl"><tr><th class="l">SDR</th><th class="l">Time</th><th class="l">Saída</th>
+      <th>Reuniões do mês</th><th>Fora da escala</th><th class="barcell"></th></tr>`;
+    const sdrsEscala = (resEscala.sdrs || []).slice().sort((a,b) => (b.fora_da_escala||0) - (a.fora_da_escala||0));
+    for (const s of sdrsEscala) {
+      if (s.erro) {
+        html += `<tr><td class="l">${s.nome}</td><td class="l muted">${s.time||''}</td>
+          <td class="l muted" colspan="4">${s.erro}</td></tr>`;
+        continue;
+      }
+      const exemplos = (s.exemplos || []).map(e =>
+        `<a href="${e.url}" target="_blank" rel="noopener" title="${e.titulo} — ${e.data_hora_criacao}">#${e.deal_id}</a>`
+      ).join(', ');
+      html += `<tr><td class="l">${s.nome}</td><td class="l muted">${s.time||''}</td>
+        <td class="l muted">${s.saida || '—'}</td>
+        <td class="qtd">${s.total_mes}</td>
+        <td class="qtd">${s.fora_da_escala}<div class="muted" style="font-size:11px">${s.pct_fora_escala}%</div></td>
+        <td class="aud-negs">${exemplos}</td></tr>`;
+    }
+    if (!sdrsEscala.length) {
+      html += `<tr><td colspan="6" class="aud-empty">Nenhum SDR encontrado no mês.</td></tr>`;
+    }
+    const t = resEscala.total || {};
+    html += `<tr class="total"><td class="l">TOTAL</td><td></td><td></td>
+      <td class="qtd">${t.total_mes||0}</td>
+      <td class="qtd">${t.fora_da_escala||0}<div class="muted" style="font-size:11px">${t.pct_fora_escala||0}%</div></td>
+      <td></td></tr>`;
+    html += `</table>`;
+  }
+
+  // ---- 2) taxa de conversao por closer (mesma conta da aba Reuniões - Closers) ----
+  html += `<div class="nb-title" style="margin-top:22px">Taxa de Conversão por Closer — ${resDash.month_label || ''}</div>`;
+  if (resDash.error || resDash.erro) {
+    html += `<div class="warn">Erro: ${resDash.error || resDash.erro}</div>`;
+  } else {
+    const porCloser = (resDash.por_closer || []).slice()
+      .sort((a,b) => (b.ganhos_done||0) - (a.ganhos_done||0));
+    html += `<table class="aud-tbl"><tr><th class="l">Closer</th><th class="l">Time</th>
+      <th>Feitas</th><th>Ganhos</th><th>Taxa de conversão</th></tr>`;
+    for (const c of porCloser) {
+      const feitas = (c.total && c.total.done) || 0;
+      const ganhos = c.ganhos_done || 0;
+      const taxa = feitas ? (ganhos / feitas * 100) : 0;
+      html += `<tr><td class="l">${c.name}</td><td class="l muted">${c.time||''}</td>
+        <td class="qtd">${feitas}</td><td class="qtd">${ganhos}</td>
+        <td class="qtd">${taxa.toFixed(1)}%</td></tr>`;
+    }
+    if (!porCloser.length) {
+      html += `<tr><td colspan="5" class="aud-empty">Nenhum closer no mês.</td></tr>`;
+    }
+    html += `</table>`;
+  }
+
+  // ---- 3) taxa de agendamento (Evolução por Horário, mesmas SDRs da Auditoria) ----
+  html += `<div class="nb-title" style="margin-top:22px">Taxa de Agendamento — Evolução por Horário</div>`;
+  const validos = (resEvolucoes || []).filter(d => d && !d.erro && !d.error);
+  if (validos.length) {
+    html += `<table class="aud-tbl"><tr><th class="l">SDR</th><th>Vol. Leads</th><th>Vol. Agendados</th><th>Taxa de Agendamento</th></tr>`;
+    for (const d of validos) {
+      const t = d.total || {leads:0, agendados:0};
+      html += `<tr><td class="l">${d.sdr}</td><td class="qtd">${t.leads}</td>
+        <td class="qtd">${t.agendados}</td><td class="qtd">${d.taxa_agendamento}%</td></tr>`;
+    }
+    html += `</table>`;
+  } else {
+    html += `<div class="aud-empty">Sem dados de evolução por horário.</div>`;
+  }
+
+  $('taxas-resultado').innerHTML = html;
 }
 
 function auditoriaBloco(pessoa, idx, prefixo) {

@@ -1050,14 +1050,16 @@ def info_dos_deals(deal_ids):
 
 def reunioes_fora_da_escala(year, month):
     """Aba "Taxas %": pra cada SDR do mes, quantas reunioes AGENDADAS
-    (type=meeting) e VALIDADAS (campo "Reuniao Validada?" do negocio == "Sim",
-    confirmado com o usuario -- ambos os criterios juntos) ela mesma CRIOU
-    (creator_user_id = a propria, o mesmo criterio de "criadas pelo proprio"
-    usado na Distribuicao por Closer) cujo NEGOCIO tem a "Data da ultima
-    aplicacao" dentro do mes/ano pedido -- esse campo inclui reaplicacoes,
+    (type=meeting), REALIZADAS NESSE MES (done=true e due_date, ajustado
+    pro fuso de Brasilia, cai no mes/ano pedido) e VALIDADAS (campo
+    "Reuniao Validada?" do negocio == "Sim") -- os tres criterios juntos,
+    confirmado com o usuario -- ela mesma CRIOU (creator_user_id = a
+    propria, o mesmo criterio de "criadas pelo proprio" usado na
+    Distribuicao por Closer) cujo NEGOCIO tem TAMBEM a "Data da ultima
+    aplicacao" dentro do mesmo mes/ano -- esse campo inclui reaplicacoes,
     nao so negocios criados no mes (confirmado com o usuario) -- e, dessas,
-    quantas foram CRIADAS depois do horario de Saida dela na escala
-    comercial.
+    quantas foram CRIADAS (a atividade, nao o negocio) depois do horario
+    de Saida dela na escala comercial.
 
     Comparacao: hora de criacao da ATIVIDADE (add_time, ajustado pro fuso
     de Brasilia) vs. o campo Saida (fim de turno) da planilha
@@ -1099,6 +1101,15 @@ def reunioes_fora_da_escala(year, month):
         fora = 0
         exemplos = []
         for a in acts:
+            if not a.get("done"):
+                continue  # so conta reuniao REALIZADA (done = true)
+            due = a.get("due_date")
+            if not due:
+                continue
+            dia_realizada = data_ajustada_br(due, a.get("due_time"))
+            if dia_realizada.year != year or dia_realizada.month != month:
+                continue  # reuniao nao foi REALIZADA no mes/ano pedido
+
             deal_id = a.get("deal_id")
             deal = deals_info.get(deal_id) or {}
             cf = (deal.get("custom_fields") or {})

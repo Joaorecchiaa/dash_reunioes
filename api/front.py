@@ -1096,10 +1096,14 @@ function carregaTaxasAba() {
   if (!document.getElementById('taxas-mes')) {
     let html = `<div class="filters" style="margin-bottom:14px">
       <div class="field"><label>Mês</label><select id="taxas-mes"></select></div>
+      <div class="field"><label>De</label><input type="date" id="taxas-de"></div>
+      <div class="field"><label>Até</label><input type="date" id="taxas-ate"></div>
     </div>
     <div id="taxas-resultado"><div class="muted">Carregando…</div></div>`;
     $('root-taxas').innerHTML = html;
     $('taxas-mes').addEventListener('change', () => buscaTaxasAba(true));
+    $('taxas-de').addEventListener('change', () => buscaTaxasAba(true));
+    $('taxas-ate').addEventListener('change', () => buscaTaxasAba(true));
   }
   if (MESES_DISPONIVEIS.length && $('taxas-mes').options.length === 0) {
     opt($('taxas-mes'), MESES_DISPONIVEIS, x=>x.value, x=>x.label);
@@ -1110,18 +1114,28 @@ function carregaTaxasAba() {
 
 async function buscaTaxasAba(forcar) {
   const mes = $('taxas-mes').value;
-  if (!forcar && TAXAS_CARREGADA_MES === mes) return;
+  // filtro opcional "De"/"Até" (dia em que a reunião foi REALIZADA):
+  // só entra em vigor quando os dois campos estão preenchidos, senão o
+  // backend segue usando o mês inteiro (mantendo a condição de leads do
+  // mês, pela "Data da última aplicação")
+  const de = $('taxas-de').value;
+  const ate = $('taxas-ate').value;
+  const usaRange = !!(de && ate);
+  const chave = mes + '|' + (usaRange ? de + '|' + ate : '');
+  if (!forcar && TAXAS_CARREGADA_MES === chave) return;
   $('taxas-resultado').innerHTML = '<div class="muted">Buscando no Pipedrive… (pode levar alguns segundos)</div>';
   try {
+    let urlEscala = '/api/taxas_escala?month=' + mes;
+    if (usaRange) urlEscala += '&de=' + de + '&ate=' + ate;
     const [resEscala, resDash, ...resEvolucoes] = await Promise.all([
-      fetch('/api/taxas_escala?month=' + mes, { headers: authHeaders() }).then(r => r.json()),
+      fetch(urlEscala, { headers: authHeaders() }).then(r => r.json()),
       fetch('/api/dashboard?month=' + mes, { headers: authHeaders() }).then(r => r.json()),
       ...EV_SDRS.map(sdr => {
         const p = new URLSearchParams({ sdr, desde: EV_DESDE });
         return fetch('/api/evolucao_sdr?' + p.toString(), { headers: authHeaders() }).then(r => r.json());
       }),
     ]);
-    TAXAS_CARREGADA_MES = mes;
+    TAXAS_CARREGADA_MES = chave;
     renderTaxasAba(resEscala, resDash, resEvolucoes);
   } catch (e) {
     $('taxas-resultado').innerHTML = '<div class="warn">Falha na requisição: ' + e + '</div>';
@@ -1139,7 +1153,7 @@ function renderTaxasAba(resEscala, resDash, resEvolucoes) {
     if (!resEscala.escala_configurada) {
       html += `<div class="warn" style="margin-bottom:8px">A escala comercial ainda não está configurada (ESCALA_COMERCIAL_CSV_URL) — o total de reuniões do mês aparece, mas "fora da escala" fica zerado até isso ser configurado.</div>`;
     }
-    html += `<div class="muted" style="margin-bottom:8px">Conta, por SDR, quantas reuniões AGENDADAS, REALIZADAS neste mês e VALIDADAS (de leads/reaplicações também deste mês, pela "Data da última aplicação") ela mesma agendou depois do horário de saída dela na escala comercial.</div>`;
+    html += `<div class="muted" style="margin-bottom:8px">Conta, por SDR, quantas reuniões AGENDADAS, REALIZADAS neste mês e VALIDADAS (de leads/reaplicações também deste mês, pela "Data da última aplicação") ela mesma agendou depois do horário de saída dela na escala comercial. Preenchendo "De" e "Até" acima, restringe pelo dia em que a reunião foi realizada (mantendo a condição de leads do mês selecionado).</div>`;
     html += `<table class="aud-tbl"><tr><th class="l">SDR</th><th class="l">Time</th><th class="l">Saída</th>
       <th>Validadas do mês</th><th>Fora da escala</th><th class="barcell"></th></tr>`;
     const sdrsEscala = (resEscala.sdrs || []).slice().sort((a,b) => (b.fora_da_escala||0) - (a.fora_da_escala||0));

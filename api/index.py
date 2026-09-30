@@ -700,6 +700,28 @@ def acts_do_owner(owner_id, year, month):
     return acts
 
 
+def acts_todos_do_mes(year, month):
+    """Todas as atividades meeting/no_show/reagendamento da CONTA INTEIRA
+    (sem filtro de owner_id), na mesma janela usada em acts_do_owner. Usada
+    na aba "Taxas %": o RESPONSAVEL (owner_id) de uma reuniao pode mudar
+    depois que a SDR agenda (repasse pro closer), o que faz acts_do_owner
+    (filtrado por owner_id no Pipedrive) perder a atividade -- mas o
+    CRIADOR (creator_user_id) nunca muda, entao aqui buscamos tudo uma vez
+    e filtramos por criador do lado de fora (confirmado com o usuario:
+    reuniao #112559, criada por Bruna Goes, sumia porque o responsavel
+    tinha mudado)."""
+    key = ("acts_todos", year, month)
+    with _lock:
+        c = _cache["acts"].get(key)
+        if c and time.time() - c["ts"] < TTL:
+            return c["acts"]
+    inicio = (date(year, month, 1) - timedelta(days=31)).strftime("%Y-%m-%dT00:00:00Z")
+    acts = client.get_meeting_activities_todos(updated_since=inicio)
+    with _lock:
+        _cache["acts"][key] = {"ts": time.time(), "acts": acts}
+    return acts
+
+
 def _ranking_por_criador(auditados, year, month):
     """Para cada pessoa em `auditados` ({nome: label}): ranking de closers
     (donos dos negocios) pra quem as reunioes dela contam como validadas.
@@ -1063,10 +1085,15 @@ def reunioes_fora_da_escala(year, month):
 
     Comparacao: hora de criacao da ATIVIDADE (add_time, ajustado pro fuso
     de Brasilia) vs. o campo Saida (fim de turno) da planilha
-    escala_comercial. Reaproveita acts_do_owner (mesma cache/janela ja
-    usada em outras metricas, ex. auditoria) -- o Pipedrive nao tem filtro
-    por criador, entao filtra-se aqui pelo creator_user_id de cada
-    atividade."""
+    escala_comercial.
+
+    IMPORTANTE: usa acts_todos_do_mes (busca a conta INTEIRA, sem filtro de
+    owner_id) em vez de acts_do_owner(sdr_id) -- o RESPONSAVEL (owner_id) de
+    uma reuniao pode mudar depois que a SDR agenda (repasse pro closer), e
+    acts_do_owner e filtrado no Pipedrive pelo owner_id ATUAL, entao perderia
+    essas reunioes. O CRIADOR (creator_user_id) nao muda, entao filtramos
+    por ele aqui (confirmado com o usuario: reuniao #112559 sumia por causa
+    disso)."""
     users, _ = carrega_meta()
     try:
         saida_por_nome = escala_saida_por_nome()
@@ -1078,6 +1105,13 @@ def reunioes_fora_da_escala(year, month):
     sdrs = sdrs_do_mes(year, month)
     mes_str = f"{month:02d}/{year}"
     resultado = []
+
+    # busca UMA VEZ (nao por SDR) todas as reunioes da conta, e agrupa por
+    # criador -- assim nao depende de quem e o responsavel ATUAL
+    acts_por_criador = defaultdict(list)
+    for a in acts_todos_do_mes(year, month):
+        if a.get("type") == "meeting" and a.get("creator_user_id"):
+            acts_por_criador[a["creator_user_id"]].append(a)
 
     for nome_sdr, time_sdr in sorted(sdrs.items()):
         sdr_id = users.get(nome_sdr.strip().lower())
@@ -1092,8 +1126,7 @@ def reunioes_fora_da_escala(year, month):
         saida_str = saida_por_nome.get(norm(nome_sdr))
         saida_time = _parse_hora_hhmmss(saida_str) if saida_str else None
 
-        acts = [a for a in acts_do_owner(sdr_id, year, month)
-                if a.get("type") == "meeting" and a.get("creator_user_id") == sdr_id]
+        acts = acts_por_criador.get(sdr_id, [])
         deal_ids = [a.get("deal_id") for a in acts if a.get("deal_id")]
         deals_info = info_dos_deals(deal_ids) if deal_ids else {}
 

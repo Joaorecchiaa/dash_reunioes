@@ -590,6 +590,21 @@ def escala_saida_por_nome():
     return out
 
 
+def escala_entrada_por_nome():
+    """{nome_normalizado: 'HH:MM:SS'} -- horario de INICIO de turno de cada
+    pessoa, tirado da escala comercial. Usada junto com escala_saida_por_nome
+    na aba "Taxas %": uma reuniao marcada ANTES da entrada e tao "fora da
+    escala" quanto uma marcada DEPOIS da saida (confirmado com o usuario a
+    partir dos casos #112559 e #410476, ambos criados de manha, antes do
+    turno da SDR comecar, e que so contavam como fora quando criados DEPOIS
+    do fim do turno)."""
+    out = {}
+    for r in carrega_escala_comercial():
+        if r["entrada"]:
+            out[norm(r["nome"])] = r["entrada"]
+    return out
+
+
 def _parse_hora_hhmmss(texto):
     """Converte 'HH:MM' ou 'HH:MM:SS' num datetime.time. None se invalido/vazio."""
     texto = (texto or "").strip()
@@ -1080,8 +1095,9 @@ def reunioes_fora_da_escala(year, month, date_de=None, date_ate=None):
     Distribuicao por Closer) cujo NEGOCIO tem TAMBEM a "Data da ultima
     aplicacao" dentro do mesmo mes/ano -- esse campo inclui reaplicacoes,
     nao so negocios criados no mes (confirmado com o usuario) -- e, dessas,
-    quantas foram CRIADAS (a atividade, nao o negocio) depois do horario
-    de Saida dela na escala comercial.
+    quantas foram CRIADAS (a atividade, nao o negocio) FORA do horario de
+    trabalho dela na escala comercial -- depois da Saida (fim de turno) OU
+    antes da Entrada (inicio de turno).
 
     date_de/date_ate (opcionais, objetos date): quando os DOIS sao
     informados, restringe a data em que a reuniao foi REALIZADA a esse
@@ -1105,9 +1121,11 @@ def reunioes_fora_da_escala(year, month, date_de=None, date_ate=None):
     users, _ = carrega_meta()
     try:
         saida_por_nome = escala_saida_por_nome()
+        entrada_por_nome = escala_entrada_por_nome()
         escala_ok = True
     except RuntimeError:
         saida_por_nome = {}
+        entrada_por_nome = {}
         escala_ok = False
 
     sdrs = sdrs_do_mes(year, month)
@@ -1137,7 +1155,7 @@ def reunioes_fora_da_escala(year, month, date_de=None, date_ate=None):
         sdr_id = users.get(nome_sdr.strip().lower())
         if not sdr_id:
             resultado.append({
-                "nome": nome_sdr, "time": time_sdr, "saida": None,
+                "nome": nome_sdr, "time": time_sdr, "entrada": None, "saida": None,
                 "total_mes": 0, "fora_da_escala": 0, "pct_fora_escala": 0.0,
                 "exemplos": [], "erro": "SDR nao encontrada no Pipedrive",
             })
@@ -1145,6 +1163,8 @@ def reunioes_fora_da_escala(year, month, date_de=None, date_ate=None):
 
         saida_str = saida_por_nome.get(norm(nome_sdr))
         saida_time = _parse_hora_hhmmss(saida_str) if saida_str else None
+        entrada_str = entrada_por_nome.get(norm(nome_sdr))
+        entrada_time = _parse_hora_hhmmss(entrada_str) if entrada_str else None
 
         acts = acts_por_criador.get(sdr_id, [])
         deal_ids = [a.get("deal_id") for a in acts if a.get("deal_id")]
@@ -1181,7 +1201,17 @@ def reunioes_fora_da_escala(year, month, date_de=None, date_ate=None):
             criada_em_br = criada_em + timedelta(hours=AJUSTE_FUSO_HORAS)
 
             total_mes += 1
-            esta_fora = bool(saida_time) and criada_em_br.time() > saida_time
+            hora_criacao = criada_em_br.time()
+            # fora da escala = criada DEPOIS do fim do turno (saida) OU ANTES
+            # do inicio do turno (entrada) -- os dois casos sao "fora do
+            # horario de trabalho da SDR". So exigir "depois da saida" perdia
+            # reunioes criadas de manha bem cedo, antes do turno comecar
+            # (confirmado com o usuario a partir dos casos #112559 e #410476,
+            # ambos criados por volta das 9h-10h, bem antes do turno da SDR).
+            esta_fora = (
+                (bool(saida_time) and hora_criacao > saida_time)
+                or (bool(entrada_time) and hora_criacao < entrada_time)
+            )
             if esta_fora:
                 fora += 1
                 if len(exemplos) < 15:
@@ -1195,6 +1225,7 @@ def reunioes_fora_da_escala(year, month, date_de=None, date_ate=None):
         resultado.append({
             "nome": nome_sdr,
             "time": time_sdr,
+            "entrada": entrada_str,
             "saida": saida_str,
             "total_mes": total_mes,
             "fora_da_escala": fora,

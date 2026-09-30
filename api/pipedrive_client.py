@@ -48,6 +48,32 @@ class PipedriveClient:
                 break
         return activities
 
+    def get_meeting_activities_todos(self, updated_since=None):
+        """Igual get_meeting_activities, mas SEM filtro de owner_id -- todas as
+        atividades meeting/no_show/reagendamento da conta inteira. Usada
+        quando precisamos filtrar por CRIADOR (creator_user_id) em vez de
+        responsavel (owner_id): o RESPONSAVEL de uma reuniao pode mudar
+        depois de criada (repasse pra closer), mas o CRIADOR nao muda --
+        filtrar so por owner_id (get_meeting_activities) perderia essas
+        reunioes na aba "Taxas %"."""
+        tipos = {"meeting", "no_show", "reagendamento"}
+        activities = []
+        cursor = None
+        while True:
+            params = {"limit": 500}
+            if updated_since:
+                params["updated_since"] = updated_since
+            if cursor:
+                params["cursor"] = cursor
+            data = self._get(self.base_v2, "/activities", params)
+            for a in data.get("data") or []:
+                if a.get("type") in tipos and a.get("deal_id"):
+                    activities.append(a)
+            cursor = (data.get("additional_data") or {}).get("next_cursor")
+            if not cursor:
+                break
+        return activities
+
     def get_deals_info(self, deal_ids):
         """{deal_id: <objeto do negocio, cru>}, em lotes de 100.
         Mantem o objeto completo do negocio (nao so pipeline_id/title) para

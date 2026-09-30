@@ -1108,9 +1108,21 @@ def reunioes_fora_da_escala(year, month):
 
     # busca UMA VEZ (nao por SDR) todas as reunioes da conta, e agrupa por
     # criador -- assim nao depende de quem e o responsavel ATUAL
+    # a automacao de agendamento cria DUAS atividades tipo "meeting" pra cada
+    # reuniao real marcada (ex.: uma "Reuniao Board Academy - <nome>" com o
+    # closer como owner, e outra "Agendamento Reuniao" com a SDR como owner)
+    # -- mesmo criador, mesmo negocio, mesmo due_date/due_time, ids diferentes.
+    # sem deduplicar isso conta cada reuniao 2x (confirmado com o usuario:
+    # negocio #290267 e outros aparecendo duplicados). Colapsa pela chave
+    # (criador, negocio, due_date, due_time), mantendo so a primeira.
     acts_por_criador = defaultdict(list)
+    vistos_reuniao = set()
     for a in acts_todos_do_mes(year, month):
         if a.get("type") == "meeting" and a.get("creator_user_id"):
+            chave = (a["creator_user_id"], a.get("deal_id"), a.get("due_date"), a.get("due_time"))
+            if chave in vistos_reuniao:
+                continue
+            vistos_reuniao.add(chave)
             acts_por_criador[a["creator_user_id"]].append(a)
 
     for nome_sdr, time_sdr in sorted(sdrs.items()):

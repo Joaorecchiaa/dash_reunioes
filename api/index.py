@@ -1070,7 +1070,7 @@ def info_dos_deals(deal_ids):
         return {d: _cache["deals"].get(d) for d in deal_ids}
 
 
-def reunioes_fora_da_escala(year, month):
+def reunioes_fora_da_escala(year, month, date_de=None, date_ate=None):
     """Aba "Taxas %": pra cada SDR do mes, quantas reunioes AGENDADAS
     (type=meeting), REALIZADAS NESSE MES (done=true e due_date, ajustado
     pro fuso de Brasilia, cai no mes/ano pedido) e VALIDADAS (campo
@@ -1082,6 +1082,14 @@ def reunioes_fora_da_escala(year, month):
     nao so negocios criados no mes (confirmado com o usuario) -- e, dessas,
     quantas foram CRIADAS (a atividade, nao o negocio) depois do horario
     de Saida dela na escala comercial.
+
+    date_de/date_ate (opcionais, objetos date): quando os DOIS sao
+    informados, restringe a data em que a reuniao foi REALIZADA a esse
+    intervalo (inclusive) em vez de exigir que caia no mes/ano inteiro --
+    pedido pelo usuario pra fatiar por dia (ex.: so de 21/09/2026 a
+    30/09/2026) sem perder a condicao de "leads desse mes" (Data da ultima
+    aplicacao), que continua usando o mes/ano do parametro `month`/`year`
+    normalmente.
 
     Comparacao: hora de criacao da ATIVIDADE (add_time, ajustado pro fuso
     de Brasilia) vs. o campo Saida (fim de turno) da planilha
@@ -1152,7 +1160,10 @@ def reunioes_fora_da_escala(year, month):
             if not due:
                 continue
             dia_realizada = data_ajustada_br(due, a.get("due_time"))
-            if dia_realizada.year != year or dia_realizada.month != month:
+            if date_de and date_ate:
+                if dia_realizada < date_de or dia_realizada > date_ate:
+                    continue  # reuniao nao foi REALIZADA dentro do intervalo De/Ate pedido
+            elif dia_realizada.year != year or dia_realizada.month != month:
                 continue  # reuniao nao foi REALIZADA no mes/ano pedido
 
             deal_id = a.get("deal_id")
@@ -1193,9 +1204,13 @@ def reunioes_fora_da_escala(year, month):
 
     total_geral = sum(r["total_mes"] for r in resultado)
     fora_geral = sum(r["fora_da_escala"] for r in resultado)
+    if date_de and date_ate:
+        periodo_label = f"{date_de.strftime('%d/%m/%Y')} a {date_ate.strftime('%d/%m/%Y')} (leads de {MESES_NOME[month-1]}/{year})"
+    else:
+        periodo_label = f"{MESES_NOME[month-1]}/{year}"
     return {
         "ano": year, "mes": month,
-        "month_label": f"{MESES_NOME[month-1]}/{year}",
+        "month_label": periodo_label,
         "escala_configurada": escala_ok,
         "sdrs": resultado,
         "total": {
@@ -1570,8 +1585,25 @@ def api_taxas_escala():
     except Exception:
         hoje = date.today()
         year, month = hoje.year, hoje.month
+
+    # filtro opcional "De"/"Ate" (YYYY-MM-DD): restringe a data em que a
+    # reuniao foi REALIZADA a esse intervalo, mas mantem a condicao de
+    # "leads do mes" (Data da ultima aplicacao) pelo mes/ano selecionado
+    # acima -- pedido pelo usuario pra ver so as reunioes fora da escala de
+    # um recorte de dias (ex.: 21/09/2026 a 30/09/2026) sem perder a
+    # condicao de leads desse mes.
+    date_de = date_ate = None
+    de_str = request.args.get("de", "").strip()
+    ate_str = request.args.get("ate", "").strip()
+    if de_str and ate_str:
+        try:
+            date_de = datetime.strptime(de_str, "%Y-%m-%d").date()
+            date_ate = datetime.strptime(ate_str, "%Y-%m-%d").date()
+        except Exception:
+            date_de = date_ate = None
+
     try:
-        return jsonify(reunioes_fora_da_escala(year, month))
+        return jsonify(reunioes_fora_da_escala(year, month, date_de, date_ate))
     except Exception as e:
         import traceback
         traceback.print_exc()

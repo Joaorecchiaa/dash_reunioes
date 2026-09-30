@@ -42,12 +42,17 @@ HTML = r"""<!DOCTYPE html>
   input[type=date] { background:var(--card2); color:var(--text); border:1px solid var(--border);
            border-radius:8px; padding:8px 10px; font-size:14px; }
   input[type=date]:focus { outline:none; border-color:var(--gold); box-shadow:0 0 0 3px rgba(255,215,0,.18); }
-  .field-sm input[type=date] { min-width:0; width:132px; padding:6px 8px; font-size:12px; border-radius:6px; }
-  .field-sm label { font-size:10px; }
   button { background:var(--gold); color:#1a1a1a; border:none; border-radius:8px;
            padding:9px 22px; font-size:14px; font-weight:800; cursor:pointer; letter-spacing:.5px; }
   button:hover { background:#e6c200; }
   button:disabled { opacity:.5; cursor:wait; }
+  /* cabecalho: todos os controles do filtro (Mes/De/Ate/Time/Closer/Pesquisar)
+     menores e mais delicados -- so nesse filtro, as outras abas mantem o
+     tamanho padrao acima */
+  .site-header .filters select,
+  .site-header .filters input[type=date] { min-width:0; width:132px; padding:6px 8px; font-size:12px; border-radius:6px; }
+  .site-header .filters .field label { font-size:10px; }
+  .site-header .filters button { padding:6px 16px; font-size:12px; border-radius:6px; }
   .updated { color:var(--head-muted); font-size:12px; margin-left:auto; align-self:center; text-align:right; }
   .auto { color:var(--gold); font-size:11px; }
 
@@ -268,8 +273,8 @@ HTML = r"""<!DOCTYPE html>
     </div>
     <div class="filters">
       <div class="field"><label>Mês</label><select id="f-mes"></select></div>
-      <div class="field field-sm"><label>De</label><input type="date" id="f-de"></div>
-      <div class="field field-sm"><label>Até</label><input type="date" id="f-ate"></div>
+      <div class="field"><label>De</label><input type="date" id="f-de"></div>
+      <div class="field"><label>Até</label><input type="date" id="f-ate"></div>
       <div class="field"><label>Time</label><select id="f-time"></select></div>
       <div class="field"><label id="f-closer-label">Closer</label><select id="f-closer"></select></div>
       <button id="btn">Pesquisar</button>
@@ -1167,30 +1172,31 @@ function renderTaxasAba(resEscala, resDash, resEvolucoes) {
     if (!resEscala.escala_configurada) {
       html += `<div class="warn" style="margin-bottom:8px">A escala comercial ainda não está configurada (ESCALA_COMERCIAL_CSV_URL) — o total de reuniões do mês aparece, mas "fora da escala" fica zerado até isso ser configurado.</div>`;
     }
-    html += `<div class="muted" style="margin-bottom:8px">Conta, por SDR, quantas reuniões AGENDADAS, REALIZADAS neste mês e VALIDADAS (de leads/reaplicações também deste mês, pela "Data da última aplicação") ela mesma agendou depois do horário de saída dela na escala comercial. Preenchendo "De" e "Até" no cabeçalho, restringe pelo dia em que a reunião foi realizada (mantendo a condição de leads do mês selecionado).</div>`;
-    html += `<table class="aud-tbl"><tr><th class="l">SDR</th><th class="l">Time</th><th class="l">Saída</th>
+    html += `<div class="muted" style="margin-bottom:8px">Conta, por SDR, quantas reuniões AGENDADAS, REALIZADAS neste mês e VALIDADAS (de leads/reaplicações também deste mês, pela "Data da última aplicação") ela mesma agendou FORA do horário de trabalho dela na escala comercial (antes da entrada ou depois da saída). Preenchendo "De" e "Até" no cabeçalho, restringe pelo dia em que a reunião foi realizada (mantendo a condição de leads do mês selecionado).</div>`;
+    html += `<table class="aud-tbl"><tr><th class="l">SDR</th><th class="l">Time</th><th class="l">Entrada</th><th class="l">Saída</th>
       <th>Validadas do mês</th><th>Fora da escala</th><th class="barcell"></th></tr>`;
     const sdrsEscala = (resEscala.sdrs || []).slice().sort((a,b) => (b.fora_da_escala||0) - (a.fora_da_escala||0));
     for (const s of sdrsEscala) {
       if (s.erro) {
         html += `<tr><td class="l">${s.nome}</td><td class="l muted">${s.time||''}</td>
-          <td class="l muted" colspan="4">${s.erro}</td></tr>`;
+          <td class="l muted" colspan="5">${s.erro}</td></tr>`;
         continue;
       }
       const exemplos = (s.exemplos || []).map(e =>
         `<a href="${e.url}" target="_blank" rel="noopener" title="${e.titulo} — ${e.data_hora_criacao}">#${e.deal_id}</a>`
       ).join(', ');
       html += `<tr><td class="l">${s.nome}</td><td class="l muted">${s.time||''}</td>
+        <td class="l muted">${s.entrada || '—'}</td>
         <td class="l muted">${s.saida || '—'}</td>
         <td class="qtd">${s.total_mes}</td>
         <td class="qtd">${s.fora_da_escala}<div class="muted" style="font-size:11px">${s.pct_fora_escala}%</div></td>
         <td class="aud-negs">${exemplos}</td></tr>`;
     }
     if (!sdrsEscala.length) {
-      html += `<tr><td colspan="6" class="aud-empty">Nenhum SDR encontrado no mês.</td></tr>`;
+      html += `<tr><td colspan="7" class="aud-empty">Nenhum SDR encontrado no mês.</td></tr>`;
     }
     const t = resEscala.total || {};
-    html += `<tr class="total"><td class="l">TOTAL</td><td></td><td></td>
+    html += `<tr class="total"><td class="l">TOTAL</td><td></td><td></td><td></td>
       <td class="qtd">${t.total_mes||0}</td>
       <td class="qtd">${t.fora_da_escala||0}<div class="muted" style="font-size:11px">${t.pct_fora_escala||0}%</div></td>
       <td></td></tr>`;

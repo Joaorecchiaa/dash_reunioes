@@ -29,9 +29,15 @@ class PipedriveClient:
 
     def get_meeting_activities(self, owner_id, updated_since=None):
         """Pagina por cursor no v2/activities; mantem tipos meeting/no_show/reagendamento
-        com deal_id preenchido (v2 nao filtra type/due_date, filtramos aqui)."""
+        com deal_id preenchido (v2 nao filtra type/due_date, filtramos aqui).
+
+        Deduplica por id da atividade: a paginacao por cursor filtrando por
+        updated_since pode devolver a MESMA atividade em duas paginas quando
+        ela e atualizada (updated_at muda) enquanto a busca ainda esta
+        rodando -- sem dedup isso duplicava reunioes nos relatorios."""
         tipos = {"meeting", "no_show", "reagendamento"}
         activities = []
+        vistos = set()
         cursor = None
         while True:
             params = {"owner_id": owner_id, "limit": 500}
@@ -41,7 +47,9 @@ class PipedriveClient:
                 params["cursor"] = cursor
             data = self._get(self.base_v2, "/activities", params)
             for a in data.get("data") or []:
-                if a.get("type") in tipos and a.get("deal_id"):
+                aid = a.get("id")
+                if a.get("type") in tipos and a.get("deal_id") and aid not in vistos:
+                    vistos.add(aid)
                     activities.append(a)
             cursor = (data.get("additional_data") or {}).get("next_cursor")
             if not cursor:
@@ -55,9 +63,14 @@ class PipedriveClient:
         responsavel (owner_id): o RESPONSAVEL de uma reuniao pode mudar
         depois de criada (repasse pra closer), mas o CRIADOR nao muda --
         filtrar so por owner_id (get_meeting_activities) perderia essas
-        reunioes na aba "Taxas %"."""
+        reunioes na aba "Taxas %".
+
+        Deduplica por id da atividade pelo mesmo motivo do metodo acima
+        (cursor + updated_since pode repetir a mesma atividade em duas
+        paginas)."""
         tipos = {"meeting", "no_show", "reagendamento"}
         activities = []
+        vistos = set()
         cursor = None
         while True:
             params = {"limit": 500}
@@ -67,7 +80,9 @@ class PipedriveClient:
                 params["cursor"] = cursor
             data = self._get(self.base_v2, "/activities", params)
             for a in data.get("data") or []:
-                if a.get("type") in tipos and a.get("deal_id"):
+                aid = a.get("id")
+                if a.get("type") in tipos and a.get("deal_id") and aid not in vistos:
+                    vistos.add(aid)
                     activities.append(a)
             cursor = (data.get("additional_data") or {}).get("next_cursor")
             if not cursor:

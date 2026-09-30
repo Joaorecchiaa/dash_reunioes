@@ -1049,13 +1049,15 @@ def info_dos_deals(deal_ids):
 
 
 def reunioes_fora_da_escala(year, month):
-    """Aba "Taxas %": pra cada SDR do mes, quantas reunioes (type=meeting)
-    ela mesma CRIOU (creator_user_id = a propria, o mesmo criterio de
-    "criadas pelo proprio" usado na Distribuicao por Closer) cujo NEGOCIO
-    tem a "Data da ultima aplicacao" dentro do mes/ano pedido -- esse campo
-    inclui reaplicacoes, nao so negocios criados no mes (confirmado com o
-    usuario) -- e, dessas, quantas foram CRIADAS depois do horario de Saida
-    dela na escala comercial.
+    """Aba "Taxas %": pra cada SDR do mes, quantas reunioes AGENDADAS
+    (type=meeting) e VALIDADAS (campo "Reuniao Validada?" do negocio == "Sim",
+    confirmado com o usuario -- ambos os criterios juntos) ela mesma CRIOU
+    (creator_user_id = a propria, o mesmo criterio de "criadas pelo proprio"
+    usado na Distribuicao por Closer) cujo NEGOCIO tem a "Data da ultima
+    aplicacao" dentro do mes/ano pedido -- esse campo inclui reaplicacoes,
+    nao so negocios criados no mes (confirmado com o usuario) -- e, dessas,
+    quantas foram CRIADAS depois do horario de Saida dela na escala
+    comercial.
 
     Comparacao: hora de criacao da ATIVIDADE (add_time, ajustado pro fuso
     de Brasilia) vs. o campo Saida (fim de turno) da planilha
@@ -1103,6 +1105,8 @@ def reunioes_fora_da_escala(year, month):
             data_aplicacao = cf.get(CAMPO_DATA_ULTIMA_APLICACAO_ID)
             if not data_aplicacao or mes_str not in str(data_aplicacao):
                 continue  # negocio nao e "lead do mes" pela ultima aplicacao
+            if not campo_validado_sim(deal):
+                continue  # so conta reuniao VALIDADA (Reuniao Validada? == "Sim")
 
             criada_em = _parse_dt_pipedrive(a.get("add_time"))
             if not criada_em:

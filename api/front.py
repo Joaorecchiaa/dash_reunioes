@@ -38,8 +38,12 @@ HTML = r"""<!DOCTYPE html>
   .field label { font-size:11px; color:var(--muted); text-transform:uppercase; letter-spacing:.5px; }
   select { background:var(--card2); color:var(--text); border:1px solid var(--border);
            border-radius:8px; padding:8px 10px; font-size:14px; min-width:160px; }
-  select#f-dia { min-width:110px; }
   select:focus { outline:none; border-color:var(--gold); box-shadow:0 0 0 3px rgba(255,215,0,.18); }
+  input[type=date] { background:var(--card2); color:var(--text); border:1px solid var(--border);
+           border-radius:8px; padding:8px 10px; font-size:14px; }
+  input[type=date]:focus { outline:none; border-color:var(--gold); box-shadow:0 0 0 3px rgba(255,215,0,.18); }
+  .field-sm input[type=date] { min-width:0; width:132px; padding:6px 8px; font-size:12px; border-radius:6px; }
+  .field-sm label { font-size:10px; }
   button { background:var(--gold); color:#1a1a1a; border:none; border-radius:8px;
            padding:9px 22px; font-size:14px; font-weight:800; cursor:pointer; letter-spacing:.5px; }
   button:hover { background:#e6c200; }
@@ -264,7 +268,8 @@ HTML = r"""<!DOCTYPE html>
     </div>
     <div class="filters">
       <div class="field"><label>Mês</label><select id="f-mes"></select></div>
-      <div class="field"><label>Dia</label><select id="f-dia"></select></div>
+      <div class="field field-sm"><label>De</label><input type="date" id="f-de"></div>
+      <div class="field field-sm"><label>Até</label><input type="date" id="f-ate"></div>
       <div class="field"><label>Time</label><select id="f-time"></select></div>
       <div class="field"><label id="f-closer-label">Closer</label><select id="f-closer"></select></div>
       <button id="btn">Pesquisar</button>
@@ -325,16 +330,30 @@ function diasNoMes(valorMes) {
   return new Date(y, m, 0).getDate();
 }
 
-function preencheDias() {
-  const mes = $('f-mes').value;
+// "De"/"Até" no cabeçalho substituem o antigo seletor de "Dia" e filtram a
+// pagina toda: no recorte de 3 dias das abas Reuniões (Closers/SDRs) usam o
+// "De" como o dia de referencia (mesmo papel que "Dia" tinha); na aba
+// Taxas % usam o intervalo completo pra restringir pela data REALIZADA da
+// reuniao, mantendo a condicao de leads do mes (ver buscaTaxasAba).
+function dataPadraoHeader(valorMes) {
+  const mes = valorMes || $('f-mes').value;
+  const [y, m] = mes.split('-').map(Number);
   const n = diasNoMes(mes);
-  const arr = [];
-  for (let d = 1; d <= n; d++) arr.push(d);
-  opt($('f-dia'), arr, x=>x, x=>String(x).padStart(2,'0'));
-  $('f-dia').value = (mes === CURRENT_MONTH && diaHojeNum <= n) ? diaHojeNum : 1;
+  const d = (mes === CURRENT_MONTH && diaHojeNum <= n) ? diaHojeNum : 1;
+  return mes + '-' + String(d).padStart(2, '0');
 }
 
-function diaSelecionado() { return parseInt($('f-dia').value, 10); }
+function preencheDatasHeader() {
+  const padrao = dataPadraoHeader();
+  $('f-de').value = padrao;
+  $('f-ate').value = padrao;
+}
+
+function diaSelecionado() {
+  const v = $('f-de').value;
+  if (!v) return 1;
+  return parseInt(v.split('-')[2], 10);
+}
 
 async function init() {
   // valida token salvo (pode ter expirado)
@@ -354,7 +373,7 @@ async function init() {
   opt($('f-mes'), d.months, x=>x.value, x=>x.label);
   $('f-mes').value = d.current;
   opt($('f-time'), d.teams, x=>x, x=>x);
-  preencheDias();
+  preencheDatasHeader();
   await carregaPessoas();
   buscar(false);
   setInterval(() => { if (ehDefaultAtual()) buscar(true); }, REFRESH_MS);
@@ -369,13 +388,20 @@ async function carregaPessoas() {
 }
 
 $('f-mes').addEventListener('change', async () => {
-  preencheDias();
+  preencheDatasHeader();
   await carregaPessoas();
+  if (ABA === 'taxas') buscaTaxasAba(true);
 });
-// dia e so recorte visual: re-renderiza na hora, sem nova requisicao
-$('f-dia').addEventListener('change', () => {
+// De/Ate: nas abas Reunioes (Closers/SDRs) e so recorte visual (re-renderiza
+// na hora, sem nova requisicao); na aba Taxas % refaz a busca com o novo
+// intervalo
+$('f-de').addEventListener('change', () => {
   if (MODO_PESSOA === 'sdr') { if (LAST_DATA_SDR) renderSdr(LAST_DATA_SDR); }
   else { if (LAST_DATA) render(LAST_DATA); }
+  if (ABA === 'taxas') buscaTaxasAba(true);
+});
+$('f-ate').addEventListener('change', () => {
+  if (ABA === 'taxas') buscaTaxasAba(true);
 });
 $('btn').addEventListener('click', () => {
   if (MODO_PESSOA === 'sdr') buscarSdr(false); else buscar(false);
@@ -1093,34 +1119,22 @@ function renderDistribuicaoLeads(resResumo, resLog) {
 let TAXAS_CARREGADA_MES = null;
 
 function carregaTaxasAba() {
-  if (!document.getElementById('taxas-mes')) {
-    let html = `<div class="filters" style="margin-bottom:14px">
-      <div class="field"><label>Mês</label><select id="taxas-mes"></select></div>
-      <div class="field"><label>De</label><input type="date" id="taxas-de"></div>
-      <div class="field"><label>Até</label><input type="date" id="taxas-ate"></div>
-    </div>
-    <div id="taxas-resultado"><div class="muted">Carregando…</div></div>`;
-    $('root-taxas').innerHTML = html;
-    $('taxas-mes').addEventListener('change', () => buscaTaxasAba(true));
-    $('taxas-de').addEventListener('change', () => buscaTaxasAba(true));
-    $('taxas-ate').addEventListener('change', () => buscaTaxasAba(true));
-  }
-  if (MESES_DISPONIVEIS.length && $('taxas-mes').options.length === 0) {
-    opt($('taxas-mes'), MESES_DISPONIVEIS, x=>x.value, x=>x.label);
-    $('taxas-mes').value = CURRENT_MONTH;
+  if (!document.getElementById('taxas-resultado')) {
+    $('root-taxas').innerHTML = '<div id="taxas-resultado"><div class="muted">Carregando…</div></div>';
   }
   buscaTaxasAba();
 }
 
 async function buscaTaxasAba(forcar) {
-  const mes = $('taxas-mes').value;
-  // filtro opcional "De"/"Até" (dia em que a reunião foi REALIZADA):
-  // só entra em vigor quando os dois campos estão preenchidos, senão o
-  // backend segue usando o mês inteiro (mantendo a condição de leads do
-  // mês, pela "Data da última aplicação")
-  const de = $('taxas-de').value;
-  const ate = $('taxas-ate').value;
-  const usaRange = !!(de && ate);
+  // usa o filtro do cabecalho (Mes / De / Ate), o mesmo que as outras abas
+  const mes = $('f-mes').value;
+  // "De"/"Até" (dia em que a reunião foi REALIZADA): só entra em vigor
+  // quando os dois campos estão preenchidos e formam um intervalo de fato
+  // (De <= Até); senão o backend segue usando o mês inteiro (mantendo a
+  // condição de leads do mês, pela "Data da última aplicação")
+  const de = $('f-de').value;
+  const ate = $('f-ate').value;
+  const usaRange = !!(de && ate && de <= ate);
   const chave = mes + '|' + (usaRange ? de + '|' + ate : '');
   if (!forcar && TAXAS_CARREGADA_MES === chave) return;
   $('taxas-resultado').innerHTML = '<div class="muted">Buscando no Pipedrive… (pode levar alguns segundos)</div>';
@@ -1153,7 +1167,7 @@ function renderTaxasAba(resEscala, resDash, resEvolucoes) {
     if (!resEscala.escala_configurada) {
       html += `<div class="warn" style="margin-bottom:8px">A escala comercial ainda não está configurada (ESCALA_COMERCIAL_CSV_URL) — o total de reuniões do mês aparece, mas "fora da escala" fica zerado até isso ser configurado.</div>`;
     }
-    html += `<div class="muted" style="margin-bottom:8px">Conta, por SDR, quantas reuniões AGENDADAS, REALIZADAS neste mês e VALIDADAS (de leads/reaplicações também deste mês, pela "Data da última aplicação") ela mesma agendou depois do horário de saída dela na escala comercial. Preenchendo "De" e "Até" acima, restringe pelo dia em que a reunião foi realizada (mantendo a condição de leads do mês selecionado).</div>`;
+    html += `<div class="muted" style="margin-bottom:8px">Conta, por SDR, quantas reuniões AGENDADAS, REALIZADAS neste mês e VALIDADAS (de leads/reaplicações também deste mês, pela "Data da última aplicação") ela mesma agendou depois do horário de saída dela na escala comercial. Preenchendo "De" e "Até" no cabeçalho, restringe pelo dia em que a reunião foi realizada (mantendo a condição de leads do mês selecionado).</div>`;
     html += `<table class="aud-tbl"><tr><th class="l">SDR</th><th class="l">Time</th><th class="l">Saída</th>
       <th>Validadas do mês</th><th>Fora da escala</th><th class="barcell"></th></tr>`;
     const sdrsEscala = (resEscala.sdrs || []).slice().sort((a,b) => (b.fora_da_escala||0) - (a.fora_da_escala||0));

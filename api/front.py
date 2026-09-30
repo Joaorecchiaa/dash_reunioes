@@ -1139,7 +1139,7 @@ function renderTaxasAba(resEscala, resDash, resEvolucoes) {
     if (!resEscala.escala_configurada) {
       html += `<div class="warn" style="margin-bottom:8px">A escala comercial ainda não está configurada (ESCALA_COMERCIAL_CSV_URL) — o total de reuniões do mês aparece, mas "fora da escala" fica zerado até isso ser configurado.</div>`;
     }
-    html += `<div class="muted" style="margin-bottom:8px">Conta, por SDR, quantas reuniões AGENDADAS e VALIDADAS (de leads/reaplicações do mês, pela "Data da última aplicação") ela mesma agendou depois do horário de saída dela na escala comercial.</div>`;
+    html += `<div class="muted" style="margin-bottom:8px">Conta, por SDR, quantas reuniões AGENDADAS, REALIZADAS neste mês e VALIDADAS (de leads/reaplicações também deste mês, pela "Data da última aplicação") ela mesma agendou depois do horário de saída dela na escala comercial.</div>`;
     html += `<table class="aud-tbl"><tr><th class="l">SDR</th><th class="l">Time</th><th class="l">Saída</th>
       <th>Validadas do mês</th><th>Fora da escala</th><th class="barcell"></th></tr>`;
     const sdrsEscala = (resEscala.sdrs || []).slice().sort((a,b) => (b.fora_da_escala||0) - (a.fora_da_escala||0));

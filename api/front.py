@@ -398,16 +398,18 @@ $('f-mes').addEventListener('change', async () => {
   if (ABA === 'taxas') buscaTaxasAba(true);
 });
 // De/Ate: nas abas Reunioes (Closers/SDRs) e so recorte visual (re-renderiza
-// na hora, sem nova requisicao); na aba Taxas % refaz a busca com o novo
-// intervalo
-$('f-de').addEventListener('change', () => {
+// na hora, sem nova requisicao) -- "De" define o dia do bloco Anterior/Dia/
+// Seguinte, e quando os dois formam um intervalo dentro do mes exibido, a
+// coluna "Total do mes" (e os cards por time / faixa do topo) passam a somar
+// so os dias desse intervalo (ver periodoAtivoPara); na aba Taxas % os dois
+// campos refazem a busca com o novo intervalo
+function reRenderizaAbaAtual() {
   if (MODO_PESSOA === 'sdr') { if (LAST_DATA_SDR) renderSdr(LAST_DATA_SDR); }
   else { if (LAST_DATA) render(LAST_DATA); }
   if (ABA === 'taxas') buscaTaxasAba(true);
-});
-$('f-ate').addEventListener('change', () => {
-  if (ABA === 'taxas') buscaTaxasAba(true);
-});
+}
+$('f-de').addEventListener('change', reRenderizaAbaAtual);
+$('f-ate').addEventListener('change', reRenderizaAbaAtual);
 $('btn').addEventListener('click', () => {
   if (MODO_PESSOA === 'sdr') buscarSdr(false); else buscar(false);
 });
@@ -481,10 +483,41 @@ function cols(c, comValidada) {
        + `<td class="c-nsw">${c.no_show}</td><td class="c-reag">${c.reagendada}</td>`;
 }
 
+// quando "De"/"Até" do cabeçalho formam um intervalo valido DENTRO do
+// mes/ano que esta sendo exibido, os totais "do mes" (faixa superior, cards
+// por time e coluna final da tabela "Por Closer/SDR") passam a somar so os
+// dias desse intervalo -- pedido pelo usuario pra "De"/"Até" filtrar a
+// pagina toda, nao so o recorte de dia unico (Anterior/Dia/Seguinte)
+function periodoAtivoPara(data) {
+  const deVal = $('f-de').value, ateVal = $('f-ate').value;
+  if (!deVal || !ateVal) return null;
+  const [dy, dm, dd] = deVal.split('-').map(Number);
+  const [ay, am, ad] = ateVal.split('-').map(Number);
+  if (dy !== data.year || dm !== data.month || ay !== data.year || am !== data.month) return null;
+  if (dd > ad) return null;
+  return { de: dd, ate: ad };
+}
+
+function somaDiasNoPeriodo(diasArr, periodo) {
+  const zero = {planned:0, done:0, validada:0, no_show:0, reagendada:0};
+  const soma = {...zero};
+  for (const item of (diasArr || [])) {
+    if (item.dia < periodo.de || item.dia > periodo.ate) continue;
+    const c = item.counter || zero;
+    soma.planned += c.planned||0; soma.done += c.done||0; soma.validada += c.validada||0;
+    soma.no_show += c.no_show||0; soma.reagendada += c.reagendada||0;
+  }
+  return soma;
+}
+
 function renderGenerico(data, cfg) {
   $('updated').innerText = 'Atualizado: ' + new Date(data.generated_at).toLocaleString('pt-BR');
   $('auto').innerText = (cfg.ehAtual && cfg.ehAtual()) ? '● atualiza sozinho a cada ' + Math.round(REFRESH_MS/60000) + ' min' : '';
-  const mt = data.month_total;
+  const periodo = periodoAtivoPara(data);
+  const mt = periodo ? somaDiasNoPeriodo(data.days, periodo) : data.month_total;
+  const rotuloTotal = periodo
+    ? `Total do período — ${String(periodo.de).padStart(2,'0')}/${String(data.month).padStart(2,'0')} a ${String(periodo.ate).padStart(2,'0')}/${String(data.month).padStart(2,'0')}`
+    : `Total do mês — ${data.month_label}`;
   const nDays = data.days.length;
   const dSel = Math.min(diaSelecionado() || 1, nDays);
   const dSelStr = String(dSel).padStart(2,'0');
@@ -526,7 +559,7 @@ function renderGenerico(data, cfg) {
   const msValidaHtml = cfg.comValidada
     ? `<span class="ms-item c-valid">Validadas <b>${mt.validada||0}</b></span>` : '';
   html += `<div class="month-strip">
-    <span class="ms-title">Total do mês — ${data.month_label}</span>
+    <span class="ms-title">${rotuloTotal}</span>
     <span class="ms-item c-plan">Planejadas <b>${mt.planned}</b></span>
     <span class="ms-item c-done">Feitas <b>${mt.done}</b></span>
     ${msValidaHtml}
@@ -539,7 +572,7 @@ function renderGenerico(data, cfg) {
     html += '<div class="team-cards">';
     for (const t of times) {
       const cd = getDia((data.por_time_days || {})[t], dSel) || zero;
-      const cm = data.por_time[t];
+      const cm = periodo ? somaDiasNoPeriodo((data.por_time_days || {})[t], periodo) : data.por_time[t];
       html += `<div class="team-card">
         <div class="tc-name">${t}</div>
         <div class="tc-row">
@@ -548,7 +581,7 @@ function renderGenerico(data, cfg) {
           <span class="tc-sub">plan · <span class="c-done">${cd.done}</span> feitas${cfg.comValidada ? ' · <span class=\"c-valid\">' + (cd.validada||0) + '</span> valid' : ''} · <span class="c-nsw">${cd.no_show}</span> NS · <span class="c-reag">${cd.reagendada}</span> reag</span>
         </div>
         <div class="tc-row">
-          <span class="tc-lbl">Total mês</span>
+          <span class="tc-lbl">${periodo ? 'Total período' : 'Total mês'}</span>
           <span class="tc-big">${cm.planned}</span>
           <span class="tc-sub">plan · <span class="c-done">${cm.done}</span> feitas${cfg.comValidada ? ' · <span class=\"c-valid\">' + (cm.validada||0) + '</span> valid' : ''} · <span class="c-nsw">${cm.no_show}</span> NS · <span class="c-reag">${cm.reagendada}</span> reag</span>
         </div>
@@ -565,7 +598,7 @@ function renderGenerico(data, cfg) {
       const cls = (d.n === dSel) ? ' today' : '';
       html += `<th colspan="${nColsPorBloco}" class="grp-day${cls}">${d.rot} <span class="muted">${String(d.n).padStart(2,'0')}</span></th>`;
     }
-    html += `<th colspan="${nColsPorBloco}" class="grp-tot mtot">Total do mês</th></tr>`;
+    html += `<th colspan="${nColsPorBloco}" class="grp-tot mtot">${periodo ? 'Total do período' : 'Total do mês'}</th></tr>`;
     html += `<tr class="sub">`;
     for (const d of tresDias) html += subHead((d.n === dSel) ? ' today' : '');
     html += subHead(' mtot');
@@ -579,7 +612,7 @@ function renderGenerico(data, cfg) {
         : `<span class="cl-wrap"><span class="cl-toggle" data-cr="${cid}" id="${cid}-t">▸ detalhes</span>${c.name}</span>`;
       html += `<tr><td class="closer l">${nomeCel}</td><td class="team l">${c.time}</td>`;
       for (const d of tresDias) html += quatro(getDia(c.days, d.n) || zero);
-      const t = c.total;
+      const t = periodo ? somaDiasNoPeriodo(c.days, periodo) : c.total;
       html += `<td class="c-plan mtot">${t.planned}</td><td class="c-done">${t.done}</td><td class="c-nsw">${t.no_show}</td><td class="c-reag">${t.reagendada}</td></tr>`;
 
       let blocos = '';

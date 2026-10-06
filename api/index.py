@@ -269,6 +269,19 @@ def proprietarios_validos_ids(year, month):
     for nome_usuario, uid in users.items():
         if norm(nome_usuario) in extras_norm:
             ids.add(uid)
+    # "Legionario 1/2..." (ex.: Amanda Leal, dona dos negocios do funil
+    # Atlantis) tambem e dono valido de negocio -- na planilha de colaboradores
+    # o cargo dela nao comeca com "closer", entao ficava de fora e as reunioes
+    # da SDR nesse funil nao contavam como validadas (confirmado com o usuario).
+    # Nao filtra por TIMES_VALIDOS: o time do Atlantis nao esta nessa lista.
+    for r in carrega_csv():
+        if not r["cargo"].startswith("legionario"):
+            continue
+        if r["mes"] != month or r["ano"] != year or not r["nome"]:
+            continue
+        uid = users.get(r["nome"].strip().lower())
+        if uid:
+            ids.add(uid)
     return ids
 
 

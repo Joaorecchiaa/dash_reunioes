@@ -1410,11 +1410,17 @@ def _build_dashboard_generico(closers, year, month, privilegiado=False, com_vali
                 # status do NEGOCIO (aberto/ganho/perdido), independente do status da reuniao
                 status_negocio = {"open": "Aberto", "won": "Ganho", "lost": "Perdido"}.get(
                     info.get("status"), info.get("status") or "—")
-                # dedupe do mes (por negocio) -- guarda o status da 1a reuniao encontrada
-                if deal_id not in c_negocios_mes:
+                # dedupe do mes (por negocio) -- guarda o status da reuniao MAIS
+                # RECENTE do negocio no mes (due_date + due_time, desempate pelo
+                # id da atividade), nao a 1a encontrada: um negocio reagendado
+                # que depois foi feito ficava como "Reagendada" (caso #412707)
+                chave_rec = (str(due), str(a.get("due_time") or ""), a.get("id") or 0)
+                atual = c_negocios_mes.get(deal_id)
+                if atual is None or chave_rec > atual["_rec"]:
                     c_negocios_mes[deal_id] = {
                         "id": deal_id, "title": titulo, "url": url,
                         "status": status, "status_negocio": status_negocio,
+                        "_rec": chave_rec,
                     }
                 # lista do dia (uma linha por reuniao, com hora)
                 item_dia = {
@@ -1437,7 +1443,8 @@ def _build_dashboard_generico(closers, year, month, privilegiado=False, com_vali
             "proprio_validada": c_proprio_validada,
             "ganhos_done": c_ganhos_done,
             "ganhos_validada": c_ganhos_validada,
-            "negocios": sorted(c_negocios_mes.values(), key=lambda x: x["id"]) if privilegiado else [],
+            "negocios": sorted(({k: v for k, v in n.items() if k != "_rec"} for n in c_negocios_mes.values()),
+                               key=lambda x: x["id"]) if privilegiado else [],
             "negocios_dia": ([{"dia": d, "itens": sorted(c_negocios_dia[d], key=lambda x: x["hora"])}
                               for d in range(1, last_day + 1)] if privilegiado else []),
         })

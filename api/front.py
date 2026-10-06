@@ -613,7 +613,7 @@ function renderGenerico(data, cfg) {
       html += `<tr><td class="closer l">${nomeCel}</td><td class="team l">${c.time}</td>`;
       for (const d of tresDias) html += quatro(getDia(c.days, d.n) || zero);
       const t = periodo ? somaDiasNoPeriodo(c.days, periodo) : c.total;
-      html += `<td class="c-plan mtot">${t.planned}</td><td class="c-done">${t.done}</td><td class="c-nsw">${t.no_show}</td><td class="c-reag">${t.reagendada}</td></tr>`;
+      html += quatro(t, true) + `</tr>`;
 
       let blocos = '';
       if (cfg.comCriador) {

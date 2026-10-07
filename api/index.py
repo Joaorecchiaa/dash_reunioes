@@ -358,13 +358,13 @@ def atividade_e_validada(a, deal_info, proprietarios_ids):
     """Para a coluna 'Validadas' na tela de Reunioes: feita (type=meeting,
     done=true), o negocio vinculado tem PROPRIETARIO valido (closer do mes
     ou PROPRIETARIOS_EXTRAS_PERMITIDOS) E o campo 'Reuniao Validada?' == 'Sim'
-    (estrito -- em branco NAO conta)."""
+    OU em branco (so 'Nao' explicito invalida)."""
     if a.get("type") != "meeting" or not a.get("done"):
         return False
     info = deal_info.get(a.get("deal_id")) or {}
     if info.get("owner_id") not in proprietarios_ids:
         return False
-    return campo_validado_sim(info)
+    return campo_validado_diferente_de_nao(info)
 
 
 def eh_reuniao_valida_para_auditoria(a, pessoa_id, deal_info, proprietarios_ids):
@@ -376,7 +376,7 @@ def eh_reuniao_valida_para_auditoria(a, pessoa_id, deal_info, proprietarios_ids)
       da pessoa auditada E dentro do conjunto valido (closer do mes ou
       PROPRIETARIOS_EXTRAS_PERMITIDOS) -- nao conta se o dono e a propria
       pessoa auditada, nem se o dono for outro SDR/Team Leader qualquer
-    - o campo "Reuniao Validada?" do negocio == 'Sim' (estrito -- em
+    - o campo "Reuniao Validada?" do negocio == 'Sim' (ou em branco; so 'Nao' invalida -- em
       branco NAO conta)."""
     if a.get("type") != "meeting" or not a.get("done"):
         return False
@@ -386,7 +386,7 @@ def eh_reuniao_valida_para_auditoria(a, pessoa_id, deal_info, proprietarios_ids)
         return False
     if dono not in proprietarios_ids:
         return False
-    return campo_validado_sim(info)
+    return campo_validado_diferente_de_nao(info)
 
 
 def soma_em(counter, a, eh_valid=False):
@@ -1205,8 +1205,8 @@ def reunioes_fora_da_escala(year, month, date_de=None, date_ate=None):
             data_aplicacao = cf.get(CAMPO_DATA_ULTIMA_APLICACAO_ID)
             if not data_aplicacao or mes_str not in str(data_aplicacao):
                 continue  # negocio nao e "lead do mes" pela ultima aplicacao
-            if not campo_validado_sim(deal):
-                continue  # so conta reuniao VALIDADA (Reuniao Validada? == "Sim")
+            if not campo_validado_diferente_de_nao(deal):
+                continue  # so conta reuniao VALIDADA (Reuniao Validada? == "Sim" ou em branco)
 
             criada_em = _parse_dt_pipedrive(a.get("add_time"))
             if not criada_em:

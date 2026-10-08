@@ -585,6 +585,19 @@ function somaPeriodo(periodo, getter) {
   return soma;
 }
 
+// soma, no periodo, os contadores "marcadas pelo proprio" / "ganhos" (met_days)
+function somaMetPeriodo(periodo, nome) {
+  const t = {proprio_done:0, proprio_validada:0, ganhos_done:0, ganhos_validada:0};
+  for (const seg of periodo.segs) {
+    const x = (seg.d.por_closer || []).find(y => y.name === nome);
+    for (const it of ((x && x.met_days) || [])) {
+      if (it.dia < seg.de || it.dia > seg.ate) continue;
+      for (const k in t) t[k] += (it.c && it.c[k]) || 0;
+    }
+  }
+  return t;
+}
+
 // busca os meses seguintes do intervalo (se houver) e guarda em data._extras
 async function buscaExtras(data, endpoint, paramsBase) {
   data._extras = {};
@@ -816,10 +829,12 @@ function renderGenerico(data, cfg) {
         : c.total);
     }
     const tp = c => totPessoa.get(c.name) || c.total;
-    const semDetalhe = periodo ? '<td class="qtd-pct"><div class="qtd muted">—</div></td>' : null;
+    const metP = new Map();
+    if (periodo) for (const c of linhasDist) metP.set(c.name, somaMetPeriodo(periodo, c.name));
+    const campoDe = (c, campo) => periodo ? ((metP.get(c.name) || {})[campo] || 0) : (c[campo] || 0);
     const totalTodos = linhasDist.reduce((soma, c) => soma + (tp(c)[metricaDist]||0), 0);
-    const totalProprioTodos = linhasDist.reduce((soma, c) => soma + (c[campoProprio]||0), 0);
-    const totalGanhosTodos = linhasDist.reduce((soma, c) => soma + (c[campoGanhos]||0), 0);
+    const totalProprioTodos = linhasDist.reduce((soma, c) => soma + campoDe(c, campoProprio), 0);
+    const totalGanhosTodos = linhasDist.reduce((soma, c) => soma + campoDe(c, campoGanhos), 0);
     const distOrdenada = linhasDist.slice().sort((a,b) => (tp(b)[metricaDist]||0) - (tp(a)[metricaDist]||0));
     const celula = (num, pct) => `<td class="qtd-pct"><div class="qtd">${num}</div><div class="muted pct-sub">${pct.toFixed(1)}%</div></td>`;
     html += `<div class="panel"><h2>Distribuição por ${cfg.label} — ${tituloDist} · ${rotuloMes}</h2>
@@ -834,22 +849,22 @@ function renderGenerico(data, cfg) {
     for (const c of distOrdenada) {
       const qtd = tp(c)[metricaDist] || 0;
       const pct = totalTodos ? (qtd / totalTodos * 100) : 0;
-      const qtdProprio = c[campoProprio] || 0;
+      const qtdProprio = campoDe(c, campoProprio);
       const pctProprio = totalTodos ? (qtdProprio / totalTodos * 100) : 0;
-      const qtdGanhos = c[campoGanhos] || 0;
+      const qtdGanhos = campoDe(c, campoGanhos);
       const taxaConversao = qtd ? (qtdGanhos / qtd * 100) : 0;
       html += `<tr><td class="l">${c.name}</td>
         ${celula(qtd, pct)}
         <td class="barcell"><div class="aud-bar" style="width:${pct}%"></div></td>
-        ${semDetalhe || celula(qtdProprio, pctProprio)}
-        ${semDetalhe || celula(qtdGanhos, taxaConversao)}</tr>`;
+        ${celula(qtdProprio, pctProprio)}
+        ${celula(qtdGanhos, taxaConversao)}</tr>`;
     }
     const taxaConversaoTotal = totalTodos ? (totalGanhosTodos / totalTodos * 100) : 0;
     html += `<tr class="total"><td class="l">TOTAL</td>
       ${celula(totalTodos, 100)}
       <td></td>
-      ${semDetalhe || celula(totalProprioTodos, totalTodos ? (totalProprioTodos/totalTodos*100) : 0)}
-      ${semDetalhe || celula(totalGanhosTodos, taxaConversaoTotal)}</tr>`;
+      ${celula(totalProprioTodos, totalTodos ? (totalProprioTodos/totalTodos*100) : 0)}
+      ${celula(totalGanhosTodos, taxaConversaoTotal)}</tr>`;
     html += `</table></div>`;
 
     // ---- distribuicao QUEBRADA POR TIME: total do time + closers dentro dele ----

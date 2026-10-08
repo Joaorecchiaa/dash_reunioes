@@ -611,6 +611,25 @@ function faltaExtras(data) {
   return mesesDoIntervalo(deVal, ateVal).some(m => m !== mesData && !(data._extras || {})[m]);
 }
 
+// no intervalo que atravessa meses, a tabela lista quem aparece em QUALQUER
+// um dos meses (quem so existe no mes seguinte entra como linha sem dados do
+// mes de "De"), pra soma das linhas bater com o TOTAL
+function linhasPorPessoa(data, periodo) {
+  const base = data.por_closer || [];
+  if (!periodo) return base;
+  const vistos = new Set(base.map(c => c.name));
+  const extra = [];
+  for (const seg of periodo.segs) {
+    if (seg.d === data) continue;
+    for (const c of (seg.d.por_closer || [])) {
+      if (vistos.has(c.name)) continue;
+      vistos.add(c.name);
+      extra.push({ ...c, days: [], criadas_days: [], negocios: [], negocios_dia: [] });
+    }
+  }
+  return base.concat(extra);
+}
+
 function renderGenerico(data, cfg) {
   $('updated').innerText = 'Atualizado: ' + new Date(data.generated_at).toLocaleString('pt-BR');
   $('auto').innerText = (cfg.ehAtual && cfg.ehAtual()) ? '● atualiza sozinho a cada ' + Math.round(REFRESH_MS/60000) + ' min' : '';
@@ -642,13 +661,15 @@ function renderGenerico(data, cfg) {
   };
   const nColsPorBloco = cfg.comValidada ? 5 : 4;
 
-  const diaCounter = getDia(data.days, dSel) || zero;
+  // com periodo ativo, os blocos do topo mostram a soma do periodo (nao so o dia de "De")
+  const diaCounter = periodo ? mt : (getDia(data.days, dSel) || zero);
+  const rotuloMes = periodo ? periodo.rotulo : data.month_label;
 
   let html = '';
 
   const kpiValidaHtml = cfg.comValidada
     ? `<div class="kpi valid"><div class="lbl">Validadas</div><div class="val">${diaCounter.validada||0}</div></div>` : '';
-  html += `<div class="kpi-head">Dia ${dSelStr}/${mesStr}</div>`;
+  html += `<div class="kpi-head">${periodo ? 'Período ' + periodo.rotulo : 'Dia ' + dSelStr + '/' + mesStr}</div>`;
   html += `<div class="kpis">
     <div class="kpi plan"><div class="lbl">Planejadas</div><div class="val">${diaCounter.planned}</div></div>
     <div class="kpi done"><div class="lbl">Feitas</div><div class="val">${diaCounter.done}</div></div>
@@ -706,7 +727,7 @@ function renderGenerico(data, cfg) {
     html += `</tr></thead><tbody>`;
 
     const nCols = 2 + tresDias.length * nColsPorBloco + nColsPorBloco;
-    data.por_closer.forEach((c, i) => {
+    linhasPorPessoa(data, periodo).forEach((c, i) => {
       const cid = cfg.idPrefix + '-' + i;
       const nomeCel = cfg.comCriador
         ? `<span class="cl-wrap"><span class="cl-toggle" data-cr="${cid}" id="${cid}-t">▸ criador</span>${c.name}</span>`
@@ -787,12 +808,21 @@ function renderGenerico(data, cfg) {
     const campoProprio = cfg.comValidada ? 'proprio_validada' : 'proprio_done';
     const campoGanhos = cfg.comValidada ? 'ganhos_validada' : 'ganhos_done';
     const tituloDist = cfg.comValidada ? 'reuniões validadas' : 'reuniões feitas';
-    const totalTodos = data.por_closer.reduce((soma, c) => soma + (c.total[metricaDist]||0), 0);
-    const totalProprioTodos = data.por_closer.reduce((soma, c) => soma + (c[campoProprio]||0), 0);
-    const totalGanhosTodos = data.por_closer.reduce((soma, c) => soma + (c[campoGanhos]||0), 0);
-    const distOrdenada = data.por_closer.slice().sort((a,b) => (b.total[metricaDist]||0) - (a.total[metricaDist]||0));
+    const linhasDist = linhasPorPessoa(data, periodo);
+    const totPessoa = new Map();
+    for (const c of linhasDist) {
+      totPessoa.set(c.name, periodo
+        ? somaPeriodo(periodo, d => { const x = (d.por_closer || []).find(y => y.name === c.name); return x ? x.days : []; })
+        : c.total);
+    }
+    const tp = c => totPessoa.get(c.name) || c.total;
+    const semDetalhe = periodo ? '<td class="qtd-pct"><div class="qtd muted">—</div></td>' : null;
+    const totalTodos = linhasDist.reduce((soma, c) => soma + (tp(c)[metricaDist]||0), 0);
+    const totalProprioTodos = linhasDist.reduce((soma, c) => soma + (c[campoProprio]||0), 0);
+    const totalGanhosTodos = linhasDist.reduce((soma, c) => soma + (c[campoGanhos]||0), 0);
+    const distOrdenada = linhasDist.slice().sort((a,b) => (tp(b)[metricaDist]||0) - (tp(a)[metricaDist]||0));
     const celula = (num, pct) => `<td class="qtd-pct"><div class="qtd">${num}</div><div class="muted pct-sub">${pct.toFixed(1)}%</div></td>`;
-    html += `<div class="panel"><h2>Distribuição por ${cfg.label} — ${tituloDist} · ${data.month_label}</h2>
+    html += `<div class="panel"><h2>Distribuição por ${cfg.label} — ${tituloDist} · ${rotuloMes}</h2>
       <table class="aud-tbl">
       <tr>
         <th class="l" rowspan="2">${cfg.label}</th>
@@ -802,7 +832,7 @@ function renderGenerico(data, cfg) {
       </tr>
       <tr><th></th><th class="barcell"></th><th></th><th></th></tr>`;
     for (const c of distOrdenada) {
-      const qtd = c.total[metricaDist] || 0;
+      const qtd = tp(c)[metricaDist] || 0;
       const pct = totalTodos ? (qtd / totalTodos * 100) : 0;
       const qtdProprio = c[campoProprio] || 0;
       const pctProprio = totalTodos ? (qtdProprio / totalTodos * 100) : 0;
@@ -811,28 +841,28 @@ function renderGenerico(data, cfg) {
       html += `<tr><td class="l">${c.name}</td>
         ${celula(qtd, pct)}
         <td class="barcell"><div class="aud-bar" style="width:${pct}%"></div></td>
-        ${celula(qtdProprio, pctProprio)}
-        ${celula(qtdGanhos, taxaConversao)}</tr>`;
+        ${semDetalhe || celula(qtdProprio, pctProprio)}
+        ${semDetalhe || celula(qtdGanhos, taxaConversao)}</tr>`;
     }
     const taxaConversaoTotal = totalTodos ? (totalGanhosTodos / totalTodos * 100) : 0;
     html += `<tr class="total"><td class="l">TOTAL</td>
       ${celula(totalTodos, 100)}
       <td></td>
-      ${celula(totalProprioTodos, totalTodos ? (totalProprioTodos/totalTodos*100) : 0)}
-      ${celula(totalGanhosTodos, taxaConversaoTotal)}</tr>`;
+      ${semDetalhe || celula(totalProprioTodos, totalTodos ? (totalProprioTodos/totalTodos*100) : 0)}
+      ${semDetalhe || celula(totalGanhosTodos, taxaConversaoTotal)}</tr>`;
     html += `</table></div>`;
 
     // ---- distribuicao QUEBRADA POR TIME: total do time + closers dentro dele ----
-    const times = Array.from(new Set(data.por_closer.map(c => c.time))).sort();
-    html += `<div class="panel"><h2>Reuniões ${cfg.comValidada ? 'validadas' : 'feitas'} por Time · ${data.month_label}</h2>`;
+    const times = Array.from(new Set(linhasDist.map(c => c.time))).sort();
+    html += `<div class="panel"><h2>Reuniões ${cfg.comValidada ? 'validadas' : 'feitas'} por Time · ${rotuloMes}</h2>`;
     for (const time of times) {
-      const doTime = data.por_closer.filter(c => c.time === time)
-        .slice().sort((a,b) => (b.total[metricaDist]||0) - (a.total[metricaDist]||0));
-      const totalTime = doTime.reduce((soma, c) => soma + (c.total[metricaDist]||0), 0);
+      const doTime = linhasDist.filter(c => c.time === time)
+        .slice().sort((a,b) => (tp(b)[metricaDist]||0) - (tp(a)[metricaDist]||0));
+      const totalTime = doTime.reduce((soma, c) => soma + (tp(c)[metricaDist]||0), 0);
       html += `<div class="nb-title" style="margin-top:14px">${time} — ${totalTime} reunião(ões) no total</div>
         <table class="aud-tbl"><tr><th class="l">${cfg.label}</th><th>Quantidade</th><th>% do time</th><th class="barcell"></th></tr>`;
       for (const c of doTime) {
-        const qtd = c.total[metricaDist] || 0;
+        const qtd = tp(c)[metricaDist] || 0;
         const pctTime = totalTime ? (qtd / totalTime * 100) : 0;
         html += `<tr><td class="l">${c.name}</td>
           ${celula(qtd, pctTime)}
@@ -844,18 +874,30 @@ function renderGenerico(data, cfg) {
   }
 
   const priv = ehPriv();
-  const gdMap = {};
-  if (priv) for (const g of (data.geral_dia || [])) gdMap[g.dia] = g.itens || [];
-  html += `<details class="diaria"><summary>Dia a dia — todos os times (${data.month_label})${priv ? ' · clique num dia para ver as reuniões' : ''}</summary><div class="inner">
+  // dia a dia: com periodo ativo lista so os dias do intervalo (de todos os meses cobertos)
+  const diasLista = [];
+  const fontes = periodo ? periodo.segs : [{ d: data, de: 1, ate: 31 }];
+  for (const seg of fontes) {
+    const gm = {};
+    if (priv) for (const g of (seg.d.geral_dia || [])) gm[g.dia] = g.itens || [];
+    for (const row of seg.d.days) {
+      if (row.dia < seg.de || row.dia > seg.ate) continue;
+      diasLista.push({ row, mes: seg.d.month, itens: gm[row.dia] || [], ehSel: seg.d === data && row.dia === dSel });
+    }
+  }
+  const multiMes = periodo && periodo.segs.length > 1;
+  html += `<details class="diaria"><summary>Dia a dia — todos os times (${rotuloMes})${priv ? ' · clique num dia para ver as reuniões' : ''}</summary><div class="inner">
     <table><tr>${priv ? '<th style="width:24px"></th>' : ''}<th class="l">Dia</th><th>Planejado</th><th>Feitas</th>${cfg.comValidada ? '<th>Validadas</th>' : ''}<th>No Show</th><th>Reagendadas</th></tr>`;
 
-  for (const row of data.days) {
-    const cls = (row.dia === dSel) ? ' class="today"' : '';
-    const itens = priv ? (gdMap[row.dia] || []) : [];
+  for (const it0 of diasLista) {
+    const row = it0.row, itens = priv ? it0.itens : [];
+    const cls = it0.ehSel ? ' class="today"' : '';
     const temItens = itens.length > 0;
+    const rid = 'ddrow-' + it0.mes + '-' + row.dia;
     const arrow = priv ? `<td class="dd-arrow">${temItens ? '▸' : ''}</td>` : '';
-    const clickable = (priv && temItens) ? ` class="dd-click${cls ? ' today' : ''}" data-dd="ddrow-${row.dia}"` : cls;
-    html += `<tr${clickable}>${arrow}<td class="l">${String(row.dia).padStart(2,'0')}</td>${cols(row.counter, cfg.comValidada)}</tr>`;
+    const clickable = (priv && temItens) ? ` class="dd-click${cls ? ' today' : ''}" data-dd="${rid}"` : cls;
+    const rotDia = String(row.dia).padStart(2,'0') + (multiMes ? '/' + String(it0.mes).padStart(2,'0') : '');
+    html += `<tr${clickable}>${arrow}<td class="l">${rotDia}</td>${cols(row.counter, cfg.comValidada)}</tr>`;
     if (priv && temItens) {
       let sub = `<table class="dd-tbl"><tr><th>Hora</th><th>${cfg.label}</th><th>Time</th><th>ID</th><th>Negócio</th></tr>`;
       for (const it of itens) {
@@ -866,7 +908,7 @@ function renderGenerico(data, cfg) {
       }
       sub += `</table>`;
       const colspan = (cfg.comValidada ? 6 : 5) + 1; // arrow + Dia + colunas
-      html += `<tr class="dd-detail" id="ddrow-${row.dia}" style="display:none"><td colspan="${colspan}"><div class="dd-box">${sub}</div></td></tr>`;
+      html += `<tr class="dd-detail" id="${rid}" style="display:none"><td colspan="${colspan}"><div class="dd-box">${sub}</div></td></tr>`;
     }
   }
   const totLead = priv ? '<td></td>' : '';

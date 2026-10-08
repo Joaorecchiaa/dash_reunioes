@@ -408,8 +408,42 @@ function reRenderizaAbaAtual() {
   else { if (LAST_DATA) render(LAST_DATA); }
   if (ABA === 'taxas') buscaTaxasAba(true);
 }
-$('f-de').addEventListener('change', reRenderizaAbaAtual);
-$('f-ate').addEventListener('change', reRenderizaAbaAtual);
+// o periodo so soma quando De/Ate estao no MESMO mes que esta sendo exibido;
+// se o usuario escolhe datas de outro mes (ex.: 16/09 a 30/09 com "outubro"
+// selecionado), troca o filtro Mes pro mes de "De" e busca de novo, em vez de
+// continuar mostrando o total do mes errado
+function mesDaData(v) { return v ? v.slice(0, 7) : ''; }
+function ultimoDiaDoMes(mes) { return mes + '-' + String(diasNoMes(mes)).padStart(2, '0'); }
+async function sincronizaMesComDatas(campo) {
+  const de = $('f-de').value, ate = $('f-ate').value;
+  let alvo = campo === 'ate' ? mesDaData(ate) : mesDaData(de);
+  if (!alvo || !MESES_DISPONIVEIS.some(m => m.value === alvo)) return false;
+  let mudou = false;
+  if (alvo !== $('f-mes').value) {
+    $('f-mes').value = alvo;
+    await carregaPessoas();
+    mudou = true;
+  }
+  // intervalo que atravessa meses: limita ao mes escolhido
+  if (campo === 'ate') {
+    if (de && mesDaData(de) !== alvo) $('f-de').value = ate;
+  } else if (ate && mesDaData(ate) !== alvo) {
+    $('f-ate').value = (ate < de) ? de : ultimoDiaDoMes(alvo);
+  }
+  return mudou;
+}
+async function aoMudarData(campo) {
+  const mudouMes = await sincronizaMesComDatas(campo);
+  if (mudouMes) {
+    AUD_CARREGADA_MES = null;
+    if (ABA === 'taxas') { buscaTaxasAba(true); return; }
+    if (MODO_PESSOA === 'sdr') buscarSdr(false); else buscar(false);
+    return;
+  }
+  reRenderizaAbaAtual();
+}
+$('f-de').addEventListener('change', () => aoMudarData('de'));
+$('f-ate').addEventListener('change', () => aoMudarData('ate'));
 $('btn').addEventListener('click', () => {
   if (MODO_PESSOA === 'sdr') buscarSdr(false); else buscar(false);
 });

@@ -49,7 +49,9 @@ HTML = r"""<!DOCTYPE html>
   /* cabecalho: todos os controles do filtro (Mes/De/Ate/Time/Closer/Pesquisar)
      menores e mais delicados -- so nesse filtro, as outras abas mantem o
      tamanho padrao acima */
-  .site-header .filters select,
+  .mes-badge{padding:6px 10px;font-size:12px;font-weight:700;letter-spacing:.04em;border-radius:6px;border:1px solid #555;color:#ddd;background:#222;white-space:nowrap}
+.mes-badge.atual{background:#ffd600;color:#111;border-color:#ffd600}
+.site-header .filters select,
   .site-header .filters input[type=date] { min-width:0; width:132px; padding:6px 8px; font-size:12px; border-radius:6px; }
   .site-header .filters .field label { font-size:10px; }
   .site-header .filters button { padding:6px 16px; font-size:12px; border-radius:6px; }
@@ -272,7 +274,8 @@ HTML = r"""<!DOCTYPE html>
       </div>
     </div>
     <div class="filters">
-      <div class="field"><label>Mês</label><select id="f-mes"></select></div>
+      <div class="field" style="display:none"><label>Mês</label><select id="f-mes"></select></div>
+      <div class="field"><label>Período exibido</label><div id="mes-badge" class="mes-badge">—</div></div>
       <div class="field"><label>De</label><input type="date" id="f-de"></div>
       <div class="field"><label>Até</label><input type="date" id="f-ate"></div>
       <div class="field"><label>Time</label><select id="f-time"></select></div>
@@ -354,6 +357,20 @@ function preencheDatasHeader() {
   $('f-ate').value = padrao;
 }
 
+function atualizaBadgeMes() {
+  const lab = v => {
+    const m = (MESES_DISPONIVEIS || []).find(x => x.value === (v || '').slice(0, 7));
+    return (m ? m.label : (v || '').slice(0, 7)).toUpperCase();
+  };
+  const de = $('f-de').value, ate = $('f-ate').value;
+  const base = de || $('f-mes').value;
+  let txt = lab(base);
+  if (de && ate && de <= ate && de.slice(0, 7) !== ate.slice(0, 7)) txt += ' → ' + lab(ate);
+  $('mes-badge').textContent = txt;
+  const atual = (base || '').slice(0, 7) === CURRENT_MONTH;
+  $('mes-badge').classList.toggle('atual', atual);
+}
+
 function diaSelecionado() {
   const v = $('f-de').value;
   if (!v) return 1;
@@ -379,6 +396,7 @@ async function init() {
   $('f-mes').value = d.current;
   opt($('f-time'), d.teams, x=>x, x=>x);
   preencheDatasHeader();
+  atualizaBadgeMes();
   await carregaPessoas();
   buscar(false);
   setInterval(() => { if (ehDefaultAtual()) buscar(true); }, REFRESH_MS);
@@ -394,6 +412,7 @@ async function carregaPessoas() {
 
 $('f-mes').addEventListener('change', async () => {
   preencheDatasHeader();
+  atualizaBadgeMes();
   await carregaPessoas();
   if (ABA === 'taxas') buscaTaxasAba(true);
 });
@@ -404,6 +423,7 @@ $('f-mes').addEventListener('change', async () => {
 // so os dias desse intervalo (ver periodoAtivoPara); na aba Taxas % os dois
 // campos refazem a busca com o novo intervalo
 function reRenderizaAbaAtual() {
+  atualizaBadgeMes();
   if (MODO_PESSOA === 'sdr') { if (LAST_DATA_SDR) renderSdr(LAST_DATA_SDR); }
   else { if (LAST_DATA) render(LAST_DATA); }
   if (ABA === 'taxas') buscaTaxasAba(true);
@@ -413,28 +433,22 @@ function reRenderizaAbaAtual() {
 // selecionado), troca o filtro Mes pro mes de "De" e busca de novo, em vez de
 // continuar mostrando o total do mes errado
 function mesDaData(v) { return v ? v.slice(0, 7) : ''; }
-function ultimoDiaDoMes(mes) { return mes + '-' + String(diasNoMes(mes)).padStart(2, '0'); }
-async function sincronizaMesComDatas(campo) {
-  const de = $('f-de').value, ate = $('f-ate').value;
-  let alvo = campo === 'ate' ? mesDaData(ate) : mesDaData(de);
-  if (!alvo || !MESES_DISPONIVEIS.some(m => m.value === alvo)) return false;
-  let mudou = false;
-  if (alvo !== $('f-mes').value) {
-    $('f-mes').value = alvo;
-    await carregaPessoas();
-    mudou = true;
-  }
-  // intervalo que atravessa meses: limita ao mes escolhido
-  if (campo === 'ate') {
-    if (de && mesDaData(de) !== alvo) $('f-de').value = ate;
-  } else if (ate && mesDaData(ate) !== alvo) {
-    $('f-ate').value = (ate < de) ? de : ultimoDiaDoMes(alvo);
-  }
-  return mudou;
-}
+// "De" manda no mes exibido; "Ate" pode cair em outro mes (intervalo que
+// atravessa meses) -- os meses seguintes sao buscados a parte (buscaExtras)
 async function aoMudarData(campo) {
-  const mudouMes = await sincronizaMesComDatas(campo);
-  if (mudouMes) {
+  const de = $('f-de').value;
+  atualizaBadgeMes();
+  let mudouMes = false;
+  if (campo === 'de') {
+    const alvo = mesDaData(de);
+    if (alvo && alvo !== $('f-mes').value && MESES_DISPONIVEIS.some(m => m.value === alvo)) {
+      $('f-mes').value = alvo;
+      await carregaPessoas();
+      mudouMes = true;
+    }
+  }
+  const dataAtual = (MODO_PESSOA === 'sdr') ? LAST_DATA_SDR : LAST_DATA;
+  if (mudouMes || faltaExtras(dataAtual)) {
     AUD_CARREGADA_MES = null;
     if (ABA === 'taxas') { buscaTaxasAba(true); return; }
     if (MODO_PESSOA === 'sdr') buscarSdr(false); else buscar(false);
@@ -468,7 +482,7 @@ async function buscar(isAuto) {
     const res = await fetch('/api/dashboard?' + p.toString(), { headers: authHeaders() });
     const data = await res.json();
     if (data.error) $('root').innerHTML = '<div class="warn">Erro: ' + data.error + '</div>';
-    else { LAST_DATA = data; render(data); }
+    else { await buscaExtras(data, '/api/dashboard', p); LAST_DATA = data; render(data); }
   } catch (e) {
     if (!isAuto) $('root').innerHTML = '<div class="warn">Falha na requisição: ' + e + '</div>';
   } finally {
@@ -488,7 +502,7 @@ async function buscarSdr(isAuto) {
     const res = await fetch('/api/dashboard_sdr?' + p.toString(), { headers: authHeaders() });
     const data = await res.json();
     if (data.error) $('root-sdr').innerHTML = '<div class="warn">Erro: ' + data.error + '</div>';
-    else { LAST_DATA_SDR = data; renderSdr(data); }
+    else { await buscaExtras(data, '/api/dashboard_sdr', p); LAST_DATA_SDR = data; renderSdr(data); }
   } catch (e) {
     if (!isAuto) $('root-sdr').innerHTML = '<div class="warn">Falha na requisição: ' + e + '</div>';
   } finally {
@@ -522,35 +536,88 @@ function cols(c, comValidada) {
 // por time e coluna final da tabela "Por Closer/SDR") passam a somar so os
 // dias desse intervalo -- pedido pelo usuario pra "De"/"Até" filtrar a
 // pagina toda, nao so o recorte de dia unico (Anterior/Dia/Seguinte)
-function periodoAtivoPara(data) {
-  const deVal = $('f-de').value, ateVal = $('f-ate').value;
-  if (!deVal || !ateVal) return null;
-  const [dy, dm, dd] = deVal.split('-').map(Number);
-  const [ay, am, ad] = ateVal.split('-').map(Number);
-  if (dy !== data.year || dm !== data.month || ay !== data.year || am !== data.month) return null;
-  if (dd > ad) return null;
-  return { de: dd, ate: ad };
+// meses (YYYY-MM) cobertos pelo intervalo De..Ate -- o intervalo pode
+// atravessar meses (ex.: 30/09 a 07/10); o mes de "De" e o que esta em
+// `data` e os demais ficam em data._extras[mes] (buscados em buscaExtras)
+function mesesDoIntervalo(deVal, ateVal) {
+  const out = [];
+  let [y, m] = deVal.slice(0, 7).split('-').map(Number);
+  const fim = ateVal.slice(0, 7);
+  for (let n = 0; n < 24; n++) {
+    const k = y + '-' + String(m).padStart(2, '0');
+    out.push(k);
+    if (k >= fim) break;
+    m++; if (m > 12) { m = 1; y++; }
+  }
+  return out;
 }
 
-function somaDiasNoPeriodo(diasArr, periodo) {
-  const zero = {planned:0, done:0, validada:0, no_show:0, reagendada:0};
-  const soma = {...zero};
-  for (const item of (diasArr || [])) {
-    if (item.dia < periodo.de || item.dia > periodo.ate) continue;
-    const c = item.counter || zero;
-    soma.planned += c.planned||0; soma.done += c.done||0; soma.validada += c.validada||0;
-    soma.no_show += c.no_show||0; soma.reagendada += c.reagendada||0;
+function periodoAtivoPara(data) {
+  const deVal = $('f-de').value, ateVal = $('f-ate').value;
+  if (!deVal || !ateVal || deVal > ateVal) return null;
+  const mesData = data.year + '-' + String(data.month).padStart(2, '0');
+  if (deVal.slice(0, 7) !== mesData) return null;
+  const meses = mesesDoIntervalo(deVal, ateVal);
+  const segs = [];
+  meses.forEach((mes, i) => {
+    const d = (mes === mesData) ? data : ((data._extras || {})[mes]);
+    if (!d) return;
+    const ini = (i === 0) ? parseInt(deVal.slice(8, 10), 10) : 1;
+    const fim = (i === meses.length - 1) ? parseInt(ateVal.slice(8, 10), 10) : 31;
+    segs.push({ d, de: ini, ate: fim });
+  });
+  const fmt = v => v.slice(8, 10) + '/' + v.slice(5, 7);
+  return { segs, rotulo: fmt(deVal) + ' a ' + fmt(ateVal) };
+}
+
+// soma os dias do intervalo em todos os meses cobertos; `getter` extrai de
+// cada mes (objeto de dados) o array de dias que interessa
+function somaPeriodo(periodo, getter) {
+  const soma = {planned:0, done:0, validada:0, no_show:0, reagendada:0};
+  for (const seg of periodo.segs) {
+    for (const item of (getter(seg.d) || [])) {
+      if (item.dia < seg.de || item.dia > seg.ate) continue;
+      const c = item.counter || {};
+      soma.planned += c.planned||0; soma.done += c.done||0; soma.validada += c.validada||0;
+      soma.no_show += c.no_show||0; soma.reagendada += c.reagendada||0;
+    }
   }
   return soma;
+}
+
+// busca os meses seguintes do intervalo (se houver) e guarda em data._extras
+async function buscaExtras(data, endpoint, paramsBase) {
+  data._extras = {};
+  const deVal = $('f-de').value, ateVal = $('f-ate').value;
+  if (!deVal || !ateVal || deVal > ateVal) return;
+  const mesData = data.year + '-' + String(data.month).padStart(2, '0');
+  if (deVal.slice(0, 7) !== mesData) return;
+  const extras = mesesDoIntervalo(deVal, ateVal).filter(m => m !== mesData);
+  await Promise.all(extras.map(async mes => {
+    const p = new URLSearchParams(paramsBase);
+    p.set('month', mes);
+    const r = await fetch(endpoint + '?' + p.toString(), { headers: authHeaders() });
+    const d = await r.json();
+    if (!d.error) data._extras[mes] = d;
+  }));
+}
+
+function faltaExtras(data) {
+  if (!data) return false;
+  const deVal = $('f-de').value, ateVal = $('f-ate').value;
+  if (!deVal || !ateVal || deVal > ateVal) return false;
+  const mesData = data.year + '-' + String(data.month).padStart(2, '0');
+  if (deVal.slice(0, 7) !== mesData) return false;
+  return mesesDoIntervalo(deVal, ateVal).some(m => m !== mesData && !(data._extras || {})[m]);
 }
 
 function renderGenerico(data, cfg) {
   $('updated').innerText = 'Atualizado: ' + new Date(data.generated_at).toLocaleString('pt-BR');
   $('auto').innerText = (cfg.ehAtual && cfg.ehAtual()) ? '● atualiza sozinho a cada ' + Math.round(REFRESH_MS/60000) + ' min' : '';
   const periodo = periodoAtivoPara(data);
-  const mt = periodo ? somaDiasNoPeriodo(data.days, periodo) : data.month_total;
+  const mt = periodo ? somaPeriodo(periodo, d => d.days) : data.month_total;
   const rotuloTotal = periodo
-    ? `Total do período — ${String(periodo.de).padStart(2,'0')}/${String(data.month).padStart(2,'0')} a ${String(periodo.ate).padStart(2,'0')}/${String(data.month).padStart(2,'0')}`
+    ? `Total do período — ${periodo.rotulo}`
     : `Total do mês — ${data.month_label}`;
   const nDays = data.days.length;
   const dSel = Math.min(diaSelecionado() || 1, nDays);
@@ -606,7 +673,7 @@ function renderGenerico(data, cfg) {
     html += '<div class="team-cards">';
     for (const t of times) {
       const cd = getDia((data.por_time_days || {})[t], dSel) || zero;
-      const cm = periodo ? somaDiasNoPeriodo((data.por_time_days || {})[t], periodo) : data.por_time[t];
+      const cm = periodo ? somaPeriodo(periodo, d => (d.por_time_days || {})[t]) : data.por_time[t];
       html += `<div class="team-card">
         <div class="tc-name">${t}</div>
         <div class="tc-row">
@@ -646,7 +713,7 @@ function renderGenerico(data, cfg) {
         : `<span class="cl-wrap"><span class="cl-toggle" data-cr="${cid}" id="${cid}-t">▸ detalhes</span>${c.name}</span>`;
       html += `<tr><td class="closer l">${nomeCel}</td><td class="team l">${c.time}</td>`;
       for (const d of tresDias) html += quatro(getDia(c.days, d.n) || zero);
-      const t = periodo ? somaDiasNoPeriodo(c.days, periodo) : c.total;
+      const t = periodo ? somaPeriodo(periodo, d => { const x = (d.por_closer || []).find(y => y.name === c.name); return x ? x.days : []; }) : c.total;
       html += quatro(t, true) + `</tr>`;
 
       let blocos = '';
@@ -1197,6 +1264,50 @@ function carregaTaxasAba() {
   buscaTaxasAba();
 }
 
+// fora da escala: se De..Ate atravessa meses, consulta cada mes (com o
+// intervalo recortado nele, mantendo "leads do mes" de cada mes) e soma
+async function buscaEscalaPeriodo(mes, de, ate) {
+  const um = (m, d1, d2) => {
+    let u = '/api/taxas_escala?month=' + m;
+    if (d1 && d2) u += '&de=' + d1 + '&ate=' + d2;
+    return fetch(u, { headers: authHeaders() }).then(r => r.json());
+  };
+  if (!de || !ate || de.slice(0, 7) === ate.slice(0, 7)) return um(mes, de, ate);
+  const meses = mesesDoIntervalo(de, ate);
+  const res = await Promise.all(meses.map((m, i) => {
+    const [y, mm] = m.split('-').map(Number);
+    const ultimo = m + '-' + String(new Date(y, mm, 0).getDate()).padStart(2, '0');
+    return um(m, i === 0 ? de : m + '-01', i === meses.length - 1 ? ate : ultimo);
+  }));
+  const erro = res.find(r => r.error || r.erro);
+  if (erro) return erro;
+  const porNome = {};
+  for (const r of res) {
+    for (const s of (r.sdrs || [])) {
+      const a = porNome[s.nome];
+      if (!a) { porNome[s.nome] = JSON.parse(JSON.stringify(s)); continue; }
+      if (s.erro) continue;
+      a.total_mes = (a.total_mes || 0) + (s.total_mes || 0);
+      a.fora_da_escala = (a.fora_da_escala || 0) + (s.fora_da_escala || 0);
+      a.exemplos = (a.exemplos || []).concat(s.exemplos || []);
+      a.entrada = a.entrada || s.entrada; a.saida = a.saida || s.saida;
+    }
+  }
+  const sdrs = Object.values(porNome);
+  let tm = 0, tf = 0;
+  for (const s of sdrs) {
+    if (s.erro) continue;
+    s.pct_fora_escala = s.total_mes ? Math.round(s.fora_da_escala / s.total_mes * 1000) / 10 : 0;
+    tm += s.total_mes || 0; tf += s.fora_da_escala || 0;
+  }
+  const f = v => v.slice(8, 10) + '/' + v.slice(5, 7) + '/' + v.slice(0, 4);
+  return {
+    sdrs, escala_configurada: res.every(r => r.escala_configurada),
+    total: { total_mes: tm, fora_da_escala: tf, pct_fora_escala: tm ? Math.round(tf / tm * 1000) / 10 : 0 },
+    month_label: f(de) + ' a ' + f(ate),
+  };
+}
+
 async function buscaTaxasAba(forcar) {
   // usa o filtro do cabecalho (Mes / De / Ate), o mesmo que as outras abas
   const mes = $('f-mes').value;
@@ -1211,10 +1322,8 @@ async function buscaTaxasAba(forcar) {
   if (!forcar && TAXAS_CARREGADA_MES === chave) return;
   $('taxas-resultado').innerHTML = '<div class="muted">Buscando no Pipedrive… (pode levar alguns segundos)</div>';
   try {
-    let urlEscala = '/api/taxas_escala?month=' + mes;
-    if (usaRange) urlEscala += '&de=' + de + '&ate=' + ate;
     const [resEscala, resDash, ...resEvolucoes] = await Promise.all([
-      fetch(urlEscala, { headers: authHeaders() }).then(r => r.json()),
+      buscaEscalaPeriodo(mes, usaRange ? de : '', usaRange ? ate : ''),
       fetch('/api/dashboard?month=' + mes, { headers: authHeaders() }).then(r => r.json()),
       ...EV_SDRS.map(sdr => {
         const p = new URLSearchParams({ sdr, desde: EV_DESDE });

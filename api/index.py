@@ -1346,6 +1346,9 @@ def _build_dashboard_generico(closers, year, month, privilegiado=False, com_vali
         c_proprio_validada = 0  # idem, mas das VALIDADAS (so relevante na aba SDR)
         c_ganhos_done = 0       # das reunioes FEITAS, quantas tem o negocio Ganho hoje
         c_ganhos_validada = 0   # idem, mas das VALIDADAS
+        # os 4 contadores acima quebrados por dia (pra somar um periodo De/Ate)
+        c_met_days = {d: {"proprio_done": 0, "proprio_validada": 0, "ganhos_done": 0, "ganhos_validada": 0}
+                      for d in range(1, last_day + 1)}
         c_negocios_mes = {}   # deal_id -> {id,title,url}  (dedupe do mes)
         c_negocios_dia = {d: [] for d in range(1, last_day + 1)}  # dia -> lista de reunioes com negocio
 
@@ -1381,15 +1384,19 @@ def _build_dashboard_generico(closers, year, month, privilegiado=False, com_vali
             c_criadas_days[d.day][chave] += 1
             if chave == "proprio" and tipo == "meeting" and done:
                 c_proprio_done += 1
+                c_met_days[d.day]["proprio_done"] += 1
                 if eh_valid:
                     c_proprio_validada += 1
+                    c_met_days[d.day]["proprio_validada"] += 1
 
             # Ganhos: do total de reunioes FEITAS (e das VALIDADAS), quantas tem
             # o negocio hoje com status "Ganho" -- publico, nao depende de login
             if tipo == "meeting" and done and info.get("status") == "won":
                 c_ganhos_done += 1
+                c_met_days[d.day]["ganhos_done"] += 1
                 if eh_valid:
                     c_ganhos_validada += 1
+                    c_met_days[d.day]["ganhos_validada"] += 1
 
             if privilegiado:
                 titulo = info.get("title") or ("Negocio " + str(deal_id))
@@ -1439,6 +1446,7 @@ def _build_dashboard_generico(closers, year, month, privilegiado=False, com_vali
             "by_pipeline": dict(c_pipes),
             "criadas": c_criadas,
             "criadas_days": [{"dia": d, "c": c_criadas_days[d]} for d in range(1, last_day + 1)],
+            "met_days": [{"dia": d, "c": c_met_days[d]} for d in range(1, last_day + 1)],
             "proprio_done": c_proprio_done,
             "proprio_validada": c_proprio_validada,
             "ganhos_done": c_ganhos_done,

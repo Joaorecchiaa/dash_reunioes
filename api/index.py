@@ -1307,6 +1307,24 @@ def build_dashboard_sdr(year, month, time_filtro=None, sdr_filtro=None, privileg
     return _build_dashboard_generico(sdrs, year, month, privilegiado, com_validada=True)
 
 
+def dedup_atividades_da_pessoa(acts):
+    """Remove atividades duplicadas DA MESMA PESSOA: mesmo negocio, tipo, data e
+    hora. Acontece quando a reuniao volta do closer (reagendamento) e as duas
+    atividades ficam no nome do SDR -- sem isso a mesma reuniao contava 2x
+    (ex.: #413992 aparecia duas vezes como Reagendada). Entre duas copias,
+    fica a que ja esta feita (done), senao a primeira."""
+    vistos = {}
+    ordem = []
+    for a in acts:
+        k = (a.get("deal_id"), a.get("type"), str(a.get("due_date")), str(a.get("due_time")))
+        if k not in vistos:
+            vistos[k] = a
+            ordem.append(k)
+        elif a.get("done") and not vistos[k].get("done"):
+            vistos[k] = a
+    return [vistos[k] for k in ordem]
+
+
 def _build_dashboard_generico(closers, year, month, privilegiado=False, com_validada=False,
                                excluir_criadores_ids=None):
     """Nucleo do dashboard de reunioes -- recebe `closers` ja resolvido
@@ -1333,7 +1351,7 @@ def _build_dashboard_generico(closers, year, month, privilegiado=False, com_vali
             nao_encontrados.append(nome)
             continue
 
-        acts = acts_do_owner(owner_id, year, month)
+        acts = dedup_atividades_da_pessoa(acts_do_owner(owner_id, year, month))
         deal_ids = {a["deal_id"] for a in acts if a.get("deal_id")}
         deal_info = info_dos_deals(deal_ids)
 

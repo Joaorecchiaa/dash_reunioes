@@ -1896,6 +1896,15 @@ def api_me():
     return jsonify({"privilegiado": bool(u), "usuario": u})
 
 
+# CORS so de LEITURA nos dois endpoints publicos de reunioes -- permite que o
+# wallpaper SNIPER (arquivo separado, fora do projeto) leia o placar do dia
+@app.after_request
+def cors_leitura(resp):
+    if request.method == "GET" and request.path in ("/api/dashboard_sdr", "/api/dashboard"):
+        resp.headers["Access-Control-Allow-Origin"] = "*"
+    return resp
+
+
 # servir o front (HTML vem embutido em front.py -- garante que vai no bundle)
 # "/" = local; "/api/index" = destino do rewrite da Vercel (vercel.json)
 @app.route("/")

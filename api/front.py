@@ -66,7 +66,7 @@ HTML = r"""<!DOCTYPE html>
   .kpi .lbl { font-size:11px; color:var(--muted); text-transform:uppercase; letter-spacing:.5px; }
   .kpi .val { font-size:30px; font-weight:800; line-height:1.1; }
   .kpi.plan .val{color:var(--text);} .kpi.done .val{color:var(--text);} .kpi.valid .val{color:var(--text);}
-  .kpi.nsw .val{color:var(--text);} .kpi.reag .val{color:var(--text);}
+  .kpi.nsw .val{color:var(--text);} .kpi.nvalid .val{color:var(--text);} .kpi.reag .val{color:var(--text);}
 
   .month-strip { display:flex; gap:16px; flex-wrap:wrap; align-items:center; background:var(--card);
                  border:1px solid var(--border); border-left:4px solid var(--gold); border-radius:10px;
@@ -95,7 +95,7 @@ HTML = r"""<!DOCTYPE html>
   td.l, th.l { text-align:left; }
   tr.total td { font-weight:800; border-top:2px solid var(--gold); background:var(--gold-soft); color:var(--text); }
   tr.today td { background:var(--gold-soft); }
-  .c-plan{color:var(--text); font-weight:800;} .c-done{color:var(--done);} .c-valid{color:#0a5f36; font-weight:700;} .c-nsw{color:var(--nsw);} .c-reag{color:var(--reag);}
+  .c-plan{color:var(--text); font-weight:800;} .c-done{color:var(--done);} .c-valid{color:#0a5f36; font-weight:700;} .c-nvalid{color:#a1262d; font-weight:700;} .c-nsw{color:var(--nsw);} .c-reag{color:var(--reag);}
   .warn { color:var(--nsw); font-size:12px; margin-bottom:16px; }
   .muted { color:var(--muted); }
 
@@ -527,7 +527,7 @@ function statusBadge(status) {
 
 function cols(c, comValidada) {
   const meio = comValidada ? `<td class="c-valid">${c.validada||0}</td>` : '';
-  return `<td class="c-plan">${c.planned}</td><td class="c-done">${c.done}</td>${meio}`
+  return `<td class="c-plan">${c.planned}</td><td class="c-done">${c.done}</td>${meio}<td class="c-nvalid">${c.nao_validada||0}</td>`
        + `<td class="c-nsw">${c.no_show}</td><td class="c-reag">${c.reagendada}</td>`;
 }
 
@@ -573,12 +573,12 @@ function periodoAtivoPara(data) {
 // soma os dias do intervalo em todos os meses cobertos; `getter` extrai de
 // cada mes (objeto de dados) o array de dias que interessa
 function somaPeriodo(periodo, getter) {
-  const soma = {planned:0, done:0, validada:0, no_show:0, reagendada:0};
+  const soma = {planned:0, done:0, validada:0, nao_validada:0, no_show:0, reagendada:0};
   for (const seg of periodo.segs) {
     for (const item of (getter(seg.d) || [])) {
       if (item.dia < seg.de || item.dia > seg.ate) continue;
       const c = item.counter || {};
-      soma.planned += c.planned||0; soma.done += c.done||0; soma.validada += c.validada||0;
+      soma.planned += c.planned||0; soma.done += c.done||0; soma.validada += c.validada||0; soma.nao_validada += c.nao_validada||0;
       soma.no_show += c.no_show||0; soma.reagendada += c.reagendada||0;
     }
   }
@@ -665,14 +665,14 @@ function renderGenerico(data, cfg) {
 
   const quatro = (c, mtotCls) => {
     const meio = cfg.comValidada ? `<td class="c-valid">${c.validada||0}</td>` : '';
-    return `<td class="c-plan${mtotCls?' mtot':''}">${c.planned}</td><td class="c-done">${c.done}</td>${meio}`
+    return `<td class="c-plan${mtotCls?' mtot':''}">${c.planned}</td><td class="c-done">${c.done}</td>${meio}<td class="c-nvalid">${c.nao_validada||0}</td>`
          + `<td class="c-nsw">${c.no_show}</td><td class="c-reag">${c.reagendada}</td>`;
   };
   const subHead = extra => {
     const meio = cfg.comValidada ? `<th class="c-valid">V</th>` : '';
-    return `<th class="c-plan${extra||''}">P</th><th class="c-done">F</th>${meio}<th class="c-nsw">NS</th><th class="c-reag">R</th>`;
+    return `<th class="c-plan${extra||''}">P</th><th class="c-done">F</th>${meio}<th class="c-nvalid">NV</th><th class="c-nsw">NS</th><th class="c-reag">R</th>`;
   };
-  const nColsPorBloco = cfg.comValidada ? 5 : 4;
+  const nColsPorBloco = cfg.comValidada ? 6 : 5;
 
   // com periodo ativo, os blocos do topo mostram a soma do periodo (nao so o dia de "De")
   const diaCounter = periodo ? mt : (getDia(data.days, dSel) || zero);
@@ -687,6 +687,7 @@ function renderGenerico(data, cfg) {
     <div class="kpi plan"><div class="lbl">Planejadas</div><div class="val">${diaCounter.planned}</div></div>
     <div class="kpi done"><div class="lbl">Feitas</div><div class="val">${diaCounter.done}</div></div>
     ${kpiValidaHtml}
+    <div class="kpi nvalid"><div class="lbl">Não validadas</div><div class="val">${diaCounter.nao_validada||0}</div></div>
     <div class="kpi nsw"><div class="lbl">No Show</div><div class="val">${diaCounter.no_show}</div></div>
     <div class="kpi reag"><div class="lbl">Reagendadas</div><div class="val">${diaCounter.reagendada}</div></div>
   </div>`;
@@ -698,6 +699,7 @@ function renderGenerico(data, cfg) {
     <span class="ms-item c-plan">Planejadas <b>${mt.planned}</b></span>
     <span class="ms-item c-done">Feitas <b>${mt.done}</b></span>
     ${msValidaHtml}
+    <span class="ms-item c-nvalid">Não validadas <b>${mt.nao_validada||0}</b></span>
     <span class="ms-item c-nsw">No Show <b>${mt.no_show}</b></span>
     <span class="ms-item c-reag">Reagendadas <b>${mt.reagendada}</b></span>
   </div>`;
@@ -713,12 +715,12 @@ function renderGenerico(data, cfg) {
         <div class="tc-row">
           <span class="tc-lbl">Total dia ${dSelStr}</span>
           <span class="tc-big">${cd.planned}</span>
-          <span class="tc-sub">plan · <span class="c-done">${cd.done}</span> feitas${cfg.comValidada ? ' · <span class=\"c-valid\">' + (cd.validada||0) + '</span> valid' : ''} · <span class="c-nsw">${cd.no_show}</span> NS · <span class="c-reag">${cd.reagendada}</span> reag</span>
+          <span class="tc-sub">plan · <span class="c-done">${cd.done}</span> feitas${cfg.comValidada ? ' · <span class=\"c-valid\">' + (cd.validada||0) + '</span> valid' : ''} · <span class="c-nvalid">${cd.nao_validada||0}</span> não valid · <span class="c-nsw">${cd.no_show}</span> NS · <span class="c-reag">${cd.reagendada}</span> reag</span>
         </div>
         <div class="tc-row">
           <span class="tc-lbl">${periodo ? 'Total período' : 'Total mês'}</span>
           <span class="tc-big">${cm.planned}</span>
-          <span class="tc-sub">plan · <span class="c-done">${cm.done}</span> feitas${cfg.comValidada ? ' · <span class=\"c-valid\">' + (cm.validada||0) + '</span> valid' : ''} · <span class="c-nsw">${cm.no_show}</span> NS · <span class="c-reag">${cm.reagendada}</span> reag</span>
+          <span class="tc-sub">plan · <span class="c-done">${cm.done}</span> feitas${cfg.comValidada ? ' · <span class=\"c-valid\">' + (cm.validada||0) + '</span> valid' : ''} · <span class="c-nvalid">${cm.nao_validada||0}</span> não valid · <span class="c-nsw">${cm.no_show}</span> NS · <span class="c-reag">${cm.reagendada}</span> reag</span>
         </div>
       </div>`;
     }
@@ -812,7 +814,7 @@ function renderGenerico(data, cfg) {
     html += `<tr class="foot"><td class="closer l">TOTAL</td><td class="team l"></td>`;
     for (const d of tresDias) html += quatro(getDia(data.days, d.n) || zero);
     html += quatro(mt, true) + `</tr>`;
-    const legendaValid = cfg.comValidada ? ' · V = validadas' : '';
+    const legendaValid = (cfg.comValidada ? ' · V = validadas' : '') + ' · NV = não validadas (campo "Reunião Validada?" = Não)';
     html += `</tbody></table></div>
       <div class="muted" style="font-size:11px;margin-top:8px">P = planejadas · F = feitas${legendaValid} · NS = no-show · R = reagendadas</div></div>`;
 
@@ -902,7 +904,7 @@ function renderGenerico(data, cfg) {
   }
   const multiMes = periodo && periodo.segs.length > 1;
   html += `<details class="diaria"><summary>Dia a dia — todos os times (${rotuloMes})${priv ? ' · clique num dia para ver as reuniões' : ''}</summary><div class="inner">
-    <table><tr>${priv ? '<th style="width:24px"></th>' : ''}<th class="l">Dia</th><th>Planejado</th><th>Feitas</th>${cfg.comValidada ? '<th>Validadas</th>' : ''}<th>No Show</th><th>Reagendadas</th></tr>`;
+    <table><tr>${priv ? '<th style="width:24px"></th>' : ''}<th class="l">Dia</th><th>Planejado</th><th>Feitas</th>${cfg.comValidada ? '<th>Validadas</th>' : ''}<th>Não validadas</th><th>No Show</th><th>Reagendadas</th></tr>`;
 
   for (const it0 of diasLista) {
     const row = it0.row, itens = priv ? it0.itens : [];
@@ -922,7 +924,7 @@ function renderGenerico(data, cfg) {
           <td><a href="${it.url}" target="_blank" rel="noopener">${it.title}</a></td></tr>`;
       }
       sub += `</table>`;
-      const colspan = (cfg.comValidada ? 6 : 5) + 1; // arrow + Dia + colunas
+      const colspan = (cfg.comValidada ? 7 : 6) + 1; // arrow + Dia + colunas
       html += `<tr class="dd-detail" id="${rid}" style="display:none"><td colspan="${colspan}"><div class="dd-box">${sub}</div></td></tr>`;
     }
   }

@@ -600,6 +600,21 @@ function somaMetPeriodo(periodo, nome) {
   return t;
 }
 
+// negocios da pessoa DENTRO do periodo (De/Ate), 1 por negocio, com o status da
+// reuniao mais recente do periodo -- vem de negocios_dia (so os dias do intervalo)
+function negociosPeriodo(periodo, nome) {
+  const m = new Map();
+  for (const seg of periodo.segs) {
+    const x = (seg.d.por_closer || []).find(y => y.name === nome);
+    const dias = ((x && x.negocios_dia) || []).slice().sort((a, b) => a.dia - b.dia);
+    for (const di of dias) {
+      if (di.dia < seg.de || di.dia > seg.ate) continue;
+      for (const it of (di.itens || [])) m.set(it.id, it);   // cronologico: o ultimo vence
+    }
+  }
+  return Array.from(m.values()).sort((a, b) => a.id - b.id);
+}
+
 // busca os meses seguintes do intervalo (se houver) e guarda em data._extras
 async function buscaExtras(data, endpoint, paramsBase) {
   data._extras = {};
@@ -799,8 +814,8 @@ function renderGenerico(data, cfg) {
         negHtml += `</div>`;
 
         // --- negocios do MES (dedupe) ---
-        const nm = c.negocios || [];
-        negHtml += `<div class="neg-box"><div class="nb-title">Negócios do mês (${nm.length})</div>`;
+        const nm = periodo ? negociosPeriodo(periodo, c.name) : (c.negocios || []);
+        negHtml += `<div class="neg-box"><div class="nb-title">Negócios ${periodo ? 'do período ' + periodo.rotulo : 'do mês'} (${nm.length})</div>`;
         if (nm.length) {
           negHtml += `<table class="neg-tbl"><colgroup><col class="c-hora"><col class="c-id"><col><col class="c-status"><col class="c-status"></colgroup><tr><th></th><th>ID</th><th>Negócio</th><th>Status</th><th>Situação</th></tr>`;
           for (const n of nm) {
@@ -811,7 +826,7 @@ function renderGenerico(data, cfg) {
           }
           negHtml += `</table>`;
         } else {
-          negHtml += `<div class="muted" style="font-size:12px">Nenhum negócio no mês.</div>`;
+          negHtml += `<div class="muted" style="font-size:12px">Nenhum negócio ${periodo ? 'no período' : 'no mês'}.</div>`;
         }
         negHtml += `</div>`;
       }

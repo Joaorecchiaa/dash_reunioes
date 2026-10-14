@@ -146,7 +146,7 @@ def parse_mes(v):
 
 
 def novo_contador(com_validada=False):
-    base = {"planned": 0, "done": 0, "no_show": 0, "reagendada": 0}
+    base = {"planned": 0, "done": 0, "no_show": 0, "reagendada": 0, "nao_validada": 0}
     if com_validada:
         base["validada"] = 0
     return base
@@ -230,6 +230,20 @@ def campo_validado_sim(a):
         return str(label).strip().lower() == "sim"
     # fallback: campo ja veio como texto (label direto)
     return str(valor).strip().lower() == "sim"
+
+
+def campo_validado_e_nao(info):
+    """True se o campo "Reuniao Validada?" do negocio esta EXPLICITAMENTE como
+    'Nao' (em branco NAO conta) -- usado na coluna "Nao validadas"."""
+    valor = _label_do_campo(_campo_bruto(info, CAMPO_VALIDADA_ID))
+    if valor is None:
+        return False
+    if isinstance(valor, (int, float)) or (isinstance(valor, str) and valor.strip().lstrip("-").isdigit()):
+        label = opcoes_campo_validada().get(int(valor))
+        if label is None:
+            return False
+        valor = label
+    return norm(valor) == "nao"
 
 
 def campo_validado_diferente_de_nao(info):
@@ -389,7 +403,7 @@ def eh_reuniao_valida_para_auditoria(a, pessoa_id, deal_info, proprietarios_ids)
     return campo_validado_diferente_de_nao(info)
 
 
-def soma_em(counter, a, eh_valid=False):
+def soma_em(counter, a, eh_valid=False, eh_nao_valid=False):
     tipo = a.get("type")
     done = a.get("done")
     counter["planned"] += 1
@@ -397,6 +411,8 @@ def soma_em(counter, a, eh_valid=False):
         counter["done"] += 1
         if eh_valid and "validada" in counter:
             counter["validada"] += 1
+        if eh_nao_valid:
+            counter["nao_validada"] += 1
     elif tipo == "no_show":
         counter["no_show"] += 1
     elif tipo == "reagendamento":
@@ -1385,17 +1401,19 @@ def _build_dashboard_generico(closers, year, month, privilegiado=False, com_vali
 
             info = deal_info.get(deal_id) or {}
             eh_valid = com_validada and atividade_e_validada(a, deal_info, proprietarios_ids)
+            # "Nao validada": reuniao feita cujo negocio tem "Reuniao Validada?" = Nao
+            eh_nao_valid = tipo == "meeting" and bool(done) and campo_validado_e_nao(info)
 
-            soma_em(combined_days[d.day], a, eh_valid)
-            soma_em(month_total, a, eh_valid)
-            soma_em(c_total, a, eh_valid)
-            soma_em(c_days[d.day], a, eh_valid)
-            soma_em(por_time[time_c], a, eh_valid)
-            soma_em(por_time_days[time_c][d.day], a, eh_valid)
+            soma_em(combined_days[d.day], a, eh_valid, eh_nao_valid)
+            soma_em(month_total, a, eh_valid, eh_nao_valid)
+            soma_em(c_total, a, eh_valid, eh_nao_valid)
+            soma_em(c_days[d.day], a, eh_valid, eh_nao_valid)
+            soma_em(por_time[time_c], a, eh_valid, eh_nao_valid)
+            soma_em(por_time_days[time_c][d.day], a, eh_valid, eh_nao_valid)
 
             pid = info.get("pipeline_id")
             pnome = pipelines.get(pid, f"Funil {pid}") if pid else "Sem funil"
-            soma_em(c_pipes[pnome], a, eh_valid)
+            soma_em(c_pipes[pnome], a, eh_valid, eh_nao_valid)
 
             chave = "proprio" if a.get("creator_user_id") == owner_id else "outro"
             c_criadas[chave] += 1

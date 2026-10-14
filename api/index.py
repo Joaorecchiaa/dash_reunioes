@@ -1157,7 +1157,7 @@ def reunioes_fora_da_escala(year, month, date_de=None, date_ate=None):
         entrada_por_nome = {}
         escala_ok = False
 
-    sdrs = sdrs_do_mes(year, month)
+    sdrs, lideres_cargo = sdrs_e_lideres(year, month)   # SDRs + lideres (mesma regra)
     mes_str = f"{month:02d}/{year}"
     resultado = []
 
@@ -1185,6 +1185,7 @@ def reunioes_fora_da_escala(year, month, date_de=None, date_ate=None):
         if not sdr_id:
             resultado.append({
                 "nome": nome_sdr, "time": time_sdr, "entrada": None, "saida": None,
+                "lideranca": lideres_cargo.get(nome_sdr),
                 "total_mes": 0, "fora_da_escala": 0, "pct_fora_escala": 0.0,
                 "exemplos": [], "erro": "SDR nao encontrada no Pipedrive",
             })
@@ -1254,6 +1255,7 @@ def reunioes_fora_da_escala(year, month, date_de=None, date_ate=None):
         resultado.append({
             "nome": nome_sdr,
             "time": time_sdr,
+            "lideranca": lideres_cargo.get(nome_sdr),
             "entrada": entrada_str,
             "saida": saida_str,
             "total_mes": total_mes,
@@ -1314,13 +1316,45 @@ def build_dashboard(year, month, time_filtro=None, closer_filtro=None, privilegi
     )
 
 
+# Lideres que marcam reuniao e entram na aba SDRs (secao "Lideranca") e na
+# meta do time SNIPER: nome normalizado -> (nome de exibicao padrao, cargo)
+LIDERES_NA_META = {
+    "stephanie nascimento": ("Stephanie Nascimento", "Team Leader"),
+    "marlon silva": ("Marlon Silva", "Head"),
+}
+LIDERES_TIME = "SNIPER"   # time onde a producao deles soma (meta do SNIPER)
+
+
+def lideres_na_meta(year, month):
+    """{nome: cargo} dos lideres que entram na aba SDRs. Usa a grafia do CSV do
+    mes quando existir, senao o nome padrao."""
+    out = {}
+    for chave, (nome_pad, cargo) in LIDERES_NA_META.items():
+        nome = nome_pad
+        for r in carrega_csv():
+            if norm(r["nome"]) == chave and r["mes"] == month and r["ano"] == year:
+                nome = r["nome"]
+                break
+        out[nome] = cargo
+    return out
+
+
+def sdrs_e_lideres(year, month):
+    """({nome: time} com SDRs + lideres, {nome: cargo} so dos lideres)."""
+    sdrs = dict(sdrs_do_mes(year, month))
+    lideres = lideres_na_meta(year, month)
+    for nome in lideres:
+        sdrs[nome] = LIDERES_TIME
+    return sdrs, lideres
+
+
 def build_dashboard_sdr(year, month, time_filtro=None, sdr_filtro=None, privilegiado=False):
-    sdrs = sdrs_do_mes(year, month)
+    sdrs, lideres = sdrs_e_lideres(year, month)
     if time_filtro and time_filtro.upper() != "TODOS":
         sdrs = {n: t for n, t in sdrs.items() if str(t).upper() == time_filtro.upper()}
     if sdr_filtro and sdr_filtro.upper() != "TODOS":
         sdrs = {n: t for n, t in sdrs.items() if n == sdr_filtro}
-    return _build_dashboard_generico(sdrs, year, month, privilegiado, com_validada=True)
+    return _build_dashboard_generico(sdrs, year, month, privilegiado, com_validada=True, lideres=lideres)
 
 
 def dedup_atividades_da_pessoa(acts):
@@ -1342,7 +1376,7 @@ def dedup_atividades_da_pessoa(acts):
 
 
 def _build_dashboard_generico(closers, year, month, privilegiado=False, com_validada=False,
-                               excluir_criadores_ids=None):
+                               excluir_criadores_ids=None, lideres=None):
     """Nucleo do dashboard de reunioes -- recebe `closers` ja resolvido
     ({nome: time}) e calcula dias/KPIs/matriz/etc. Usado tanto pra closers
     quanto pra SDRs (so muda quem entra no dict de entrada)."""
@@ -1477,6 +1511,7 @@ def _build_dashboard_generico(closers, year, month, privilegiado=False, com_vali
 
         por_closer.append({
             "name": nome, "time": time_c,
+            "lideranca": (lideres or {}).get(nome),   # cargo (Team Leader/Head) ou None
             "total": c_total,
             "days": [{"dia": d, "counter": c_days[d]} for d in range(1, last_day + 1)],
             "by_pipeline": dict(c_pipes),
@@ -1496,7 +1531,7 @@ def _build_dashboard_generico(closers, year, month, privilegiado=False, com_vali
     dias = [{"dia": d, "counter": combined_days[d]} for d in range(1, last_day + 1)]
     geral_dia_out = ([{"dia": d, "itens": sorted(geral_dia[d], key=lambda x: (x["hora"], x["closer"]))}
                       for d in range(1, last_day + 1)] if privilegiado else [])
-    por_closer.sort(key=lambda x: (-x["total"]["planned"], x["name"]))
+    por_closer.sort(key=lambda x: (bool(x.get("lideranca")), -x["total"]["planned"], x["name"]))
 
     por_time_days_out = {
         t: [{"dia": d, "counter": dd[d]} for d in range(1, last_day + 1)]
@@ -1604,7 +1639,7 @@ def api_sdrs():
     except Exception:
         hoje = date.today()
         year, month = hoje.year, hoje.month
-    sdrs = sdrs_do_mes(year, month)
+    sdrs, _ = sdrs_e_lideres(year, month)
     return jsonify({"sdrs": ["Todos"] + sorted(sdrs.keys())})
 
 

@@ -95,6 +95,8 @@ HTML = r"""<!DOCTYPE html>
   td.l, th.l { text-align:left; }
   tr.total td { font-weight:800; border-top:2px solid var(--gold); background:var(--gold-soft); color:var(--text); }
   tr.today td { background:var(--gold-soft); }
+  .sec-lider td{background:#f6efd0; color:#6b5400; font-weight:800; font-size:11px; letter-spacing:.06em; text-transform:uppercase; padding:6px 10px; border-top:2px solid #FFD700;}
+  .cargo-lider{font-size:10px; font-weight:700; color:#8a6d00; background:#fff3b0; border-radius:8px; padding:1px 7px; margin-left:6px;}
   .c-plan{color:var(--text); font-weight:800;} .c-done{color:var(--done);} .c-valid{color:#0a5f36; font-weight:700;} .c-nvalid{color:#a1262d; font-weight:700;} .c-nsw{color:var(--nsw);} .c-reag{color:var(--reag);}
   .warn { color:var(--nsw); font-size:12px; margin-bottom:16px; }
   .muted { color:var(--muted); }
@@ -629,7 +631,7 @@ function faltaExtras(data) {
 // mes de "De"), pra soma das linhas bater com o TOTAL
 function linhasPorPessoa(data, periodo) {
   const base = data.por_closer || [];
-  if (!periodo) return base;
+  if (!periodo) return base.filter(c => !c.lideranca).concat(base.filter(c => c.lideranca));
   const vistos = new Set(base.map(c => c.name));
   const extra = [];
   for (const seg of periodo.segs) {
@@ -640,7 +642,8 @@ function linhasPorPessoa(data, periodo) {
       extra.push({ ...c, days: [], criadas_days: [], negocios: [], negocios_dia: [] });
     }
   }
-  return base.concat(extra);
+  const todas = base.concat(extra);
+  return todas.filter(c => !c.lideranca).concat(todas.filter(c => c.lideranca));  // lideranca por ultimo
 }
 
 function renderGenerico(data, cfg) {
@@ -742,11 +745,16 @@ function renderGenerico(data, cfg) {
     html += `</tr></thead><tbody>`;
 
     const nCols = 2 + tresDias.length * nColsPorBloco + nColsPorBloco;
+    let jaSecaoLider = false;
     linhasPorPessoa(data, periodo).forEach((c, i) => {
+      if (c.lideranca && !jaSecaoLider) {
+        jaSecaoLider = true;
+        html += `<tr class="sec-lider"><td colspan="${nCols}">Liderança <span class="muted">· contam na meta do time</span></td></tr>`;
+      }
       const cid = cfg.idPrefix + '-' + i;
       const nomeCel = cfg.comCriador
         ? `<span class="cl-wrap"><span class="cl-toggle" data-cr="${cid}" id="${cid}-t">▸ criador</span>${c.name}</span>`
-        : `<span class="cl-wrap"><span class="cl-toggle" data-cr="${cid}" id="${cid}-t">▸ detalhes</span>${c.name}</span>`;
+        : `<span class="cl-wrap"><span class="cl-toggle" data-cr="${cid}" id="${cid}-t">▸ detalhes</span>${c.name}${c.lideranca ? ' <span class="cargo-lider">' + c.lideranca + '</span>' : ''}</span>`;
       html += `<tr><td class="closer l">${nomeCel}</td><td class="team l">${c.time}</td>`;
       for (const d of tresDias) html += quatro(getDia(c.days, d.n) || zero);
       const t = periodo ? somaPeriodo(periodo, d => { const x = (d.por_closer || []).find(y => y.name === c.name); return x ? x.days : []; }) : c.total;
@@ -1410,7 +1418,7 @@ function renderTaxasAba(resEscala, resDash, resEvolucoes) {
     html += `<div class="muted" style="margin-bottom:8px">Conta, por SDR, quantas reuniões AGENDADAS, REALIZADAS neste mês e VALIDADAS (de leads/reaplicações também deste mês, pela "Data da última aplicação") ela mesma agendou FORA do horário de trabalho dela na escala comercial (antes da entrada ou depois da saída). Preenchendo "De" e "Até" no cabeçalho, restringe pelo dia em que a reunião foi realizada (mantendo a condição de leads do mês selecionado).</div>`;
     html += `<table class="aud-tbl"><tr><th class="l">SDR</th><th class="l">Time</th><th class="l">Entrada</th><th class="l">Saída</th>
       <th>Validadas do mês</th><th>Fora da escala</th><th class="barcell"></th></tr>`;
-    const sdrsEscala = (resEscala.sdrs || []).slice().sort((a,b) => (b.fora_da_escala||0) - (a.fora_da_escala||0));
+    const sdrsEscala = (resEscala.sdrs || []).slice().sort((a,b) => (!!a.lideranca - !!b.lideranca) || ((b.fora_da_escala||0) - (a.fora_da_escala||0)));
     for (const s of sdrsEscala) {
       if (s.erro) {
         html += `<tr><td class="l">${s.nome}</td><td class="l muted">${s.time||''}</td>
@@ -1420,7 +1428,7 @@ function renderTaxasAba(resEscala, resDash, resEvolucoes) {
       const exemplos = (s.exemplos || []).map(e =>
         `<a href="${e.url}" target="_blank" rel="noopener" title="${e.titulo} — ${e.data_hora_criacao}">#${e.deal_id}</a>`
       ).join(', ');
-      html += `<tr><td class="l">${s.nome}</td><td class="l muted">${s.time||''}</td>
+      html += `<tr><td class="l">${s.nome}${s.lideranca ? ' <span class="cargo-lider">' + s.lideranca + '</span>' : ''}</td><td class="l muted">${s.time||''}</td>
         <td class="l muted">${s.entrada || '—'}</td>
         <td class="l muted">${s.saida || '—'}</td>
         <td class="qtd">${s.total_mes}</td>

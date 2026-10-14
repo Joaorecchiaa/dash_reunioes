@@ -749,7 +749,7 @@ function renderGenerico(data, cfg) {
     linhasPorPessoa(data, periodo).forEach((c, i) => {
       if (c.lideranca && !jaSecaoLider) {
         jaSecaoLider = true;
-        html += `<tr class="sec-lider"><td colspan="${nCols}">Liderança <span class="muted">· contam na meta do time</span></td></tr>`;
+        html += `<tr class="sec-lider"><td colspan="${nCols}">Liderança</td></tr>`;
       }
       const cid = cfg.idPrefix + '-' + i;
       const nomeCel = cfg.comCriador

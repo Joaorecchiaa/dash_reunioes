@@ -1,3 +1,5 @@
+import time
+
 import requests
 
 
@@ -10,11 +12,28 @@ class PipedriveClient:
     def _get(self, base, path, params=None):
         params = dict(params or {})
         params["api_token"] = self.token
-        resp = requests.get(f"{base}{path}", params=params, timeout=30)
-        if resp.status_code != 200:
+        # ate 3 tentativas em falhas passageiras (429 limite de uso, 5xx, timeout/rede)
+        ultimo_erro = None
+        for tentativa in range(3):
+            try:
+                resp = requests.get(f"{base}{path}", params=params, timeout=30)
+            except requests.exceptions.RequestException as e:
+                ultimo_erro = e
+                print(f"[Pipedrive] erro de rede em {path} (tentativa {tentativa + 1}/3): {e}")
+                time.sleep(1 + tentativa)
+                continue
+            if resp.status_code == 200:
+                return resp.json()
             print(f"[Pipedrive] {resp.status_code} em {path}: {resp.text[:300]}")
+            if resp.status_code in (429, 500, 502, 503, 504) and tentativa < 2:
+                try:
+                    espera = float(resp.headers.get("Retry-After", 1 + tentativa))
+                except ValueError:
+                    espera = 1 + tentativa
+                time.sleep(min(espera, 3))
+                continue
             resp.raise_for_status()
-        return resp.json()
+        raise ultimo_erro if ultimo_erro else RuntimeError(f"Pipedrive falhou em {path}")
 
     def get_users_map(self):
         """{nome_minusculo: user_id} -- usado pra achar o owner_id de cada closer pelo nome."""

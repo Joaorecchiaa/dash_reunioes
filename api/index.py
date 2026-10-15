@@ -431,6 +431,20 @@ def carrega_csv():
         c = _cache["csv"]
         if c and time.time() - c["ts"] < TTL:
             return c["rows"]
+    try:
+        return _baixa_csv()
+    except Exception as e:
+        # falha passageira (planilha/rede): usa a ultima leitura boa em vez de derrubar
+        # o dash ou mudar a validacao (lista de closers/lideres vem daqui)
+        with _lock:
+            velho = _cache["csv"]
+        if velho:
+            print("[CSV] falha ao atualizar, usando a ultima leitura boa:", e)
+            return velho["rows"]
+        raise
+
+
+def _baixa_csv():
     resp = requests.get(CSV_URL, timeout=30, allow_redirects=True,
                         headers={"User-Agent": "Mozilla/5.0"})
     if resp.status_code != 200:
@@ -724,11 +738,42 @@ def carrega_meta():
         m = _cache["meta"]
         if m and time.time() - m["ts"] < TTL:
             return m["users"], m["pipelines"]
-    users = client.get_users_map()
-    pipelines = client.get_pipelines_map()
+    try:
+        users = client.get_users_map()
+        pipelines = client.get_pipelines_map()
+    except Exception as e:
+        with _lock:
+            velho = _cache["meta"]
+        if velho:
+            print("[meta] falha ao atualizar, usando a ultima leitura boa:", e)
+            return velho["users"], velho["pipelines"]
+        raise
     with _lock:
         _cache["meta"] = {"ts": time.time(), "users": users, "pipelines": pipelines}
     return users, pipelines
+
+
+def _busca_acts_segura(key, buscar):
+    """Busca atividades com 2 protecoes contra leitura incompleta do Pipedrive:
+    1) se a busca falhar, devolve a ultima leitura boa (se houver) em vez de erro;
+    2) se vier com uma QUEDA GRANDE (>10%) em relacao a ultima leitura boa, refaz a
+       busca uma vez antes de aceitar (a paginacao por cursor pode pular itens quando
+       as atividades estao sendo editadas durante a busca)."""
+    with _lock:
+        velho = _cache["acts"].get(key)
+    try:
+        acts = buscar()
+        if velho and len(velho["acts"]) >= 20 and len(acts) < 0.9 * len(velho["acts"]):
+            print(f"[acts] queda suspeita {len(velho['acts'])} -> {len(acts)}; refazendo a busca")
+            acts = buscar()
+    except Exception as e:
+        if velho:
+            print("[acts] falha ao atualizar, usando a ultima leitura boa:", e)
+            return velho["acts"]
+        raise
+    with _lock:
+        _cache["acts"][key] = {"ts": time.time(), "acts": acts}
+    return acts
 
 
 def acts_do_owner(owner_id, year, month):
@@ -738,10 +783,7 @@ def acts_do_owner(owner_id, year, month):
         if c and time.time() - c["ts"] < TTL:
             return c["acts"]
     inicio = (date(year, month, 1) - timedelta(days=31)).strftime("%Y-%m-%dT00:00:00Z")
-    acts = client.get_meeting_activities(owner_id, updated_since=inicio)
-    with _lock:
-        _cache["acts"][key] = {"ts": time.time(), "acts": acts}
-    return acts
+    return _busca_acts_segura(key, lambda: client.get_meeting_activities(owner_id, updated_since=inicio))
 
 
 def acts_todos_do_mes(year, month):
@@ -760,10 +802,7 @@ def acts_todos_do_mes(year, month):
         if c and time.time() - c["ts"] < TTL:
             return c["acts"]
     inicio = (date(year, month, 1) - timedelta(days=31)).strftime("%Y-%m-%dT00:00:00Z")
-    acts = client.get_meeting_activities_todos(updated_since=inicio)
-    with _lock:
-        _cache["acts"][key] = {"ts": time.time(), "acts": acts}
-    return acts
+    return _busca_acts_segura(key, lambda: client.get_meeting_activities_todos(updated_since=inicio))
 
 
 def _ranking_por_criador(auditados, year, month):

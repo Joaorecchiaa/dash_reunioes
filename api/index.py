@@ -389,25 +389,59 @@ def atividades_do_deal(deal_id):
     return acts
 
 
+def ids_populacao_sdr(year, month):
+    """ids de quem e SDR/lideranca no mes (SDRs, Stephanie/Marlon/Mylena). Quem esta
+    aqui NAO conta como closer ao validar uma reuniao pelo rastro do negocio."""
+    users, _ = carrega_meta()
+    nomes = set(sdrs_do_mes(year, month)) | set(lideres_na_meta(year, month))
+    nomes_norm = {norm(n) for n in nomes} | set(LIDERANCAS_PERMITIDAS) | set(SDR_EXCLUIDOS)
+    return {uid for nome, uid in users.items() if norm(nome) in nomes_norm}
+
+
 def dono_valido_pela_reuniao(a, proprietarios_ids):
     """O dono ATUAL do negocio pode ter mudado depois da reuniao (negocio perdido e
     reaberto, repassado pra Head/outro SDR...), mas a reuniao ja aconteceu e foi
-    validada na epoca. O rastro disso: no MESMO negocio existe outra reuniao, no MESMO
-    dia, cujo responsavel e um dono valido (closer do mes / Denise / Legionario) -- a
-    reuniao do closer. Nesse caso a validacao da reuniao do SDR e mantida
-    (caso #411006: Bruna -> Willian Maia, depois reaberto e passado pro Marlon)."""
+    validada na epoca. O rastro disso (mesma regra do script de referencia): no MESMO
+    negocio existe outra reuniao FEITA, do MESMO tipo, no mesmo dia (+-1 dia), cujo
+    responsavel e um closer -- dono valido (closer do mes / Denise / Legionario) ou
+    qualquer pessoa fora da populacao de SDR/lideranca. Nesse caso a validacao da
+    reuniao do SDR e mantida (caso #411006: Bruna -> Willian Maia, depois reaberto e
+    passado pro Marlon)."""
     deal_id, due = a.get("deal_id"), a.get("due_date")
     if not deal_id or not due:
+        return False
+    try:
+        d0 = datetime.strptime(str(due)[:10], "%Y-%m-%d")
+    except Exception:
         return False
     try:
         outras = atividades_do_deal(deal_id)
     except Exception as e:
         print("[dono_valido_pela_reuniao] nao foi possivel consultar o negocio", deal_id, e)
         return False
+    pop = None  # so calcula se precisar
     for b in outras:
-        if (b.get("id") != a.get("id") and b.get("type") == "meeting"
-                and not b.get("is_deleted") and str(b.get("due_date")) == str(due)
-                and b.get("owner_id") in proprietarios_ids):
+        dono_b = b.get("owner_id")
+        if (b.get("id") == a.get("id") or not dono_b or dono_b == a.get("owner_id")
+                or b.get("is_deleted") or not b.get("done")
+                or b.get("type") != a.get("type")):
+            continue
+        try:
+            gap = abs((datetime.strptime(str(b.get("due_date"))[:10], "%Y-%m-%d") - d0).days)
+        except Exception:
+            continue
+        if gap > 1:
+            continue
+        if dono_b in proprietarios_ids:
+            return True
+        if pop is None:
+            try:
+                pop = ids_populacao_sdr(d0.year, d0.month)
+            except Exception as e:
+                print("[dono_valido_pela_reuniao] populacao SDR indisponivel:", e)
+                pop = set()
+                break
+        if dono_b not in pop:
             return True
     return False
 

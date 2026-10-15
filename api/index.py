@@ -368,6 +368,50 @@ def status_reuniao_mais_recente_do_deal(deal_id):
     return status
 
 
+def atividades_do_deal(deal_id):
+    """Atividades (meeting/no_show/reagendamento) de UM negocio, com cache (TTL).
+    Usado so no caso raro em que o dono ATUAL do negocio mudou depois da reuniao."""
+    with _lock:
+        c = _cache.setdefault("acts_deal", {}).get(deal_id)
+        if c and time.time() - c["ts"] < TTL:
+            return c["acts"]
+    try:
+        acts = client.get_activities_by_deal(deal_id)
+    except Exception as e:
+        with _lock:
+            velho = _cache["acts_deal"].get(deal_id)
+        if velho:
+            print("[acts_deal] falha, usando a ultima leitura boa:", e)
+            return velho["acts"]
+        raise
+    with _lock:
+        _cache["acts_deal"][deal_id] = {"ts": time.time(), "acts": acts}
+    return acts
+
+
+def dono_valido_pela_reuniao(a, proprietarios_ids):
+    """O dono ATUAL do negocio pode ter mudado depois da reuniao (negocio perdido e
+    reaberto, repassado pra Head/outro SDR...), mas a reuniao ja aconteceu e foi
+    validada na epoca. O rastro disso: no MESMO negocio existe outra reuniao, no MESMO
+    dia, cujo responsavel e um dono valido (closer do mes / Denise / Legionario) -- a
+    reuniao do closer. Nesse caso a validacao da reuniao do SDR e mantida
+    (caso #411006: Bruna -> Willian Maia, depois reaberto e passado pro Marlon)."""
+    deal_id, due = a.get("deal_id"), a.get("due_date")
+    if not deal_id or not due:
+        return False
+    try:
+        outras = atividades_do_deal(deal_id)
+    except Exception as e:
+        print("[dono_valido_pela_reuniao] nao foi possivel consultar o negocio", deal_id, e)
+        return False
+    for b in outras:
+        if (b.get("id") != a.get("id") and b.get("type") == "meeting"
+                and not b.get("is_deleted") and str(b.get("due_date")) == str(due)
+                and b.get("owner_id") in proprietarios_ids):
+            return True
+    return False
+
+
 def atividade_e_validada(a, deal_info, proprietarios_ids):
     """Para a coluna 'Validadas' na tela de Reunioes: feita (type=meeting,
     done=true), o negocio vinculado tem PROPRIETARIO valido (closer do mes
@@ -376,9 +420,11 @@ def atividade_e_validada(a, deal_info, proprietarios_ids):
     if a.get("type") != "meeting" or not a.get("done"):
         return False
     info = deal_info.get(a.get("deal_id")) or {}
-    if info.get("owner_id") not in proprietarios_ids:
+    if not campo_validado_diferente_de_nao(info):
         return False
-    return campo_validado_diferente_de_nao(info)
+    if info.get("owner_id") in proprietarios_ids:
+        return True
+    return dono_valido_pela_reuniao(a, proprietarios_ids)
 
 
 def eh_reuniao_valida_para_auditoria(a, pessoa_id, deal_info, proprietarios_ids):
@@ -395,12 +441,13 @@ def eh_reuniao_valida_para_auditoria(a, pessoa_id, deal_info, proprietarios_ids)
     if a.get("type") != "meeting" or not a.get("done"):
         return False
     info = deal_info.get(a.get("deal_id")) or {}
+    if not campo_validado_diferente_de_nao(info):
+        return False
     dono = info.get("owner_id")
-    if dono == pessoa_id:
-        return False
-    if dono not in proprietarios_ids:
-        return False
-    return campo_validado_diferente_de_nao(info)
+    if dono != pessoa_id and dono in proprietarios_ids:
+        return True
+    # dono atual mudou depois da reuniao (reaberto/repassado): vale o rastro da reuniao do closer
+    return dono_valido_pela_reuniao(a, proprietarios_ids)
 
 
 def soma_em(counter, a, eh_valid=False, eh_nao_valid=False):

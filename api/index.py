@@ -112,7 +112,7 @@ def eh_privilegiado(req):
 
 client = PipedriveClient(PIPEDRIVE_DOMAIN, PIPEDRIVE_API_TOKEN)
 
-TIMES_VALIDOS = {"SNIPER", "OLYMPUS", "ELITE"}
+TIMES_VALIDOS = {"SNIPER", "OLYMPUS", "ELITE", "VANGUARD"}
 SUBAREA_ALIAS = {"MGM": "OLYMPUS"}  # so MGM vira OLYMPUS; o resto passa igual
 
 MESES_NOME = ["janeiro", "fevereiro", "março", "abril", "maio", "junho",

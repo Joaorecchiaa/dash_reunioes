@@ -1782,6 +1782,73 @@ def api_dashboard_sdr():
         return jsonify({"error": str(e)}), 500
 
 
+LIGACOES_TTL = 120   # ligacoes do dia mudam toda hora; cache curto
+
+
+def ligacoes_do_dia(time_filtro="SNIPER"):
+    """{nome: ligacoes feitas HOJE} dos SDRs + lideranca do time. "Hoje" = dia de Brasilia;
+    conta type=call, done=true cuja marcacao como feita (marked_as_done_time, UTC -> Brasilia)
+    cai hoje (sem esse campo, vale a due_date de hoje). Zera sozinho a cada dia."""
+    agora_br = datetime.utcnow() + timedelta(hours=AJUSTE_FUSO_HORAS)
+    hoje = agora_br.date()
+    chave = ("ligacoes", time_filtro, hoje.isoformat())
+    with _lock:
+        c = _cache["acts"].get(chave)
+        if c and time.time() - c["ts"] < LIGACOES_TTL:
+            return c["dados"]
+    users, _ = carrega_meta()
+    sdrs, _lideres = sdrs_e_lideres(hoje.year, hoje.month)
+    nomes = [n for n, t in sdrs.items() if str(t).upper() == time_filtro.upper()]
+    # inicio do dia de Brasilia em UTC (00:00 BR = 03:00Z)
+    desde = datetime(hoje.year, hoje.month, hoje.day) - timedelta(hours=AJUSTE_FUSO_HORAS)
+    desde_iso = desde.strftime("%Y-%m-%dT%H:%M:%SZ")
+
+    def conta(nome):
+        uid = users.get(nome.strip().lower())
+        if not uid:
+            return nome, None
+        n = 0
+        for a in client.get_calls_done(uid, desde_iso):
+            m = _parse_dt_pipedrive(a.get("marked_as_done_time"))
+            dia = (m + timedelta(hours=AJUSTE_FUSO_HORAS)).date() if m else None
+            if dia is None and a.get("due_date"):
+                try:
+                    dia = datetime.strptime(a["due_date"], "%Y-%m-%d").date()
+                except ValueError:
+                    dia = None
+            if dia == hoje:
+                n += 1
+        return nome, n
+
+    from concurrent.futures import ThreadPoolExecutor
+    por_pessoa = {}
+    with ThreadPoolExecutor(max_workers=4) as ex:
+        for nome, n in ex.map(conta, nomes):
+            if n is not None:
+                por_pessoa[nome] = n
+    dados = {"date": hoje.isoformat(), "team": time_filtro,
+             "por_pessoa": por_pessoa, "total": sum(por_pessoa.values())}
+    with _lock:
+        _cache["acts"][chave] = {"ts": time.time(), "dados": dados}
+    return dados
+
+
+@app.route("/api/ligacoes_hoje")
+def api_ligacoes_hoje():
+    team = request.args.get("team") or "SNIPER"
+    try:
+        return jsonify(ligacoes_do_dia(team))
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        with _lock:
+            velho = [c for k, c in _cache["acts"].items() if isinstance(k, tuple) and k and k[0] == "ligacoes"]
+        if velho:
+            return jsonify(max(velho, key=lambda c: c["ts"])["dados"])
+        return jsonify({"error": str(e)}), 500
+
+
+
 @app.route("/api/auditoria_sdr")
 def api_auditoria_sdr():
     # auditoria revela pra quem cada SDR marca -> so privilegiado
@@ -2073,7 +2140,7 @@ def api_me():
 # wallpaper SNIPER (arquivo separado, fora do projeto) leia o placar do dia
 @app.after_request
 def cors_leitura(resp):
-    if request.method == "GET" and request.path in ("/api/dashboard_sdr", "/api/dashboard"):
+    if request.method == "GET" and request.path in ("/api/dashboard_sdr", "/api/dashboard", "/api/ligacoes_hoje"):
         resp.headers["Access-Control-Allow-Origin"] = "*"
     return resp
 
@@ -2087,7 +2154,7 @@ def index():
 
 
 # rotas de API "de verdade" que existem
-_API_ROTAS = ("/api/init", "/api/closers", "/api/dashboard", "/api/sdrs", "/api/dashboard_sdr", "/api/login", "/api/me", "/api/auditoria_sdr", "/api/evolucao_sdr", "/api/debug_activity", "/api/debug_deal", "/api/debug_deal_compare", "/api/debug_deals_owner", "/api/distribuicao_resumo", "/api/distribuicao_log", "/api/taxas_escala")
+_API_ROTAS = ("/api/init", "/api/closers", "/api/dashboard", "/api/sdrs", "/api/dashboard_sdr", "/api/login", "/api/me", "/api/auditoria_sdr", "/api/evolucao_sdr", "/api/debug_activity", "/api/debug_deal", "/api/debug_deal_compare", "/api/debug_deals_owner", "/api/distribuicao_resumo", "/api/distribuicao_log", "/api/taxas_escala", "/api/ligacoes_hoje")
 
 
 @app.errorhandler(404)

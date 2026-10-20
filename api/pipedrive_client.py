@@ -75,6 +75,28 @@ class PipedriveClient:
                 break
         return activities
 
+    def get_calls_done(self, owner_id, updated_since):
+        """Ligacoes (type=call, done=true) de UM responsavel, atualizadas desde
+        `updated_since` (RFC3339). Pagina por cursor e deduplica por id. Devolve so os
+        campos necessarios (id, due_date, marked_as_done_time)."""
+        out, vistos, cursor = [], set(), None
+        while True:
+            params = {"owner_id": owner_id, "done": "true", "limit": 500,
+                      "updated_since": updated_since}
+            if cursor:
+                params["cursor"] = cursor
+            data = self._get(self.base_v2, "/activities", params)
+            for a in data.get("data") or []:
+                aid = a.get("id")
+                if a.get("type") == "call" and a.get("done") and not a.get("is_deleted") and aid not in vistos:
+                    vistos.add(aid)
+                    out.append({"id": aid, "due_date": a.get("due_date"),
+                                "marked_as_done_time": a.get("marked_as_done_time")})
+            cursor = (data.get("additional_data") or {}).get("next_cursor")
+            if not cursor:
+                break
+        return out
+
     def get_meeting_activities_todos(self, updated_since=None):
         """Igual get_meeting_activities, mas SEM filtro de owner_id -- todas as
         atividades meeting/no_show/reagendamento da conta inteira. Usada

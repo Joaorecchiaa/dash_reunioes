@@ -1268,7 +1268,7 @@ function renderDistribuicaoLeads(resResumo, resLog) {
         <li>A fila escolhe o closer com menos <b>reuniões atuais hoje</b> abaixo da meta. Quando todos estão na meta, o negócio vai por sorteio.</li>
         <li><b>Meta 0</b>: a pessoa recebe crédito de negócios reatribuídos, mas nunca entra na fila. O cargo precisa conter "Closer" para ser reconhecida.</li>
         <li><b>Recebidas hoje</b> é só histórico (nunca diminui no dia, zera na virada). Quem vale para a fila e para o teto da meta é <b>Reuniões atuais hoje</b>, que sobe e desce com devoluções e trocas de dono.</li>
-        <li><b>Vezes na fila</b>: peso na fila (vazio vale 1; com 2, passa duas vezes por ciclo). <b>Ajuste da fila</b> é preenchido pelo sistema para compensar quem entra tarde na escala; zera todo dia.</li>
+        <li><b>Vezes na fila</b>: peso na fila (vazio vale 1; com 2, passa duas vezes por ciclo).</li>
         <li>Ninguém pode ter duas reuniões em horários que se sobrepõem (duração padrão 60 min). A escala é checada no horário da <b>reunião</b>, não no da distribuição (entrada e saída inclusive).</li>
         <li>Negócio redistribuído não volta a quem já o teve hoje. <b>Alterado = Sim</b>: o negócio saiu do closer e a linha deixa de contar crédito; o crédito fica com o novo proprietário.</li>
       </ul></div>`;
@@ -1283,7 +1283,7 @@ function renderDistribuicaoLeads(resResumo, resLog) {
   html += `<div class="nb-title" style="margin-top:6px">Resumo por colaborador</div>
     <table class="aud-tbl"><tr><th class="l">Nome</th><th class="l">Cargo</th><th class="l">Fila</th>
       <th>Meta diária</th><th>Reuniões atuais hoje</th><th class="barcell"></th><th>Falta p/ meta</th>
-      <th>Recebidas hoje <span class="muted">(histórico)</span></th><th>Vezes na fila</th><th>Ajuste fila</th><th>Voltaram hoje</th></tr>`;
+      <th>Recebidas hoje <span class="muted">(histórico)</span></th><th>Vezes na fila</th><th>Voltaram hoje</th></tr>`;
   const resumo = resResumo.resumo || [];
   for (const r of resumo) {
     const pct = r.qtd_reunioes ? Math.min(100, Math.round((r.reunioes_atuais_hoje / r.qtd_reunioes) * 100)) : 0;
@@ -1296,7 +1296,6 @@ function renderDistribuicaoLeads(resResumo, resLog) {
       <td class="qtd">${r.qtd_reunioes > 0 ? r.falta_para_meta : '—'}</td>
       <td class="qtd muted">${r.recebidas_hoje}</td>
       <td class="qtd">${r.vezes_na_fila}</td>
-      <td class="qtd">${r.ajuste_fila || 0}</td>
       <td class="qtd">${r.voltaram_hoje || 0}</td></tr>`;
   }
   if (!resumo.length) {

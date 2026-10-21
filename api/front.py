@@ -1283,7 +1283,7 @@ function renderDistribuicaoLeads(resResumo, resLog) {
   html += `<div class="nb-title" style="margin-top:6px">Resumo por colaborador</div>
     <table class="aud-tbl"><tr><th class="l">Nome</th><th class="l">Cargo</th><th class="l">Fila</th>
       <th>Meta diária</th><th>Reuniões atuais hoje</th><th class="barcell"></th><th>Falta p/ meta</th>
-      <th>Recebidas hoje <span class="muted">(histórico)</span></th><th>Vezes na fila</th><th>Voltaram hoje</th></tr>`;
+      <th>Recebidas hoje <span class="muted">(histórico)</span></th><th>Vezes na fila</th><th>Alterados hoje</th><th class="l">Para quem foi</th></tr>`;
   const resumo = resResumo.resumo || [];
   for (const r of resumo) {
     const pct = r.qtd_reunioes ? Math.min(100, Math.round((r.reunioes_atuais_hoje / r.qtd_reunioes) * 100)) : 0;
@@ -1296,10 +1296,11 @@ function renderDistribuicaoLeads(resResumo, resLog) {
       <td class="qtd">${r.qtd_reunioes > 0 ? r.falta_para_meta : '—'}</td>
       <td class="qtd muted">${r.recebidas_hoje}</td>
       <td class="qtd">${r.vezes_na_fila}</td>
-      <td class="qtd">${r.voltaram_hoje || 0}</td></tr>`;
+      <td class="qtd">${r.alterados_hoje || 0}</td>
+      <td class="l">${(r.alterados_para || []).map(x => x.nome + (x.qtd > 1 ? ' (' + x.qtd + ')' : '')).join(', ') || '<span class="muted">—</span>'}</td></tr>`;
   }
   if (!resumo.length) {
-    html += `<tr><td colspan="11" class="aud-empty">Sem dados no resumo.</td></tr>`;
+    html += `<tr><td colspan="12" class="aud-empty">Sem dados no resumo.</td></tr>`;
   }
   const t = resResumo.total || {};
   if (resumo.length) {
@@ -1309,8 +1310,8 @@ function renderDistribuicaoLeads(resResumo, resLog) {
       <td class="qtd">${t.reunioes_atuais_hoje || 0}</td>
       <td></td><td></td>
       <td class="qtd">${t.recebidas_hoje || 0}</td>
-      <td></td><td></td>
-      <td class="qtd">${t.voltaram_hoje || 0}</td></tr>`;
+      <td></td>
+      <td class="qtd">${t.alterados_hoje || 0}</td><td></td></tr>`;
   }
   html += `</table>`;
 

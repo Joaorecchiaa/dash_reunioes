@@ -1323,11 +1323,14 @@ function renderDistribuicaoLeads(resResumo, resLog) {
     html += `<div class="nb-title" id="dist-log-toggle" style="margin-top:18px; cursor:pointer">
       <span class="aud-arrow" id="dist-log-arw">▸</span> Log de distribuição — ${resLog.total} registro(s) no mês (mais recentes primeiro)</div>
       <div id="dist-log-body" style="display:none">
-      <table class="neg-tbl"><colgroup><col style="width:140px"><col style="width:70px"><col><col><col><col style="width:50px"><col><col><col><col></colgroup>
-      <tr><th>Data/Hora</th><th>Deal</th><th>Colaborador</th><th>Funil</th><th>Reunião</th><th>Do dia</th><th>Status</th><th>Situação</th><th>Outro dia / creditada</th><th>Alertas</th></tr>`;
+      <table class="neg-tbl"><colgroup><col style="width:140px"><col style="width:70px"><col><col><col><col style="width:50px"><col><col><col><col><col></colgroup>
+      <tr><th>Data/Hora</th><th>Deal</th><th>Colaborador</th><th>Funil</th><th>Reunião</th><th>Do dia</th><th>Status</th><th>Alterado</th><th>Para quem foi</th><th>Outro dia / creditada</th><th>Alertas</th></tr>`;
     for (const l of log) {
       const situacao = l.alterado
-        ? `<span class="status-badge st-reagendada">alterado → ${l.novo_proprietario || '—'}</span>`
+        ? `<span class="status-badge st-reagendada">Sim</span>`
+        : `<span class="muted">Não</span>`;
+      const paraQuem = l.alterado
+        ? `<b>${l.novo_proprietario || '—'}</b>`
         : `<span class="muted">—</span>`;
       const outroDia = l.agendada_outro_dia
         ? `<span class="status-badge st-reagendada">${l.outro_dia_valor && l.outro_dia_valor.toLowerCase() !== 'sim' ? l.outro_dia_valor : 'Sim'}</span>`
@@ -1347,11 +1350,12 @@ function renderDistribuicaoLeads(resResumo, resLog) {
         <td class="qtd">${l.reunioes_do_dia == null ? '—' : l.reunioes_do_dia}</td>
         <td>${statusBadge(l.status_reuniao)}</td>
         <td>${situacao}</td>
+        <td>${paraQuem}</td>
         <td>${outroDia}</td>
         <td>${alertas.join(' ') || '<span class="muted">—</span>'}</td></tr>`;
     }
     if (!log.length) {
-      html += `<tr><td colspan="10" class="aud-empty">Sem registros no log.</td></tr>`;
+      html += `<tr><td colspan="11" class="aud-empty">Sem registros no log.</td></tr>`;
     }
     html += `</table></div>`;
   }

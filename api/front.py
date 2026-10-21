@@ -1261,31 +1261,56 @@ function renderDistribuicaoLeads(resResumo, resLog) {
 
   let html = '';
 
+  // ---- regras da fila (resumo, recolhido) ----
+  html += `<div class="nb-title" id="dist-regras-toggle" style="cursor:pointer"><span class="aud-arrow" id="dist-regras-arw">▸</span> Regras da fila</div>
+    <div id="dist-regras-body" style="display:none" class="muted">
+      <ul style="margin:6px 0 14px 18px;line-height:1.55">
+        <li>A fila escolhe o closer com menos <b>reuniões atuais hoje</b> abaixo da meta. Quando todos estão na meta, o negócio vai por sorteio.</li>
+        <li><b>Meta 0</b>: a pessoa recebe crédito de negócios reatribuídos, mas nunca entra na fila. O cargo precisa conter "Closer" para ser reconhecida.</li>
+        <li><b>Recebidas hoje</b> é só histórico (nunca diminui no dia, zera na virada). Quem vale para a fila e para o teto da meta é <b>Reuniões atuais hoje</b>, que sobe e desce com devoluções e trocas de dono.</li>
+        <li><b>Vezes na fila</b>: peso na fila (vazio vale 1; com 2, passa duas vezes por ciclo). <b>Ajuste da fila</b> é preenchido pelo sistema para compensar quem entra tarde na escala; zera todo dia.</li>
+        <li>Ninguém pode ter duas reuniões em horários que se sobrepõem (duração padrão 60 min). A escala é checada no horário da <b>reunião</b>, não no da distribuição (entrada e saída inclusive).</li>
+        <li>Negócio redistribuído não volta a quem já o teve hoje. <b>Alterado = Sim</b>: o negócio saiu do closer e a linha deixa de contar crédito; o crédito fica com o novo proprietário.</li>
+      </ul></div>`;
+
   // ---- resumo por colaborador ----
-  html += `<div class="nb-title">Resumo por colaborador</div>
-    <table class="aud-tbl"><tr><th class="l">Nome</th><th class="l">Cargo</th>
-      <th>Meta de reuniões</th><th>Recebidas hoje</th><th class="barcell"></th>
-      <th>Reuniões atuais hoje</th><th>Voltaram hoje</th></tr>`;
+  const STATUS_FILA = {
+    na_fila: ['st-feita', 'Na fila'],
+    na_meta: ['st-planejada', 'Na meta'],
+    sem_meta: ['st-reagendada', 'Meta 0 · só crédito'],
+    cargo_invalido: ['st-vencida', 'Cargo sem "Closer"'],
+  };
+  html += `<div class="nb-title" style="margin-top:6px">Resumo por colaborador</div>
+    <table class="aud-tbl"><tr><th class="l">Nome</th><th class="l">Cargo</th><th class="l">Fila</th>
+      <th>Meta diária</th><th>Reuniões atuais hoje</th><th class="barcell"></th><th>Falta p/ meta</th>
+      <th>Recebidas hoje <span class="muted">(histórico)</span></th><th>Vezes na fila</th><th>Ajuste fila</th><th>Voltaram hoje</th></tr>`;
   const resumo = resResumo.resumo || [];
   for (const r of resumo) {
-    const pct = r.qtd_reunioes ? Math.min(100, Math.round((r.recebidas_hoje / r.qtd_reunioes) * 100)) : 0;
+    const pct = r.qtd_reunioes ? Math.min(100, Math.round((r.reunioes_atuais_hoje / r.qtd_reunioes) * 100)) : 0;
+    const [cls, rot] = STATUS_FILA[r.status_fila] || ['st-planejada', '—'];
     html += `<tr><td class="l">${r.nome}</td><td class="l muted">${r.cargo}</td>
+      <td class="l"><span class="status-badge ${cls}">${rot}</span></td>
       <td class="qtd">${r.qtd_reunioes}</td>
-      <td class="qtd">${r.recebidas_hoje}</td>
-      <td class="barcell"><div class="aud-bar" style="width:${pct}%"></div></td>
       <td class="qtd">${r.reunioes_atuais_hoje}</td>
+      <td class="barcell"><div class="aud-bar" style="width:${pct}%"></div></td>
+      <td class="qtd">${r.qtd_reunioes > 0 ? r.falta_para_meta : '—'}</td>
+      <td class="qtd muted">${r.recebidas_hoje}</td>
+      <td class="qtd">${r.vezes_na_fila}</td>
+      <td class="qtd">${r.ajuste_fila || 0}</td>
       <td class="qtd">${r.voltaram_hoje || 0}</td></tr>`;
   }
   if (!resumo.length) {
-    html += `<tr><td colspan="7" class="aud-empty">Sem dados no resumo.</td></tr>`;
+    html += `<tr><td colspan="11" class="aud-empty">Sem dados no resumo.</td></tr>`;
   }
   const t = resResumo.total || {};
   if (resumo.length) {
     html += `<tr class="total"><td class="l">TOTAL</td><td></td>
+      <td class="l">${t.na_fila || 0} na fila</td>
       <td class="qtd">${t.qtd_reunioes || 0}</td>
-      <td class="qtd">${t.recebidas_hoje || 0}</td>
-      <td></td>
       <td class="qtd">${t.reunioes_atuais_hoje || 0}</td>
+      <td></td><td></td>
+      <td class="qtd">${t.recebidas_hoje || 0}</td>
+      <td></td><td></td>
       <td class="qtd">${t.voltaram_hoje || 0}</td></tr>`;
   }
   html += `</table>`;
@@ -1298,31 +1323,51 @@ function renderDistribuicaoLeads(resResumo, resLog) {
     html += `<div class="nb-title" id="dist-log-toggle" style="margin-top:18px; cursor:pointer">
       <span class="aud-arrow" id="dist-log-arw">▸</span> Log de distribuição — ${resLog.total} registro(s) no mês (mais recentes primeiro)</div>
       <div id="dist-log-body" style="display:none">
-      <table class="neg-tbl"><colgroup><col class="c-hora"><col class="c-id"><col><col><col><col><col></colgroup>
-      <tr><th>Data/Hora</th><th>Deal</th><th>Colaborador</th><th>Funil</th><th>Status</th><th>Situação</th><th>Outro dia</th></tr>`;
+      <table class="neg-tbl"><colgroup><col style="width:140px"><col style="width:70px"><col><col><col><col style="width:50px"><col><col><col><col></colgroup>
+      <tr><th>Data/Hora</th><th>Deal</th><th>Colaborador</th><th>Funil</th><th>Reunião</th><th>Do dia</th><th>Status</th><th>Situação</th><th>Outro dia / creditada</th><th>Alertas</th></tr>`;
     for (const l of log) {
       const situacao = l.alterado
         ? `<span class="status-badge st-reagendada">alterado → ${l.novo_proprietario || '—'}</span>`
         : `<span class="muted">—</span>`;
       const outroDia = l.agendada_outro_dia
-        ? `<span class="status-badge st-reagendada">Sim</span>`
+        ? `<span class="status-badge st-reagendada">${l.outro_dia_valor && l.outro_dia_valor.toLowerCase() !== 'sim' ? l.outro_dia_valor : 'Sim'}</span>`
+          + (l.creditada_em ? `<div class="muted" style="font-size:10px">creditada em ${l.creditada_em}</div>` : '')
+        : (l.creditada_em ? `<span class="muted" style="font-size:10px">creditada em ${l.creditada_em}</span>` : `<span class="muted">—</span>`);
+      const reuniao = l.reuniao_data
+        ? `${l.reuniao_data.slice(0, 5)}${l.reuniao_hora ? ' ' + l.reuniao_hora : ''}<div class="muted" style="font-size:10px">${l.duracao_min || 60} min</div>`
         : `<span class="muted">—</span>`;
+      const alertas = [];
+      if (l.choque) alertas.push(`<span class="status-badge st-vencida" title="Outra reunião do mesmo closer se sobrepõe a esta">Choque de horário</span>`);
+      if (l.fora_escala === true) alertas.push(`<span class="status-badge st-reagendada" title="Horário da reunião fora do turno do closer na escala comercial">Fora da escala</span>`);
       html += `<tr><td class="neg-hora">${l.data_hora}</td>
         <td><a href="${l.url}" target="_blank" rel="noopener">#${l.deal_id}</a></td>
         <td>${l.colaborador}</td>
         <td class="muted">${l.funil}</td>
+        <td>${reuniao}</td>
+        <td class="qtd">${l.reunioes_do_dia == null ? '—' : l.reunioes_do_dia}</td>
         <td>${statusBadge(l.status_reuniao)}</td>
         <td>${situacao}</td>
-        <td>${outroDia}</td></tr>`;
+        <td>${outroDia}</td>
+        <td>${alertas.join(' ') || '<span class="muted">—</span>'}</td></tr>`;
     }
     if (!log.length) {
-      html += `<tr><td colspan="7" class="aud-empty">Sem registros no log.</td></tr>`;
+      html += `<tr><td colspan="10" class="aud-empty">Sem registros no log.</td></tr>`;
     }
     html += `</table></div>`;
   }
 
   $('dist-resultado').innerHTML = html;
 
+  const toggR = document.getElementById('dist-regras-toggle');
+  if (toggR) {
+    toggR.addEventListener('click', () => {
+      const body = document.getElementById('dist-regras-body');
+      const arw = document.getElementById('dist-regras-arw');
+      const aberto = body.style.display !== 'none';
+      body.style.display = aberto ? 'none' : '';
+      arw.textContent = aberto ? '▸' : '▾';
+    });
+  }
   const togg = document.getElementById('dist-log-toggle');
   if (togg) {
     togg.addEventListener('click', () => {

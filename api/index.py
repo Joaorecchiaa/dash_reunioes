@@ -2102,29 +2102,31 @@ def api_distribuicao_resumo():
         # representa o resultado final; as anteriores sao so tentativas e
         # NAO devem contar.
         hoje = date.today()
-        voltaram_por_pessoa = {}
+        # ALTERADO=Sim (DATA_HORA de hoje): o negocio SAIU do COLABORADOR da
+        # linha e foi para NOVO_PROPRIETARIO. Conta por colaborador de origem
+        # e guarda pra quem foi. Cada (deal, colaborador, destino) conta uma vez.
+        alt_por_pessoa = {}
         try:
-            log = carrega_distribuicao_log()
-            ultima_do_dia_por_deal = {}  # deal_id -> linha com maior dt, dentre as de hoje
-            for r in log:
-                if not (r["dt"] and r["dt"].date() == hoje):
+            vistos = set()
+            for r in carrega_distribuicao_log():
+                if not (r["dt"] and r["dt"].date() == hoje and r["alterado"]):
                     continue
-                did = r["deal_id"]
-                atual = ultima_do_dia_por_deal.get(did)
-                if atual is None or r["dt"] > atual["dt"]:
-                    ultima_do_dia_por_deal[did] = r
-
-            for r in ultima_do_dia_por_deal.values():
-                if r["alterado"]:
-                    nome = r["novo_proprietario"]
-                    if nome:
-                        chave = norm(nome)
-                        voltaram_por_pessoa[chave] = voltaram_por_pessoa.get(chave, 0) + 1
+                chave = norm(r["colaborador"])
+                k = (r["deal_id"], chave, norm(r["novo_proprietario"]))
+                if not chave or k in vistos:
+                    continue
+                vistos.add(k)
+                alt_por_pessoa.setdefault(chave, []).append(r["novo_proprietario"] or "—")
         except Exception:
             pass  # log ainda nao configurado -- so fica sem essa coluna preenchida
 
         for r in rows:
-            r["voltaram_hoje"] = voltaram_por_pessoa.get(norm(r["nome"]), 0)
+            dest = alt_por_pessoa.get(norm(r["nome"]), [])
+            r["alterados_hoje"] = len(dest)
+            cont = {}
+            for d in dest:
+                cont[d] = cont.get(d, 0) + 1
+            r["alterados_para"] = [{"nome": n, "qtd": q} for n, q in cont.items()]
 
         rows = sorted(rows, key=lambda r: r["qtd_reunioes"], reverse=True)
 
@@ -2133,7 +2135,7 @@ def api_distribuicao_resumo():
             "qtd_reunioes": sum(r["qtd_reunioes"] for r in rows),
             "recebidas_hoje": sum(r["recebidas_hoje"] for r in rows),
             "reunioes_atuais_hoje": sum(r["reunioes_atuais_hoje"] for r in rows),
-            "voltaram_hoje": sum(r["voltaram_hoje"] for r in rows),
+            "alterados_hoje": sum(r["alterados_hoje"] for r in rows),
         }
 
         return jsonify({"resumo": rows, "total": total})

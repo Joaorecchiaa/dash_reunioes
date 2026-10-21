@@ -574,6 +574,20 @@ def _baixa_csv():
     return rows
 
 
+def _parse_data_flex(texto):
+    """Data em 'DD/MM/AAAA' ou 'AAAA-MM-DD' (com ou sem hora depois). None se vazia/invalida."""
+    t = (texto or "").strip()
+    if not t:
+        return None
+    t = t.replace(",", " ").split(" ")[0]
+    for fmt in ("%d/%m/%Y", "%Y-%m-%d", "%d/%m/%y"):
+        try:
+            return datetime.strptime(t, fmt).date()
+        except ValueError:
+            continue
+    return None
+
+
 def carrega_distribuicao_resumo():
     """Le a aba de resumo de distribuicao de leads (planilha config_dashs):
     por colaborador, quantos leads ele deveria receber (QTD_REUNIOES),
@@ -597,13 +611,33 @@ def carrega_distribuicao_resumo():
 
     rows = []
     for r in reader:
+        cargo = (r.get("CARGO") or "").strip()
+        qtd = _int(r.get("QTD_REUNIOES"))
+        atuais = _int(r.get("REUNIOES_ATUAIS_HOJE"))
+        # VEZES_NA_FILA: peso na fila; vazio (ou invalido/0) vale 1
+        vezes = _int(r.get("VEZES_NA_FILA")) or 1
+        # status na fila (regras da planilha): so reconhece quem tem "Closer" no cargo;
+        # meta 0 = so recebe credito de negocios reatribuidos, nunca entra na fila;
+        # a fila e o teto da meta usam REUNIOES_ATUAIS_HOJE (nao RECEBIDAS_HOJE)
+        if "closer" not in norm(cargo):
+            status_fila = "cargo_invalido"
+        elif qtd <= 0:
+            status_fila = "sem_meta"
+        elif atuais >= qtd:
+            status_fila = "na_meta"
+        else:
+            status_fila = "na_fila"
         rows.append({
             "nome": (r.get("NOME") or "").strip(),
             "email": (r.get("EMAIL") or "").strip(),
-            "cargo": (r.get("CARGO") or "").strip(),
-            "qtd_reunioes": _int(r.get("QTD_REUNIOES")),
+            "cargo": cargo,
+            "qtd_reunioes": qtd,
             "recebidas_hoje": _int(r.get("RECEBIDAS_HOJE")),
-            "reunioes_atuais_hoje": _int(r.get("REUNIOES_ATUAIS_HOJE")),
+            "reunioes_atuais_hoje": atuais,
+            "vezes_na_fila": vezes,
+            "ajuste_fila": _int(r.get("AJUSTE_FILA")),
+            "status_fila": status_fila,
+            "falta_para_meta": max(0, qtd - atuais) if qtd > 0 else 0,
         })
     with _lock:
         _cache["dist_resumo"] = {"ts": time.time(), "rows": rows}
@@ -637,7 +671,16 @@ def carrega_distribuicao_log():
         except ValueError:
             pass
         reunioes_dia = (r.get("REUNIOES_DO_DIA") or "").strip()
+        outro_dia_raw = (r.get("AGENDADA_OUTRO_DIA") or "").strip()
+        dur_raw = (r.get("REUNIAO_DURACAO_MIN") or "").strip()
         rows.append({
+            # REUNIAO_DATA / HORA / DURACAO_MIN (padrao 60) -- servem p/ checar escala e choque de horario
+            "reuniao_data": _parse_data_flex(r.get("REUNIAO_DATA")),
+            "reuniao_hora": _parse_hora_hhmmss(r.get("REUNIAO_HORA")),
+            "duracao_min": int(float(dur_raw)) if dur_raw.replace(".", "", 1).isdigit() and float(dur_raw) > 0 else 60,
+            "creditada_em": (r.get("CREDITADA_EM") or "").strip(),
+            # AGENDADA_OUTRO_DIA agora traz a DATA da reuniao quando nao e hoje (antes era "Sim")
+            "outro_dia_valor": outro_dia_raw,
             "data_hora": data_hora_str,
             "dt": dt,  # objeto datetime p/ ordenar -- nao serializavel, remover antes de devolver via API
             "deal_id": (r.get("DEAL_ID") or "").strip(),
@@ -646,7 +689,7 @@ def carrega_distribuicao_log():
             "reunioes_do_dia": int(reunioes_dia) if reunioes_dia.isdigit() else None,
             "alterado": (r.get("ALTERADO") or "").strip().lower() == "sim",
             "novo_proprietario": (r.get("NOVO_PROPRIETARIO") or "").strip() or None,
-            "agendada_outro_dia": (r.get("AGENDADA_OUTRO_DIA") or "").strip().lower() == "sim",
+            "agendada_outro_dia": norm(outro_dia_raw) not in ("", "nao", "n", "0", "false"),
         })
     with _lock:
         _cache["dist_log"] = {"ts": time.time(), "rows": rows}
@@ -683,6 +726,7 @@ def carrega_escala_comercial():
     col_saida = achar("Saida", "Saída", "SAIDA", "SAÍDA")
     col_cargo = achar("Cargo", "CARGO")
     col_time = achar("Subarea", "Time", "Equipe", "SUBAREA", "TIME")
+    col_dias = achar("dias_semana", "Dias da semana", "Dias")
     faltando = [n for n, c in [("Nome", col_nome), ("Saida", col_saida)] if not c]
     if faltando:
         print("[escala_comercial] Colunas nao encontradas:", faltando, "| Cabecalhos:", reader.fieldnames)
@@ -698,10 +742,54 @@ def carrega_escala_comercial():
             "saida": (r.get(col_saida) or "").strip() if col_saida else "",
             "cargo": norm(r.get(col_cargo)) if col_cargo else "",
             "time": (r.get(col_time) or "").strip().upper() if col_time else "",
+            "dias": _parse_dias_semana(r.get(col_dias)) if col_dias else None,
         })
     with _lock:
         _cache["escala"] = {"ts": time.time(), "rows": rows}
     return rows
+
+
+_DIAS_NOMES = {"seg": 0, "ter": 1, "qua": 2, "qui": 3, "sex": 4, "sab": 5, "dom": 6}
+
+
+def _parse_dias_semana(texto):
+    """Dias da semana em que o turno vale -> set de 0..6 (0 = segunda). Aceita nomes
+    ("seg,ter,qua", "Segunda a Sexta", "seg-sex") e numeros ISO 1..7 (1 = segunda, 7 = domingo;
+    0 tambem vale domingo). Vazio ou ilegivel = None (turno vale todos os dias)."""
+    import re as _re
+    t = norm(texto)
+    if not t:
+        return None
+    intervalo = bool(_re.search(r"\ba\b|-|ate", t))
+    seq = []
+    for w in _re.findall(r"[a-z]+|\d", t):
+        if w in ("a", "ate", "e"):
+            continue
+        if w.isdigit():
+            n = int(w)
+            seq.append(6 if n in (0, 7) else (n - 1 if 1 <= n <= 6 else None))
+        else:
+            seq.append(_DIAS_NOMES.get(w[:3]))
+    if not seq or None in seq:
+        return None
+    if intervalo and len(seq) == 2:
+        out, i = set(), seq[0]
+        while True:
+            out.add(i)
+            if i == seq[1]:
+                break
+            i = (i + 1) % 7
+        return out
+    return set(seq)
+
+
+def escala_turno_por_nome():
+    """{nome_normalizado: {"entrada": time|None, "saida": time|None, "dias": set|None}}"""
+    out = {}
+    for r in carrega_escala_comercial():
+        out[norm(r["nome"])] = {"entrada": _parse_hora_hhmmss(r["entrada"]),
+                                "saida": _parse_hora_hhmmss(r["saida"]), "dias": r.get("dias")}
+    return out
 
 
 def escala_saida_por_nome():
@@ -1947,6 +2035,49 @@ def api_debug_deals_owner():
         return jsonify({"error": str(e)}), 500
 
 
+def analisa_log_distribuicao(rows):
+    """Checagens das regras da fila sobre o log (so a ULTIMA linha de cada negocio vale: as
+    anteriores sao tentativas; linha ALTERADO=Sim perdeu o credito e fica fora das checagens).
+    Devolve {id(linha): {"fora_escala": bool|None, "choque": bool}}.
+      - fora_escala: horario da REUNIAO (nao o da distribuicao) fora do turno do closer na escala
+        comercial (Entrada e Saida inclusive, e so nos dias_semana do turno). None = sem escala/horario.
+      - choque: o closer tem outra reuniao que se sobrepoe (inicio < fim do outro e vice-versa;
+        duracao padrao 60 min). Reunioes colando (fim = inicio) nao conflitam."""
+    ultima = {}
+    for r in rows:
+        did = r.get("deal_id")
+        if not did or not r.get("dt"):
+            continue
+        a = ultima.get(did)
+        if a is None or r["dt"] > a["dt"]:
+            ultima[did] = r
+    try:
+        turnos = escala_turno_por_nome()
+    except Exception:
+        turnos = {}
+    por_closer_dia = defaultdict(list)
+    for r in ultima.values():
+        if r.get("alterado") or not (r.get("reuniao_data") and r.get("reuniao_hora")):
+            continue
+        ini = datetime.combine(r["reuniao_data"], r["reuniao_hora"])
+        por_closer_dia[(norm(r["colaborador"]), r["reuniao_data"])].append(
+            (ini, ini + timedelta(minutes=r.get("duracao_min") or 60), r))
+    out = {}
+    for (nome, dia), lst in por_closer_dia.items():
+        t = turnos.get(nome)
+        for ini, fim, r in lst:
+            choque = any(o is not r and ini < ofim and oini < fim for oini, ofim, o in lst)
+            fora = None
+            if t and t.get("entrada") and t.get("saida"):
+                h = ini.time()
+                dentro = t["entrada"] <= h <= t["saida"]
+                if t.get("dias") is not None and dia.weekday() not in t["dias"]:
+                    dentro = False
+                fora = not dentro
+            out[id(r)] = {"fora_escala": fora, "choque": choque}
+    return out
+
+
 @app.route("/api/distribuicao_resumo")
 def api_distribuicao_resumo():
     """Resumo por colaborador de quantos leads deveria receber, ja
@@ -1998,6 +2129,7 @@ def api_distribuicao_resumo():
         rows = sorted(rows, key=lambda r: r["qtd_reunioes"], reverse=True)
 
         total = {
+            "na_fila": sum(1 for r in rows if r["status_fila"] == "na_fila"),
             "qtd_reunioes": sum(r["qtd_reunioes"] for r in rows),
             "recebidas_hoje": sum(r["recebidas_hoje"] for r in rows),
             "reunioes_atuais_hoje": sum(r["reunioes_atuais_hoje"] for r in rows),
@@ -2028,6 +2160,7 @@ def api_distribuicao_log():
         year, month = hoje.year, hoje.month
     try:
         rows = carrega_distribuicao_log()
+        todos = rows   # mesmos objetos: as checagens (escala/choque) olham o log inteiro
         rows = [r for r in rows if r["dt"] and r["dt"].year == year and r["dt"].month == month]
         rows = sorted(rows, key=lambda r: r["dt"], reverse=True)
         limit = int(request.args.get("limit", "5000") or "5000")
@@ -2044,8 +2177,19 @@ def api_distribuicao_log():
                 except (ValueError, TypeError):
                     status_por_deal[did] = "—"
 
+        try:
+            flags = analisa_log_distribuicao(todos)
+        except Exception:
+            flags = {}
         out = [{
             "data_hora": r["data_hora"], "deal_id": r["deal_id"],
+            "reuniao_data": r["reuniao_data"].strftime("%d/%m/%Y") if r.get("reuniao_data") else None,
+            "reuniao_hora": r["reuniao_hora"].strftime("%H:%M") if r.get("reuniao_hora") else None,
+            "duracao_min": r.get("duracao_min"),
+            "creditada_em": r.get("creditada_em") or None,
+            "outro_dia_valor": r.get("outro_dia_valor") or None,
+            "fora_escala": (flags.get(id(r)) or {}).get("fora_escala"),
+            "choque": (flags.get(id(r)) or {}).get("choque", False),
             "url": (PIPEDRIVE_BASE_URL + "/deal/" + r["deal_id"]) if r["deal_id"] else None,
             "colaborador": r["colaborador"], "funil": r["funil"],
             "reunioes_do_dia": r["reunioes_do_dia"],

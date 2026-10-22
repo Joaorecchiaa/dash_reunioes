@@ -1686,6 +1686,8 @@ def _build_dashboard_generico(closers, year, month, privilegiado=False, com_vali
                     status = "No Show"
                 elif tipo == "meeting" and done and eh_valid:
                     status = "Validada"
+                elif tipo == "meeting" and done and eh_nao_valid:
+                    status = "Não validada"   # feita, mas "Reuniao Validada?" = Nao no negocio
                 elif tipo == "meeting" and done:
                     status = "Feita"
                 else:

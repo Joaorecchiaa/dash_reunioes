@@ -520,7 +520,7 @@ function dealBadge(status) {
 
 function statusBadge(status) {
   const mapa = {
-    'Planejada': 'st-planejada', 'Feita': 'st-feita', 'Validada': 'st-validada',
+    'Planejada': 'st-planejada', 'Feita': 'st-feita', 'Validada': 'st-validada', 'Não validada': 'st-vencida',
     'No Show': 'st-noshow', 'Reagendada': 'st-reagendada', 'Vencida': 'st-vencida',
   };
   const cls = mapa[status] || 'st-planejada';

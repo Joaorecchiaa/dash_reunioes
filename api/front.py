@@ -86,6 +86,16 @@ HTML = r"""<!DOCTYPE html>
   .team-card .tc-big { font-size:20px; font-weight:800; color:#ffffff; }
   .team-card .tc-sub { color:#9a9a9a; }
 
+  .grf-bar { display:flex; flex-wrap:wrap; gap:6px; align-items:center; margin:6px 0; font-size:12px; }
+  .grf-bar .lbl { font-size:10px; text-transform:uppercase; letter-spacing:.5px; color:var(--muted); font-weight:700; min-width:90px; }
+  .grf-chip { display:inline-flex; align-items:center; gap:5px; padding:3px 9px; border:1px solid var(--border); border-radius:999px; background:#fff; cursor:pointer; user-select:none; font-size:12px; }
+  .grf-chip.on { background:#fff8d6; border-color:#e0c200; font-weight:600; }
+  .grf-chip input { display:none; }
+  .grf-chip .dot { width:9px; height:9px; border-radius:50%; display:inline-block; }
+  .grf-pessoas { max-height:96px; overflow:auto; padding:2px; }
+  .grf-btn { font-size:11px; padding:2px 8px; border:1px solid var(--border); border-radius:6px; background:#fff; cursor:pointer; }
+  .grf-leg { display:flex; flex-wrap:wrap; gap:4px 14px; font-size:11px; color:var(--muted); margin-top:6px; }
+  .grf-leg i { display:inline-block; width:14px; height:3px; margin-right:5px; vertical-align:middle; border-radius:2px; }
   .panel { background:var(--card); border:1px solid var(--border); border-radius:12px; padding:16px; margin-bottom:20px;
            box-shadow:none; }
   .panel h2 { font-size:14px; margin:0 0 12px; color:var(--gold-ink); text-transform:uppercase; letter-spacing:.5px; font-weight:700; }
@@ -685,6 +695,119 @@ function linhasPorPessoa(data, periodo) {
   return todas.filter(c => !c.lideranca).concat(todas.filter(c => c.lideranca));  // lideranca por ultimo
 }
 
+// ---- grafico dia a dia (volume por colaborador x status) ----
+const GRF_STATUS = [
+  ['planned','Planejadas','#64748b'], ['done','Feitas','#0ea5e9'], ['validada','Validadas','#15803d'],
+  ['nao_validada','Não validadas','#b91c1c'], ['no_show','No Show','#db2777'], ['reagendada','Reagendadas','#d97706'],
+];
+const GRF_DASH = ['', '6 3', '2 3', '8 3 2 3', '1 4', '10 4'];
+const GRF_CTX = {}, GRF_EST = {};
+const grfCor = (i, n) => `hsl(${Math.round((i * 360 / Math.max(n, 1)) % 360)},60%,42%)`;
+
+function grfPrepara(prefix, cfg, data, periodo) {
+  const nomes = linhasPorPessoa(data, periodo).map(c => c.name);
+  const fontes = periodo ? periodo.segs : [{ d: data, de: 1, ate: 31 }];
+  const dias = [];
+  for (const seg of fontes) {
+    const mp = new Map((seg.d.por_closer || []).map(x => [x.name, new Map((x.days || []).map(d => [d.dia, d.counter]))]));
+    const multi = periodo && periodo.segs.length > 1;
+    for (const row of seg.d.days) {
+      if (row.dia < seg.de || row.dia > seg.ate) continue;
+      const por = {};
+      for (const n of nomes) por[n] = (mp.get(n) || new Map()).get(row.dia) || {};
+      dias.push({ rot: String(row.dia).padStart(2, '0') + (multi ? '/' + String(seg.d.month).padStart(2, '0') : ''), por });
+    }
+  }
+  GRF_CTX[prefix] = { nomes, dias, label: cfg.label, comValidada: cfg.comValidada };
+  if (!GRF_EST[prefix]) GRF_EST[prefix] = { pessoas: null, status: new Set([cfg.comValidada ? 'validada' : 'done']), soma: false };
+}
+
+function grfHtmlBase(prefix) {
+  const c = GRF_CTX[prefix];
+  return `<div class="panel" id="grf-${prefix}"><h2>Gráfico dia a dia — por ${c.label}</h2>
+    <div class="grf-bar"><span class="lbl">Status</span><span id="grf-${prefix}-st"></span></div>
+    <div class="grf-bar"><span class="lbl">${c.label}</span>
+      <button class="grf-btn" data-grf="${prefix}" data-acao="todos">Todos</button>
+      <button class="grf-btn" data-grf="${prefix}" data-acao="nenhum">Nenhum</button>
+      <label class="grf-chip" id="grf-${prefix}-somalbl"><input type="checkbox" id="grf-${prefix}-soma">Somar selecionados</label></div>
+    <div class="grf-bar grf-pessoas" id="grf-${prefix}-ps"></div>
+    <div id="grf-${prefix}-svg"></div><div class="grf-leg" id="grf-${prefix}-leg"></div></div>`;
+}
+
+function grfMonta(prefix) {
+  const c = GRF_CTX[prefix], e = GRF_EST[prefix];
+  const box = document.getElementById('grf-' + prefix);
+  if (!c || !box) return;
+  const sts = GRF_STATUS.filter(s => s[0] !== 'validada' || c.comValidada);
+  [...e.status].forEach(k => { if (!sts.some(s => s[0] === k)) e.status.delete(k); });
+  const sel = new Set(e.pessoas ? c.nomes.filter(n => e.pessoas.has(n)) : c.nomes);
+  document.getElementById('grf-' + prefix + '-st').innerHTML = sts.map(s =>
+    `<label class="grf-chip${e.status.has(s[0]) ? ' on' : ''}"><input type="checkbox" data-grf="${prefix}" data-st="${s[0]}" ${e.status.has(s[0]) ? 'checked' : ''}><span class="dot" style="background:${s[2]}"></span>${s[1]}</label>`).join(' ');
+  document.getElementById('grf-' + prefix + '-ps').innerHTML = c.nomes.map((n, i) =>
+    `<label class="grf-chip${sel.has(n) ? ' on' : ''}"><input type="checkbox" data-grf="${prefix}" data-p="${i}" ${sel.has(n) ? 'checked' : ''}><span class="dot" style="background:${grfCor(i, c.nomes.length)}"></span>${n}</label>`).join(' ');
+  const cb = document.getElementById('grf-' + prefix + '-soma');
+  cb.checked = e.soma;
+  document.getElementById('grf-' + prefix + '-somalbl').className = 'grf-chip' + (e.soma ? ' on' : '');
+
+  // series
+  const stAtivos = sts.filter(s => e.status.has(s[0]));
+  const pessoas = c.nomes.map((n, i) => ({ n, i })).filter(x => sel.has(x.n));
+  const series = [];
+  if (e.soma) {
+    for (const s of stAtivos) series.push({ nome: s[1], cor: s[2], dash: '', vals: c.dias.map(d => pessoas.reduce((t, p) => t + ((d.por[p.n] || {})[s[0]] || 0), 0)) });
+  } else {
+    for (const p of pessoas) stAtivos.forEach((s, si) => series.push({
+      nome: stAtivos.length > 1 ? p.n + ' · ' + s[1] : p.n, cor: grfCor(p.i, c.nomes.length), dash: GRF_DASH[si % GRF_DASH.length],
+      vals: c.dias.map(d => (d.por[p.n] || {})[s[0]] || 0) }));
+  }
+  const alvo = document.getElementById('grf-' + prefix + '-svg');
+  if (!series.length) { alvo.innerHTML = `<div class="muted" style="font-size:12px;padding:20px 0">Selecione ao menos um status e um ${c.label.toLowerCase()}.</div>`; document.getElementById('grf-' + prefix + '-leg').innerHTML = ''; return; }
+  const W = 1000, H = 300, L = 38, R = 12, T = 12, B = 28;
+  const max0 = Math.max(1, ...series.flatMap(s => s.vals));
+  const passo = max0 <= 5 ? 1 : max0 <= 10 ? 2 : max0 <= 25 ? 5 : max0 <= 50 ? 10 : 20;
+  const max = Math.ceil(max0 / passo) * passo;
+  const n = c.dias.length;
+  const x = i => L + (n <= 1 ? (W - L - R) / 2 : i * (W - L - R) / (n - 1));
+  const y = v => T + (H - T - B) * (1 - v / max);
+  let g = '';
+  for (let v = 0; v <= max; v += passo) g += `<line x1="${L}" x2="${W - R}" y1="${y(v)}" y2="${y(v)}" stroke="#e5e7eb"/><text x="${L - 6}" y="${y(v) + 4}" font-size="11" fill="#6b7280" text-anchor="end">${v}</text>`;
+  const cada = Math.ceil(n / 31);
+  c.dias.forEach((d, i) => { if (i % cada === 0) g += `<text x="${x(i)}" y="${H - 8}" font-size="10" fill="#6b7280" text-anchor="middle">${d.rot}</text>`; });
+  for (const s of series) {
+    const pts = s.vals.map((v, i) => `${x(i).toFixed(1)},${y(v).toFixed(1)}`).join(' ');
+    g += `<polyline points="${pts}" fill="none" stroke="${s.cor}" stroke-width="2" ${s.dash ? 'stroke-dasharray="' + s.dash + '"' : ''} stroke-linejoin="round"/>`;
+    s.vals.forEach((v, i) => { g += `<circle cx="${x(i).toFixed(1)}" cy="${y(v).toFixed(1)}" r="3.2" fill="${s.cor}"><title>${s.nome} — dia ${c.dias[i].rot}: ${v}</title></circle>`; });
+  }
+  alvo.innerHTML = `<svg viewBox="0 0 ${W} ${H}" style="width:100%;height:auto;max-height:360px">${g}</svg>`;
+  document.getElementById('grf-' + prefix + '-leg').innerHTML = series.length > 40 ? '' :
+    series.map(s => `<span><i style="background:${s.cor}"></i>${s.nome}</span>`).join('');
+}
+
+document.addEventListener('change', ev => {
+  const t = ev.target, prefix = t.dataset && t.dataset.grf;
+  if (!prefix || !GRF_EST[prefix]) return;
+  const e = GRF_EST[prefix], c = GRF_CTX[prefix];
+  if (t.dataset.st) { t.checked ? e.status.add(t.dataset.st) : e.status.delete(t.dataset.st); }
+  else if (t.dataset.p !== undefined) {
+    if (!e.pessoas) e.pessoas = new Set(c.nomes);
+    const nome = c.nomes[+t.dataset.p];
+    t.checked ? e.pessoas.add(nome) : e.pessoas.delete(nome);
+  }
+  grfMonta(prefix);
+});
+document.addEventListener('change', ev => {
+  const m = ev.target.id && ev.target.id.match(/^grf-(.+)-soma$/);
+  if (m && GRF_EST[m[1]]) { GRF_EST[m[1]].soma = ev.target.checked; grfMonta(m[1]); }
+});
+document.addEventListener('click', ev => {
+  const b = ev.target.closest && ev.target.closest('button.grf-btn');
+  if (!b) return;
+  const prefix = b.dataset.grf, e = GRF_EST[prefix], c = GRF_CTX[prefix];
+  if (!e) return;
+  e.pessoas = b.dataset.acao === 'todos' ? null : new Set();
+  grfMonta(prefix);
+});
+
 function renderGenerico(data, cfg) {
   $('updated').innerText = 'Atualizado: ' + new Date(data.generated_at).toLocaleString('pt-BR');
   $('auto').innerText = (cfg.ehAtual && cfg.ehAtual()) ? '● atualiza sozinho a cada ' + Math.round(REFRESH_MS/60000) + ' min' : '';
@@ -980,6 +1103,8 @@ function renderGenerico(data, cfg) {
   }
   const totLead = priv ? '<td></td>' : '';
   html += `<tr class="total">${totLead}<td class="l">TOTAL</td>${cols(mt, cfg.comValidada)}</tr></table></div></details>`;
+  grfPrepara(cfg.idPrefix, cfg, data, periodo);
+  html += grfHtmlBase(cfg.idPrefix);
 
   if (data.nao_encontrados && data.nao_encontrados.length) {
     html += `<div class="warn">⚠ Sem correspondência no Pipedrive: ${data.nao_encontrados.join(', ')}</div>`;
@@ -988,6 +1113,7 @@ function renderGenerico(data, cfg) {
   $(cfg.rootId).innerHTML = html;
   ligaCriador();
   ligaDiaADia();
+  grfMonta(cfg.idPrefix);
   aplicaFiltroStatus();
 }
 

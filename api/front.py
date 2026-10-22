@@ -158,6 +158,9 @@ HTML = r"""<!DOCTYPE html>
 
   .neg-box { margin-top:12px; padding-top:10px; border-top:1px dashed var(--border); }
   .neg-box .nb-title { font-size:10px; color:#141414 !important; text-transform:uppercase; letter-spacing:.5px; margin-bottom:6px; font-weight:700; }
+  .flt-bar { font-size:11px; color:var(--muted); margin:2px 0 6px; text-align:left; }
+  .flt-bar .flt-status { margin-left:4px; }
+  .flt-status { font-size:11px; padding:2px 6px; border:1px solid var(--border); border-radius:6px; background:#fff; color:var(--text); text-transform:none; letter-spacing:0; font-weight:400; }
   table.neg-tbl { width:100%; font-size:12px; border-collapse:collapse; }
   table.neg-tbl { table-layout:fixed; }
   table.neg-tbl th { font-size:10px; color:var(--muted); text-transform:uppercase; letter-spacing:.5px;
@@ -170,7 +173,7 @@ HTML = r"""<!DOCTYPE html>
   table.neg-tbl td, table.neg-tbl th { overflow:hidden; text-overflow:ellipsis; }
   table.neg-tbl col.c-hora { width:60px; }
   table.neg-tbl col.c-id { width:120px; }
-  table.neg-tbl col.c-status { width:90px; }
+  table.neg-tbl col.c-status { width:130px; }
   /* linha vertical separando ID do Negocio (2a coluna), alinhada nas duas tabelas */
   table.neg-tbl th:nth-child(2), table.neg-tbl td:nth-child(2) { border-right:1px solid var(--border); }
   .status-badge { display:inline-block; padding:2px 8px; border-radius:10px; font-size:10px; font-weight:700;
@@ -518,6 +521,25 @@ function dealBadge(status) {
   return `<span class="deal-badge ${cls}">${status || '—'}</span>`;
 }
 
+// ---- filtro por status (negocios do dia / do mes / dia a dia) ----
+let filtroStatus = '';
+const STATUS_OPCOES = ['Planejada','Feita','Validada','Não validada','No Show','Reagendada','Vencida'];
+function filtroStatusHtml() {
+  const ops = ['<option value="">Todos os status</option>'].concat(
+    STATUS_OPCOES.map(s => `<option value="${s}"${s === filtroStatus ? ' selected' : ''}>${s}</option>`));
+  return `<select class="flt-status" onchange="setFiltroStatus(this.value)" onclick="event.stopPropagation()">${ops.join('')}</select>`;
+}
+function setFiltroStatus(v) {
+  filtroStatus = v || '';
+  document.querySelectorAll('.flt-status').forEach(s => { s.value = filtroStatus; });
+  aplicaFiltroStatus();
+}
+function aplicaFiltroStatus() {
+  document.querySelectorAll('tr[data-st]').forEach(tr => {
+    tr.style.display = (!filtroStatus || tr.dataset.st === filtroStatus) ? '' : 'none';
+  });
+}
+
 function statusBadge(status) {
   const mapa = {
     'Planejada': 'st-planejada', 'Feita': 'st-feita', 'Validada': 'st-validada', 'Não validada': 'st-vencida',
@@ -797,11 +819,12 @@ function renderGenerico(data, cfg) {
       if (ehPriv()) {
         // --- negocios do DIA selecionado (com hora) ---
         const nd = ((c.negocios_dia || []).find(x => x.dia === dSel) || {}).itens || [];
-        negHtml += `<div class="neg-box"><div class="nb-title">Negócios do dia ${dSelStr}/${mesStr} (${nd.length}) — clique para abrir no Pipedrive</div>`;
+        negHtml += `<div class="neg-box"><div class="nb-title">Negócios do dia ${dSelStr}/${mesStr} (${nd.length}) — clique para abrir no Pipedrive</div>
+          <div class="flt-bar">Filtrar por status: ${filtroStatusHtml()}</div>`;
         if (nd.length) {
           negHtml += `<table class="neg-tbl"><colgroup><col class="c-hora"><col class="c-id"><col><col class="c-status"><col class="c-status"></colgroup><tr><th>Hora</th><th>ID</th><th>Negócio</th><th>Status</th><th>Situação</th></tr>`;
           for (const n of nd) {
-            negHtml += `<tr><td class="neg-hora">${n.hora || '--:--'}</td>
+            negHtml += `<tr data-st="${n.status}"><td class="neg-hora">${n.hora || '--:--'}</td>
               <td><a href="${n.url}" target="_blank" rel="noopener">#${n.id}</a></td>
               <td><a href="${n.url}" target="_blank" rel="noopener">${n.title}</a></td>
               <td>${statusBadge(n.status)}</td>
@@ -815,11 +838,12 @@ function renderGenerico(data, cfg) {
 
         // --- negocios do MES (dedupe) ---
         const nm = periodo ? negociosPeriodo(periodo, c.name) : (c.negocios || []);
-        negHtml += `<div class="neg-box"><div class="nb-title">Negócios ${periodo ? 'do período ' + periodo.rotulo : 'do mês'} (${nm.length})</div>`;
+        negHtml += `<div class="neg-box"><div class="nb-title">Negócios ${periodo ? 'do período ' + periodo.rotulo : 'do mês'} (${nm.length})</div>
+          <div class="flt-bar">Filtrar por status: ${filtroStatusHtml()}</div>`;
         if (nm.length) {
           negHtml += `<table class="neg-tbl"><colgroup><col class="c-hora"><col class="c-id"><col><col class="c-status"><col class="c-status"></colgroup><tr><th></th><th>ID</th><th>Negócio</th><th>Status</th><th>Situação</th></tr>`;
           for (const n of nm) {
-            negHtml += `<tr><td class="neg-hora"></td><td><a href="${n.url}" target="_blank" rel="noopener">#${n.id}</a></td>
+            negHtml += `<tr data-st="${n.status}"><td class="neg-hora"></td><td><a href="${n.url}" target="_blank" rel="noopener">#${n.id}</a></td>
               <td><a href="${n.url}" target="_blank" rel="noopener">${n.title}</a></td>
               <td>${statusBadge(n.status)}</td>
               <td>${dealBadge(n.status_negocio)}</td></tr>`;
@@ -939,12 +963,13 @@ function renderGenerico(data, cfg) {
     const rotDia = String(row.dia).padStart(2,'0') + (multiMes ? '/' + String(it0.mes).padStart(2,'0') : '');
     html += `<tr${clickable}>${arrow}<td class="l">${rotDia}</td>${cols(row.counter, cfg.comValidada)}</tr>`;
     if (priv && temItens) {
-      let sub = `<table class="dd-tbl"><tr><th>Hora</th><th>${cfg.label}</th><th>Time</th><th>ID</th><th>Negócio</th></tr>`;
+      let sub = `<table class="dd-tbl"><tr><th>Hora</th><th>${cfg.label}</th><th>Time</th><th>ID</th><th>Negócio</th><th>Status ${filtroStatusHtml()}</th></tr>`;
       for (const it of itens) {
-        sub += `<tr><td class="neg-hora">${it.hora || '--:--'}</td>
+        sub += `<tr data-st="${it.status}"><td class="neg-hora">${it.hora || '--:--'}</td>
           <td>${it.closer}</td><td class="muted">${it.time}</td>
           <td><a href="${it.url}" target="_blank" rel="noopener">#${it.id}</a></td>
-          <td><a href="${it.url}" target="_blank" rel="noopener">${it.title}</a></td></tr>`;
+          <td><a href="${it.url}" target="_blank" rel="noopener">${it.title}</a></td>
+          <td>${statusBadge(it.status)}</td></tr>`;
       }
       sub += `</table>`;
       const colspan = (cfg.comValidada ? 7 : 6) + 1; // arrow + Dia + colunas
@@ -961,6 +986,7 @@ function renderGenerico(data, cfg) {
   $(cfg.rootId).innerHTML = html;
   ligaCriador();
   ligaDiaADia();
+  aplicaFiltroStatus();
 }
 
 function render(data) {

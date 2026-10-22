@@ -540,6 +540,8 @@ function aplicaFiltroStatus() {
   });
 }
 
+const porNome = (a, b) => String(a.title || '').localeCompare(String(b.title || ''), 'pt-BR', { sensitivity: 'base' });
+
 function statusBadge(status) {
   const mapa = {
     'Planejada': 'st-planejada', 'Feita': 'st-feita', 'Validada': 'st-validada', 'Não validada': 'st-vencida',
@@ -823,7 +825,7 @@ function renderGenerico(data, cfg) {
           <div class="flt-bar">Filtrar por status: ${filtroStatusHtml()}</div>`;
         if (nd.length) {
           negHtml += `<table class="neg-tbl"><colgroup><col class="c-hora"><col class="c-id"><col><col class="c-status"><col class="c-status"></colgroup><tr><th>Hora</th><th>ID</th><th>Negócio</th><th>Status</th><th>Situação</th></tr>`;
-          for (const n of nd) {
+          for (const n of nd.slice().sort(porNome)) {
             negHtml += `<tr data-st="${n.status}"><td class="neg-hora">${n.hora || '--:--'}</td>
               <td><a href="${n.url}" target="_blank" rel="noopener">#${n.id}</a></td>
               <td><a href="${n.url}" target="_blank" rel="noopener">${n.title}</a></td>
@@ -842,7 +844,7 @@ function renderGenerico(data, cfg) {
           <div class="flt-bar">Filtrar por status: ${filtroStatusHtml()}</div>`;
         if (nm.length) {
           negHtml += `<table class="neg-tbl"><colgroup><col class="c-hora"><col class="c-id"><col><col class="c-status"><col class="c-status"></colgroup><tr><th></th><th>ID</th><th>Negócio</th><th>Status</th><th>Situação</th></tr>`;
-          for (const n of nm) {
+          for (const n of nm.slice().sort(porNome)) {
             negHtml += `<tr data-st="${n.status}"><td class="neg-hora"></td><td><a href="${n.url}" target="_blank" rel="noopener">#${n.id}</a></td>
               <td><a href="${n.url}" target="_blank" rel="noopener">${n.title}</a></td>
               <td>${statusBadge(n.status)}</td>
@@ -964,7 +966,7 @@ function renderGenerico(data, cfg) {
     html += `<tr${clickable}>${arrow}<td class="l">${rotDia}</td>${cols(row.counter, cfg.comValidada)}</tr>`;
     if (priv && temItens) {
       let sub = `<table class="dd-tbl"><tr><th>Hora</th><th>${cfg.label}</th><th>Time</th><th>ID</th><th>Negócio</th><th>Status ${filtroStatusHtml()}</th></tr>`;
-      for (const it of itens) {
+      for (const it of itens.slice().sort(porNome)) {
         sub += `<tr data-st="${it.status}"><td class="neg-hora">${it.hora || '--:--'}</td>
           <td>${it.closer}</td><td class="muted">${it.time}</td>
           <td><a href="${it.url}" target="_blank" rel="noopener">#${it.id}</a></td>

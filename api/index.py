@@ -255,6 +255,10 @@ def funis_pipedrive():
     return _cache_seguro(("funis",), 600, pipedrive.funis)
 
 
+# Squads exibidos no painel (pedido do painel, nao regra da CRN). So quem esta nesses squads na Colab do mes aparece.
+TIMES_EXIBIDOS = {t.strip().upper() for t in os.environ.get("TIMES_EXIBIDOS", "SNIPER,ELITE").split(",") if t.strip()}
+
+
 def _licenciado(squad):
     return norm(squad).startswith("licenciad")      # P7: Licenciados fora por padrao
 
@@ -301,8 +305,12 @@ def contexto_mes(ano, mes):
         lid_ids = {id_por_nome[p["nome_norm"]] for p in colab
                    if h1.nivel(p, colab) in ("gerente", "head", "team_leader") and p["nome_norm"] in id_por_nome}
         sdr_ids = {id_por_nome[m["nome_norm"]] for m in metas if m["papel"] == "sdr" and m["nome_norm"] in id_por_nome}
+        sdrs = {n: t for n, t in sdrs.items() if t in TIMES_EXIBIDOS}
+        closers = {n: t for n, t in closers.items() if t in TIMES_EXIBIDOS}
+        lideres = {n: c for n, c in lideres.items() if n in sdrs}
         return {
             "ano": ano, "mes": mes, "users": users, "id_por_nome": id_por_nome,
+            "nomes_exibidos": {p["nome_norm"] for p in colab if p["squad"].upper() in TIMES_EXIBIDOS},
             "sdrs": sdrs, "closers": closers, "lideres": lideres,
             "sdr_ids": sdr_ids, "lideranca_ids": lid_ids, "lq_ids": set(lq_ids),
         }
@@ -373,7 +381,7 @@ def carimbo(ano=None, mes=None, extra=""):
     agora = fuso.agora_brasil()
     partes = [f"CRN {crn.versao()}",
               "Eixo: data da reunião (due_date + hora, Brasília)",
-              "Squads: todos exc. Licenciados",
+              "Squads: " + " e ".join(sorted(TIMES_EXIBIDOS)),
               "Recorte: quem tem meta no mês (Metas)"]
     if extra:
         partes.append(extra)
@@ -1371,6 +1379,9 @@ def api_distribuicao_resumo():
         return jsonify({"error": "acesso restrito"}), 401
     try:
         rows = carrega_distribuicao_resumo()
+        _hj = fuso.hoje_brasil()
+        _nomes = contexto_mes(_hj.year, _hj.month)["nomes_exibidos"]
+        rows = [r for r in rows if norm(r["nome"]) in _nomes]       # so os squads exibidos
 
         # quantos negocios voltaram pra cada colaborador HOJE -- cruza
         # com o log de distribuicao (ALTERADO=Sim, DATA_HORA de hoje).
@@ -1446,7 +1457,9 @@ def api_distribuicao_log():
     try:
         rows = carrega_distribuicao_log()
         todos = rows   # mesmos objetos: as checagens (escala/choque) olham o log inteiro
-        rows = [r for r in rows if r["dt"] and r["dt"].year == year and r["dt"].month == month]
+        _nomes = contexto_mes(year, month)["nomes_exibidos"]
+        rows = [r for r in rows if r["dt"] and r["dt"].year == year and r["dt"].month == month
+                and norm(r["colaborador"]) in _nomes]                # so os squads exibidos
         rows = sorted(rows, key=lambda r: r["dt"], reverse=True)
         limit = int(request.args.get("limit", "5000") or "5000")
         rows = rows[:limit]

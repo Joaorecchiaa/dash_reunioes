@@ -811,7 +811,7 @@ document.addEventListener('click', ev => {
 
 function renderGenerico(data, cfg) {
   $('updated').innerText = 'Atualizado: ' + new Date(data.generated_at).toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' });
-  $('carimbo').innerText = data.carimbo || '';
+  $('carimbo').innerText = (data.carimbo || '').replace(/\s*·\s*Atualizado:.*$/, '');
   $('auto').innerText = (cfg.ehAtual && cfg.ehAtual()) ? '● atualiza sozinho a cada ' + Math.round(REFRESH_MS/60000) + ' min' : '';
   const lblPlan = cfg.comValidada ? 'Agendadas' : 'Planejadas';
   const lblPlanAbrev = cfg.comValidada ? 'agend' : 'plan';

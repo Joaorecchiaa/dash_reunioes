@@ -1489,6 +1489,49 @@ def api_distribuicao_log():
         return jsonify({"error": str(e)}), 500
 
 
+@app.route("/api/debug_m6")
+def api_debug_m6():
+    """Diagnostico (so privilegiado): para um negocio, mostra o que a M6 recebeu e o que ela decidiu.
+    ?deal=<id>&month=YYYY-MM. Nao reimplementa regra: so expoe as entradas e a saida da CRN."""
+    if not eh_privilegiado(request):
+        return jsonify({"error": "acesso restrito"}), 401
+    did = request.args.get("deal", "").strip()
+    if not did.isdigit():
+        return jsonify({"error": "informe ?deal=<deal_id>"}), 400
+    did = int(did)
+    ano, mes = parse_ym(request.args.get("month", ""))
+    try:
+        ctx = contexto_mes(ano, mes)
+        P = dados_periodo(ano, mes)
+        nome = lambda uid: ctx["users"].get(uid, str(uid))
+        deal = P["deals"].get(did)
+        acts = [a for a in P["acts"] if a.get("deal_id") == did]
+        val = m6.reunioes_validadas(P["acts"], P["ini"], P["fim"], deals_validados=P["deals_validados"],
+                                    dono_do_deal=P["dono_do_deal"], sdr_ids=ctx["sdr_ids"],
+                                    lideranca_ids=ctx["lideranca_ids"], lideranca_que_agenda_ids=ctx["lq_ids"])
+        validadas = {a.get("id"): nome(r) for r, lst in val.items() for a in lst if a.get("deal_id") == did}
+        dono = P["dono_do_deal"].get(did)
+        return jsonify({
+            "crn": crn.versao(),
+            "deal": {"id": did, "no_periodo": deal is not None, "status": (deal or {}).get("status"),
+                     "owner_id": dono, "owner": nome(dono),
+                     "owner_eh_sdr": dono in ctx["sdr_ids"], "owner_eh_lideranca": dono in ctx["lideranca_ids"],
+                     "status_validacao": P["status_do_deal"].get(did),
+                     "validado": did in P["deals_validados"]},
+            "atividades": [{
+                "id": a.get("id"), "tipo": a.get("type"), "feita": _feita(a),
+                "responsavel_id": responsavel_id(a), "responsavel": nome(responsavel_id(a)),
+                "responsavel_eh_sdr": responsavel_id(a) in ctx["sdr_ids"],
+                "responsavel_eh_lideranca_que_agenda": responsavel_id(a) in ctx["lq_ids"],
+                "criador": nome(a.get("creator_user_id")), "criada_pela_ia": criada_pela_ia(a),
+                "dia": str(fuso.atividade_dia(a)), "hora": _hora(a),
+                "m6_validada_para": validadas.get(a.get("id")),
+            } for a in sorted(acts, key=lambda x: (str(x.get("due_date")), str(x.get("due_time"))))],
+        })
+    except Exception as e:
+        return _erro(e)
+
+
 @app.route("/api/debug_activity")
 def api_debug_activity():
     """Diagnostico: mostra o JSON cru de UMA activity, pra ver o formato
@@ -1583,7 +1626,7 @@ def index():
 
 
 # rotas de API "de verdade" que existem
-_API_ROTAS = ("/crn-versao", "/api/init", "/api/closers", "/api/dashboard", "/api/sdrs", "/api/dashboard_sdr", "/api/login", "/api/me", "/api/auditoria_sdr", "/api/evolucao_sdr", "/api/debug_activity", "/api/debug_deal", "/api/debug_deal_compare", "/api/debug_deals_owner", "/api/distribuicao_resumo", "/api/distribuicao_log", "/api/taxas_escala", "/api/ligacoes_hoje")
+_API_ROTAS = ("/crn-versao", "/api/init", "/api/closers", "/api/dashboard", "/api/sdrs", "/api/dashboard_sdr", "/api/login", "/api/me", "/api/auditoria_sdr", "/api/evolucao_sdr", "/api/debug_activity", "/api/debug_m6", "/api/debug_deal", "/api/debug_deal_compare", "/api/debug_deals_owner", "/api/distribuicao_resumo", "/api/distribuicao_log", "/api/taxas_escala", "/api/ligacoes_hoje")
 
 
 @app.errorhandler(404)

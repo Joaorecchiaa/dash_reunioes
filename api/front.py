@@ -55,6 +55,7 @@ HTML = r"""<!DOCTYPE html>
   .site-header .filters input[type=date] { min-width:0; width:132px; padding:6px 8px; font-size:12px; border-radius:6px; }
   .site-header .filters .field label { font-size:10px; }
   .site-header .filters button { padding:6px 16px; font-size:12px; border-radius:6px; }
+  .carimbo { font-size:10.5px; opacity:.8; max-width:640px; margin-top:2px; line-height:1.3; }
   .updated { color:var(--head-muted); font-size:12px; margin-left:auto; align-self:center; text-align:right; }
   .auto { color:var(--gold); font-size:11px; }
 
@@ -296,7 +297,7 @@ HTML = r"""<!DOCTYPE html>
       <div class="field"><label>Time</label><select id="f-time"></select></div>
       <div class="field"><label id="f-closer-label">Closer</label><select id="f-closer"></select></div>
       <button id="btn">Pesquisar</button>
-      <div class="updated"><div id="updated"></div><div class="auto" id="auto"></div></div>
+      <div class="updated"><div id="updated"></div><div class="auto" id="auto"></div><div class="carimbo" id="carimbo"></div></div>
     </div>
   </header>
 
@@ -738,7 +739,7 @@ function grfMonta(prefix) {
   const c = GRF_CTX[prefix], e = GRF_EST[prefix];
   const box = document.getElementById('grf-' + prefix);
   if (!c || !box) return;
-  const sts = GRF_STATUS.filter(s => s[0] !== 'validada' || c.comValidada);
+  const sts = GRF_STATUS.filter(s => s[0] !== 'validada' || c.comValidada).map(s => s[0] === 'planned' && c.comValidada ? [s[0], 'Agendadas', s[2]] : s);
   [...e.status].forEach(k => { if (!sts.some(s => s[0] === k)) e.status.delete(k); });
   const sel = new Set(e.pessoas ? c.nomes.filter(n => e.pessoas.has(n)) : c.nomes);
   document.getElementById('grf-' + prefix + '-st').innerHTML = sts.map(s =>
@@ -809,8 +810,11 @@ document.addEventListener('click', ev => {
 });
 
 function renderGenerico(data, cfg) {
-  $('updated').innerText = 'Atualizado: ' + new Date(data.generated_at).toLocaleString('pt-BR');
+  $('updated').innerText = 'Atualizado: ' + new Date(data.generated_at).toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' });
+  $('carimbo').innerText = data.carimbo || '';
   $('auto').innerText = (cfg.ehAtual && cfg.ehAtual()) ? '● atualiza sozinho a cada ' + Math.round(REFRESH_MS/60000) + ' min' : '';
+  const lblPlan = cfg.comValidada ? 'Agendadas' : 'Planejadas';
+  const lblPlanAbrev = cfg.comValidada ? 'agend' : 'plan';
   const periodo = periodoAtivoPara(data);
   const mt = periodo ? somaPeriodo(periodo, d => d.days) : data.month_total;
   const rotuloTotal = periodo
@@ -849,7 +853,7 @@ function renderGenerico(data, cfg) {
     ? `<div class="kpi valid"><div class="lbl">Validadas</div><div class="val">${diaCounter.validada||0}</div></div>` : '';
   html += `<div class="kpi-head">${periodo ? 'Período ' + periodo.rotulo : 'Dia ' + dSelStr + '/' + mesStr}</div>`;
   html += `<div class="kpis">
-    <div class="kpi plan"><div class="lbl">Planejadas</div><div class="val">${diaCounter.planned}</div></div>
+    <div class="kpi plan"><div class="lbl">${lblPlan}</div><div class="val">${diaCounter.planned}</div></div>
     <div class="kpi done"><div class="lbl">Feitas</div><div class="val">${diaCounter.done}</div></div>
     ${kpiValidaHtml}
     <div class="kpi nvalid"><div class="lbl">Não validadas</div><div class="val">${diaCounter.nao_validada||0}</div></div>
@@ -861,7 +865,7 @@ function renderGenerico(data, cfg) {
     ? `<span class="ms-item c-valid">Validadas <b>${mt.validada||0}</b></span>` : '';
   html += `<div class="month-strip">
     <span class="ms-title">${rotuloTotal}</span>
-    <span class="ms-item c-plan">Planejadas <b>${mt.planned}</b></span>
+    <span class="ms-item c-plan">${lblPlan} <b>${mt.planned}</b></span>
     <span class="ms-item c-done">Feitas <b>${mt.done}</b></span>
     ${msValidaHtml}
     <span class="ms-item c-nvalid">Não validadas <b>${mt.nao_validada||0}</b></span>
@@ -880,12 +884,12 @@ function renderGenerico(data, cfg) {
         <div class="tc-row">
           <span class="tc-lbl">Total dia ${dSelStr}</span>
           <span class="tc-big">${cd.planned}</span>
-          <span class="tc-sub">plan · <span class="c-done">${cd.done}</span> feitas${cfg.comValidada ? ' · <span class=\"c-valid\">' + (cd.validada||0) + '</span> valid' : ''} · <span class="c-nvalid">${cd.nao_validada||0}</span> não valid · <span class="c-nsw">${cd.no_show}</span> NS · <span class="c-reag">${cd.reagendada}</span> reag</span>
+          <span class="tc-sub">${lblPlanAbrev} · <span class="c-done">${cd.done}</span> feitas${cfg.comValidada ? ' · <span class=\"c-valid\">' + (cd.validada||0) + '</span> valid' : ''} · <span class="c-nvalid">${cd.nao_validada||0}</span> não valid · <span class="c-nsw">${cd.no_show}</span> NS · <span class="c-reag">${cd.reagendada}</span> reag</span>
         </div>
         <div class="tc-row">
           <span class="tc-lbl">${periodo ? 'Total período' : 'Total mês'}</span>
           <span class="tc-big">${cm.planned}</span>
-          <span class="tc-sub">plan · <span class="c-done">${cm.done}</span> feitas${cfg.comValidada ? ' · <span class=\"c-valid\">' + (cm.validada||0) + '</span> valid' : ''} · <span class="c-nvalid">${cm.nao_validada||0}</span> não valid · <span class="c-nsw">${cm.no_show}</span> NS · <span class="c-reag">${cm.reagendada}</span> reag</span>
+          <span class="tc-sub">${lblPlanAbrev} · <span class="c-done">${cm.done}</span> feitas${cfg.comValidada ? ' · <span class=\"c-valid\">' + (cm.validada||0) + '</span> valid' : ''} · <span class="c-nvalid">${cm.nao_validada||0}</span> não valid · <span class="c-nsw">${cm.no_show}</span> NS · <span class="c-reag">${cm.reagendada}</span> reag</span>
         </div>
       </div>`;
     }
@@ -988,7 +992,7 @@ function renderGenerico(data, cfg) {
     html += quatro(mt, true) + `</tr>`;
     const legendaValid = (cfg.comValidada ? ' · V = validadas' : '') + ' · NV = não validadas (campo "Reunião Validada?" = Não)';
     html += `</tbody></table></div>
-      <div class="muted" style="font-size:11px;margin-top:8px">P = planejadas · F = feitas${legendaValid} · NS = no-show · R = reagendadas</div></div>`;
+      <div class="muted" style="font-size:11px;margin-top:8px">P = ${lblPlan.toLowerCase()} · F = feitas${legendaValid} · NS = no-show · R = reagendadas</div></div>`;
 
     // ---- distribuicao: Validadas (se disponivel) ou Feitas -- numero+% empilhados na mesma celula ----
     const metricaDist = cfg.comValidada ? 'validada' : 'done';
@@ -1076,7 +1080,7 @@ function renderGenerico(data, cfg) {
   }
   const multiMes = periodo && periodo.segs.length > 1;
   html += `<details class="diaria"><summary>Dia a dia — todos os times (${rotuloMes})${priv ? ' · clique num dia para ver as reuniões' : ''}</summary><div class="inner">
-    <table><tr>${priv ? '<th style="width:24px"></th>' : ''}<th class="l">Dia</th><th>Planejado</th><th>Feitas</th>${cfg.comValidada ? '<th>Validadas</th>' : ''}<th>Não validadas</th><th>No Show</th><th>Reagendadas</th></tr>`;
+    <table><tr>${priv ? '<th style="width:24px"></th>' : ''}<th class="l">Dia</th><th>${cfg.comValidada ? 'Agendadas' : 'Planejado'}</th><th>Feitas</th>${cfg.comValidada ? '<th>Validadas</th>' : ''}<th>Não validadas</th><th>No Show</th><th>Reagendadas</th></tr>`;
 
   for (const it0 of diasLista) {
     const row = it0.row, itens = priv ? it0.itens : [];
@@ -1747,7 +1751,7 @@ function taxaNoShowSemanal(resNS, rangeNS, mes) {
         const i = semanas.findIndex(w => data >= w.ini && data <= w.fim);
         if (i < 0) continue;
         const c = it.counter || {};
-        o.sem[i].ns += c.no_show || 0; o.sem[i].f += c.done || 0;
+        o.sem[i].ns += c.no_show || 0; o.sem[i].f += c.validada || 0;
       }
     }
   }
@@ -1757,7 +1761,7 @@ function taxaNoShowSemanal(resNS, rangeNS, mes) {
     if (!base) return `<td class="qtd muted">—</td>`;
     return `<td class="qtd">${(x.ns / base * 100).toFixed(1)}%<div class="muted" style="font-size:11px">${x.ns} NS / ${base}</div></td>`;
   };
-  html += `<div class="muted" style="margin-bottom:8px">No-show ÷ (feitas + no-show) de cada SDR, semana a semana (segunda a domingo), dentro do período selecionado.</div>`;
+  html += `<div class="muted" style="margin-bottom:8px">No-show ÷ (validadas + no-show) de cada SDR (NS1), semana a semana (segunda a domingo), dentro do período selecionado.</div>`;
   html += `<table class="aud-tbl"><tr><th class="l">SDR</th><th class="l">Time</th>${semanas.map(w => `<th>${rot(w.ini)}–${rot(w.fim)}</th>`).join('')}<th>Total</th></tr>`;
   const tot = semanas.map(() => ({ ns: 0, f: 0 }));
   let marcouLider = false;

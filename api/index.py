@@ -435,7 +435,7 @@ def _status_rotulo(a, validada, nao_valida, agora):
         if validada:
             return "Validada"
         if nao_valida:
-            return "Não validada"
+            return "Feita/Não validada"
     return s or "Planejada"
 
 

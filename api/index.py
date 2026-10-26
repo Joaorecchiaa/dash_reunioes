@@ -1,8 +1,51 @@
-import os
-import csv
+"""Dashboard de Reunioes -- Board Academy.
+
+Regras de reuniao, no-show, ligacao, escala, lead e prazo vem da biblioteca CRN
+(github.com/negocios87-sketch/CRN). Este arquivo so monta a tela e as rotas.
+"""
 import io
+import os
+
+# ── CRN: baixada do GitHub quando o painel liga ───────────────
+# A Vercel não repassa o token para o instalador do build, então a CRN não entra pelo
+# requirements.txt. O painel baixa a versão atual da main (com o token, que em tempo de
+# execução funciona) e carrega. Cada vez que o painel liga, pega as regras mais recentes.
+# No computador, se a crn já estiver instalada (instalar.bat), usa a instalada.
+def _carregar_crn():
+    import importlib.util
+    import shutil
+    import sys
+    import tarfile
+    import tempfile
+    if importlib.util.find_spec("crn") is not None:
+        return None
+    import requests
+    token = (os.environ.get("CRN_GITHUB_TOKEN") or os.environ.get("GITHUB_TOKEN") or "").strip()
+    if not token:
+        raise RuntimeError("CRN_GITHUB_TOKEN não está nas Environment Variables da Vercel.")
+    r = requests.get("https://api.github.com/repos/negocios87-sketch/CRN/tarball/main",
+                     headers={"Authorization": f"Bearer {token}", "Accept": "application/vnd.github+json"},
+                     timeout=30)
+    if r.status_code != 200:
+        raise RuntimeError(f"Não consegui baixar a CRN do GitHub (HTTP {r.status_code}). Confira o CRN_GITHUB_TOKEN.")
+    base = tempfile.mkdtemp(prefix="crn_")
+    with tarfile.open(fileobj=io.BytesIO(r.content), mode="r:gz") as tar:
+        tar.extractall(base, filter="data")
+    raiz = os.path.join(base, os.listdir(base)[0])          # negocios87-sketch-CRN-<commit>
+    destino = os.path.join(base, "pacote", "crn")
+    shutil.copytree(os.path.join(raiz, "lib"), destino)     # mesmo mapa do pyproject da CRN
+    shutil.copytree(os.path.join(raiz, "config"), os.path.join(destino, "config"))
+    sys.path.insert(0, os.path.join(base, "pacote"))
+    return os.path.basename(raiz).rsplit("-", 1)[-1][:7]   # commit que entrou
+
+_COMMIT_CRN = _carregar_crn()
+
+import crn
+if _COMMIT_CRN:
+    crn.versao = lambda: _COMMIT_CRN                        # carimbo mostra o commit carregado
+
+import csv
 import time
-import json
 import hmac
 import base64
 import hashlib
@@ -12,6 +55,7 @@ import threading
 import requests
 from datetime import datetime, date, timedelta
 from collections import defaultdict
+from urllib.parse import urlsplit, urlunsplit, parse_qsl, urlencode
 from flask import Flask, jsonify, request, Response
 
 # .env so existe localmente; na Vercel as variaveis vem do painel
@@ -27,6 +71,16 @@ try:
 except ImportError:
     from pipedrive_client import PipedriveClient
     from front import HTML
+
+from crn.base import fuso, pipedrive, fontes
+from crn.base.config import campo, tipo_atividade
+from crn.base.texto import cf, norm as norm_crn, responsavel_id
+from crn.regras import (m6_reunioes_sdr as m6, rc1_reunioes_closer as rc1, st1_status_reuniao as st1,
+                        pr1_marcada_pelo_proprio as pr1, cv2_conversao_reuniao as cv2,
+                        h1_hierarquia as h1, l3_lead_time_agendamento as l3,
+                        lp1_leads_sdr as lp1, at1_ligacoes as at1, op2_fora_da_escala as op2)
+from crn.regras._atividades import do_tipo, por_responsavel
+from crn.regras._comum import deduplicar, criada_pela_ia
 
 app = Flask(__name__, static_folder=None)
 
@@ -46,11 +100,35 @@ CSV_URL = env("COLABORADORES_CSV_URL")
 # simplesmente devolve um erro tratado nessa rota, sem derrubar o resto do app
 DISTRIBUICAO_RESUMO_CSV_URL = env("DISTRIBUICAO_RESUMO_CSV_URL", "")
 DISTRIBUICAO_LOG_CSV_URL = env("DISTRIBUICAO_LOG_CSV_URL", "")
-# aba "escala_comercial" da planilha config_dashs -- Entrada/Saida de cada SDR;
-# usada na aba "Taxas %" pra saber se uma reuniao foi marcada apos o turno
+# aba "escala_comercial" da planilha config_dashs (a CRN le a mesma variavel; a
+# Distribuicao de Leads tem a propria leitura operacional)
 ESCALA_COMERCIAL_CSV_URL = env("ESCALA_COMERCIAL_CSV_URL", "")
 PIPEDRIVE_BASE_URL = "https://" + PIPEDRIVE_DOMAIN
 REFRESH_SECONDS = int(env("REFRESH_SECONDS", 1200))  # 20 min
+
+# ── nomes que a CRN espera (a Vercel continua com as variaveis de sempre) ──
+os.environ.setdefault("PIPEDRIVE_TOKEN", PIPEDRIVE_API_TOKEN)
+if ESCALA_COMERCIAL_CSV_URL:
+    os.environ["ESCALA_COMERCIAL_CSV_URL"] = ESCALA_COMERCIAL_CSV_URL
+
+# COLABORADORES_CSV_URL e a MESMA planilha de Colab e Metas (confirmado): as URLs das abas
+# saem dela trocando o gid. Se URL_COLAB / URL_METAS ja estiverem nas variaveis, valem elas.
+GID_COLAB = os.environ.get("GID_COLAB", "1782440078")   # fontes/planilhas.md
+GID_METAS = os.environ.get("GID_METAS", "0")
+
+
+def _url_aba(base, gid):
+    p = urlsplit(base)
+    q = dict(parse_qsl(p.query, keep_blank_values=True))
+    q["gid"] = str(gid)
+    q.setdefault("single", "true")
+    q.setdefault("output", "csv")
+    return urlunsplit((p.scheme, p.netloc, p.path, urlencode(q), p.fragment))
+
+
+os.environ.setdefault("URL_COLAB", _url_aba(CSV_URL, GID_COLAB))
+os.environ.setdefault("URL_METAS", _url_aba(CSV_URL, GID_METAS))
+
 
 # ---- autenticacao do acesso privilegiado ----
 # USUARIOS_PRIVILEGIADOS = "usuario1:hash_sha256,usuario2:hash_sha256"
@@ -112,38 +190,198 @@ def eh_privilegiado(req):
 
 client = PipedriveClient(PIPEDRIVE_DOMAIN, PIPEDRIVE_API_TOKEN)
 
-TIMES_VALIDOS = {"SNIPER", "OLYMPUS", "ELITE", "VANGUARD"}
-SUBAREA_ALIAS = {"MGM": "OLYMPUS"}  # so MGM vira OLYMPUS; o resto passa igual
 
 MESES_NOME = ["janeiro", "fevereiro", "março", "abril", "maio", "junho",
               "julho", "agosto", "setembro", "outubro", "novembro", "dezembro"]
-MES_TO_NUM = {}
-for i, nome in enumerate(MESES_NOME, start=1):
-    MES_TO_NUM[nome] = i
-    MES_TO_NUM[nome[:3]] = i
 
 TTL = 300
-_cache = {"csv": None, "meta": None, "acts": {}, "deals": {}, "current": {}, "campo_validada_opcoes": None}
+# dados: leituras do Pipedrive/planilhas por mes; "csv", "dist_*" e "escala" sao da Distribuicao de Leads
+_cache = {"dados": {}, "csv": None, "meta": None, "acts": {}, "deals": {}, "current": {}}
 _lock = threading.Lock()
+_locks_chave = defaultdict(threading.Lock)
 
-
-# ---------- utilidades ----------
 
 def sem_acento(s):
-    s = unicodedata.normalize("NFKD", str(s or ""))
-    return "".join(c for c in s if not unicodedata.combining(c))
+    return "".join(c for c in unicodedata.normalize("NFD", str(s)) if unicodedata.category(c) != "Mn")
 
 
 def norm(s):
-    return sem_acento(s).strip().lower()
+    return norm_crn(s)
 
 
-def parse_mes(v):
-    v = norm(v)
-    if v.isdigit():
-        return int(v)
-    return MES_TO_NUM.get(v) or MES_TO_NUM.get(v[:3])
+def _cache_seguro(chave, ttl, buscar, tamanho=None):
+    """Cache com 2 protecoes contra leitura incompleta do Pipedrive:
+    1) se a busca falhar, devolve a ultima leitura boa (se houver);
+    2) se vier com QUEDA GRANDE (>10%) em relacao a ultima leitura boa, refaz a busca uma vez.
+    Uma busca por chave de cada vez (as abas pedem juntas, a segunda espera a primeira)."""
+    with _locks_chave[chave]:
+        with _lock:
+            c = _cache["dados"].get(chave)
+        if c and time.time() - c["ts"] < ttl:
+            return c["v"]
+        try:
+            v = buscar()
+            if c and tamanho and tamanho(c["v"]) >= 20 and tamanho(v) < 0.9 * tamanho(c["v"]):
+                print(f"[dados] queda suspeita {tamanho(c['v'])} -> {tamanho(v)}; refazendo a busca")
+                v = buscar()
+        except Exception as e:
+            if c:
+                print("[dados] falha ao atualizar, usando a ultima leitura boa:", e)
+                return c["v"]
+            raise
+        with _lock:
+            _cache["dados"][chave] = {"ts": time.time(), "v": v}
+        return v
 
+
+def parse_ym(texto):
+    try:
+        y, m = map(int, str(texto).split("-"))
+        if 1 <= m <= 12:
+            return y, m
+    except Exception:
+        pass
+    h = fuso.hoje_brasil()
+    return h.year, h.month
+
+
+# ---------- contexto do mes (Colab + Metas + usuarios do Pipedrive) ----------
+
+def usuarios_pipedrive():
+    return _cache_seguro(("usuarios",), 600, pipedrive.usuarios)
+
+
+def funis_pipedrive():
+    return _cache_seguro(("funis",), 600, pipedrive.funis)
+
+
+def _licenciado(squad):
+    return norm(squad).startswith("licenciad")      # P7: Licenciados fora por padrao
+
+
+def contexto_mes(ano, mes):
+    """Quem e SDR / closer / lideranca no mes, pela CRN: papel pela planilha de Metas (R2),
+    squad pela Colab do mes (P8 colab_do_mes), lideranca que agenda pela M6."""
+    def montar():
+        colab = fontes.carregar_colab(ano, mes)
+        metas = fontes.carregar_metas(ano, mes)
+        users = usuarios_pipedrive()
+        id_por_nome = {}
+        for uid, nome in users.items():
+            id_por_nome.setdefault(norm(nome), uid)
+        colab_por_nome = {p["nome_norm"]: p for p in colab}
+
+        def time_de(nome_norm, padrao="SEM TIME"):
+            p = colab_por_nome.get(nome_norm)
+            return p["squad"].upper() if p and p["squad"] else padrao
+
+        def licenc(nome_norm):
+            p = colab_por_nome.get(nome_norm)
+            return bool(p) and _licenciado(p["squad"])
+
+        sdrs, closers = {}, {}
+        for m in metas:
+            if licenc(m["nome_norm"]):
+                continue
+            if m["papel"] == "sdr":
+                sdrs[m["nome"]] = time_de(m["nome_norm"])
+            elif m["papel"] == "closer":
+                closers[m["nome"]] = time_de(m["nome_norm"])
+
+        # lideranca que agenda (head e team leader de squad so-SDR + extras da config)
+        lq_ids = m6.lideranca_que_agenda(colab, id_por_nome)
+        lideres = {}
+        for uid in lq_ids:
+            nome = users.get(uid, "")
+            p = colab_por_nome.get(norm(nome))
+            nivel = h1.nivel(p, colab) if p else "team_leader"
+            lideres[nome] = "Head" if nivel in ("head", "gerente") else "Team Leader"
+            sdrs[nome] = time_de(norm(nome), "SNIPER")
+        # todos os lideres/heads (H1) -- a M6 precisa deles para a regra do dono do deal
+        lid_ids = {id_por_nome[p["nome_norm"]] for p in colab
+                   if h1.nivel(p, colab) in ("gerente", "head", "team_leader") and p["nome_norm"] in id_por_nome}
+        sdr_ids = {id_por_nome[m["nome_norm"]] for m in metas if m["papel"] == "sdr" and m["nome_norm"] in id_por_nome}
+        return {
+            "ano": ano, "mes": mes, "users": users, "id_por_nome": id_por_nome,
+            "sdrs": sdrs, "closers": closers, "lideres": lideres,
+            "sdr_ids": sdr_ids, "lideranca_ids": lid_ids, "lq_ids": set(lq_ids),
+        }
+    return _cache_seguro(("ctx", ano, mes), 600, montar)
+
+
+def meses_disponiveis():
+    """Meses com linha na Colab (ate 18 para tras); o mes atual sempre entra."""
+    hoje = fuso.hoje_brasil()
+    pares = [(hoje.year, hoje.month)]
+    try:
+        linhas = fontes.ler_csv("URL_COLAB")
+        a, m = hoje.year, hoje.month
+        for _ in range(18):
+            m -= 1
+            if m == 0:
+                a, m = a - 1, 12
+            try:
+                fontes.carregar_colab(a, m, linhas=linhas)
+                pares.append((a, m))
+            except fontes.FonteInvalida:
+                continue
+    except Exception as e:
+        print("[meses] nao consegui ler a Colab:", e)
+    return [{"value": f"{a}-{m:02d}", "label": f"{MESES_NOME[m-1]}/{a}"} for a, m in pares]
+
+
+# ---------- dados do periodo (atividades + deals) ----------
+
+def _id_atividade_ou_obj(a):
+    return a.get("id") if a.get("id") is not None else id(a)
+
+
+def dados_periodo(ano, mes):
+    """Atividades de reuniao / no-show / reagendamento do mes (+1 dia de margem) e os deals delas.
+    Reunioes feitas: m6.carregar_periodo (busca padrao da M6). As nao feitas e os no-shows/reagendamentos
+    entram pela mesma busca por periodo, so GET."""
+    ini = date(ano, mes, 1)
+    fim = date(ano, mes, calendar.monthrange(ano, mes)[1])
+
+    def buscar():
+        base = m6.carregar_periodo(ini, fim)
+        um = timedelta(days=1)
+        reu, ns, rg = tipo_atividade("reuniao"), tipo_atividade("no_show"), tipo_atividade("reagendamento")
+        extra = pipedrive.atividades_do_periodo(ini - um, fim + um, tipos=[reu], done=False)
+        extra += pipedrive.atividades_do_periodo(ini - um, fim + um, tipos=[ns, rg])
+        acts, vistos = [], set()
+        for a in list(base["atividades"]) + extra:
+            k = _id_atividade_ou_obj(a)
+            if k in vistos:
+                continue
+            vistos.add(k)
+            acts.append(a)
+        deals = {d["id"]: d for d in base["deals"]}
+        faltam = [a.get("deal_id") for a in acts if a.get("deal_id") and a.get("deal_id") not in deals]
+        if faltam:
+            for d in pipedrive.deals_por_ids(faltam):
+                deals[d["id"]] = d
+        lista = list(deals.values())
+        validados, donos = m6.mapas_dos_deals(lista)
+        return {"ini": ini, "fim": fim, "acts": acts, "deals": deals,
+                "status_do_deal": m6.status_dos_deals(lista),
+                "deals_validados": validados, "dono_do_deal": donos}
+    return _cache_seguro(("periodo", ano, mes), TTL, buscar, tamanho=lambda v: len(v["acts"]))
+
+
+def carimbo(ano=None, mes=None, extra=""):
+    agora = fuso.agora_brasil()
+    partes = [f"CRN {crn.versao()}",
+              "Eixo: data da reunião (due_date + hora, Brasília)",
+              "Squads: todos exc. Licenciados",
+              "Recorte: quem tem meta no mês (Metas)"]
+    if extra:
+        partes.append(extra)
+    partes.append("Atualizado: " + agora.strftime("%d/%m/%Y %H:%M"))
+    return " · ".join(partes)
+
+
+# ---------- construcao do dashboard ----------
 
 def novo_contador(com_validada=False):
     base = {"planned": 0, "done": 0, "no_show": 0, "reagendada": 0, "nao_validada": 0}
@@ -152,426 +390,490 @@ def novo_contador(com_validada=False):
     return base
 
 
-# campo customizado "Reuniao Validada?" no Pipedrive (id fixo do campo)
-CAMPO_VALIDADA_ID = "7299bf170c5deab9b4fd8c2275f55faf51984dea"
-
-# campo customizado "Data da ultima aplicacao" no NEGOCIO -- usado na aba
-# "Taxas %" pra filtrar "leads do mes" (inclui reaplicacoes, nao so negocios
-# criados no mes -- confirmado com o usuario). Formato: texto "DD/MM/AAAA HH:MM:SS"
-CAMPO_DATA_ULTIMA_APLICACAO_ID = "23de049432e523993f69ecd456a3f755c0f07f3d"
+def soma_contadores(dest, src):
+    for k in dest:
+        dest[k] += src.get(k, 0)
 
 
-def _campo_bruto(a, campo_id):
-    """Le o valor cru de um campo customizado da activity, cobrindo os dois
-    formatos que a API do Pipedrive costuma usar (custom_fields aninhado,
-    ou chave direta no nivel raiz)."""
-    cf = a.get("custom_fields")
-    if isinstance(cf, dict) and campo_id in cf:
-        return cf[campo_id]
-    if campo_id in a:
-        return a[campo_id]
-    return None
-
-
-def _label_do_campo(valor):
-    """Extrai o texto de exibicao de um campo de selecao, cobrindo os
-    formatos comuns: string direta, dict {"label":...}/{"value":...}/{"name":...},
-    ou lista (campo de multipla escolha)."""
-    if valor is None:
-        return None
-    if isinstance(valor, dict):
-        return valor.get("label") or valor.get("value") or valor.get("name")
-    if isinstance(valor, list):
-        for item in valor:
-            lbl = _label_do_campo(item)
-            if lbl:
-                return lbl
-        return None
-    return valor
-
-
-def opcoes_campo_validada():
-    """{option_id: label} do campo "Reuniao Validada?". Cache longo (~1h)
-    quando a busca funciona (a lista de opcoes quase nunca muda); cache
-    curto (~5min, mesmo TTL do resto) quando falha/vem vazia, pra nao
-    ficar 1h inteira sem tentar de novo se foi um erro passageiro."""
-    with _lock:
-        c = _cache.get("campo_validada_opcoes")
-        if c:
-            ttl_efetivo = TTL * 12 if c["opcoes"] else TTL
-            if time.time() - c["ts"] < ttl_efetivo:
-                return c["opcoes"]
-    try:
-        opcoes = client.get_deal_field_options(CAMPO_VALIDADA_ID)
-        if not opcoes:
-            print("[Validada] busca de opcoes do campo voltou vazia")
-    except Exception as e:
-        print("[Validada] Erro ao buscar opcoes do campo Reuniao Validada:", e)
-        opcoes = {}
-    with _lock:
-        _cache["campo_validada_opcoes"] = {"ts": time.time(), "opcoes": opcoes}
-    return opcoes
-
-
-def campo_validado_sim(a):
-    """True se o campo "Reuniao Validada?" do negocio esta como 'Sim'.
-    A API devolve o valor como o ID numerico da opcao escolhida (ex.: 411),
-    entao resolve esse ID pro texto usando as opcoes do campo antes de
-    comparar."""
-    valor = _label_do_campo(_campo_bruto(a, CAMPO_VALIDADA_ID))
-    if valor is None:
-        return False
-    # campo de selecao: valor vem como ID numerico da opcao
-    if isinstance(valor, (int, float)) or (isinstance(valor, str) and valor.strip().lstrip("-").isdigit()):
-        opcoes = opcoes_campo_validada()
-        label = opcoes.get(int(valor))
-        if label is None:
-            return False
-        return str(label).strip().lower() == "sim"
-    # fallback: campo ja veio como texto (label direto)
-    return str(valor).strip().lower() == "sim"
-
-
-def campo_validado_e_nao(info):
-    """True se o campo "Reuniao Validada?" do negocio esta EXPLICITAMENTE como
-    'Nao' (em branco NAO conta) -- usado na coluna "Nao validadas"."""
-    valor = _label_do_campo(_campo_bruto(info, CAMPO_VALIDADA_ID))
-    if valor is None:
-        return False
-    if isinstance(valor, (int, float)) or (isinstance(valor, str) and valor.strip().lstrip("-").isdigit()):
-        label = opcoes_campo_validada().get(int(valor))
-        if label is None:
-            return False
-        valor = label
-    return norm(valor) == "nao"
-
-
-def campo_validado_diferente_de_nao(info):
-    """True se o campo "Reuniao Validada?" do negocio NAO esta como 'Nao'
-    -- ou seja, 'Sim' OU em branco/nao preenchido contam como valido; so
-    'Nao' explicito invalida."""
-    valor = _label_do_campo(_campo_bruto(info, CAMPO_VALIDADA_ID))
-    if valor is None:
-        return True  # em branco conta como valido
-    if isinstance(valor, (int, float)) or (isinstance(valor, str) and valor.strip().lstrip("-").isdigit()):
-        opcoes = opcoes_campo_validada()
-        label = opcoes.get(int(valor))
-        if label is None:
-            return True  # opcao desconhecida nao bloqueia
-        valor = label
-    return norm(valor) != "nao"
-
-
-# nomes (alem dos closers) que tambem podem ser proprietarios validos de
-# um negocio para fins de "reuniao validada"
-PROPRIETARIOS_EXTRAS_PERMITIDOS = {"denise mussolin"}
-
-
-def proprietarios_validos_ids(year, month):
-    """ids de quem PODE ser dono valido de um negocio para contar uma
-    reuniao como validada: os closers do mes + PROPRIETARIOS_EXTRAS_PERMITIDOS
-    (ex.: Denise Mussolin). Se o dono do negocio nao estiver nesse conjunto
-    (ex.: for outro SDR, outro Team Leader, etc.), a reuniao nao conta."""
-    users, _ = carrega_meta()
-    closers = closers_do_mes(year, month)
-    extras_norm = {norm(n) for n in PROPRIETARIOS_EXTRAS_PERMITIDOS}
-    ids = set()
-    for nome in closers:
-        uid = users.get(nome.strip().lower())
-        if uid:
-            ids.add(uid)
-    for nome_usuario, uid in users.items():
-        if norm(nome_usuario) in extras_norm:
-            ids.add(uid)
-    # "Legionario 1/2..." (ex.: Amanda Leal, dona dos negocios do funil
-    # Atlantis) tambem e dono valido de negocio -- na planilha de colaboradores
-    # o cargo dela nao comeca com "closer", entao ficava de fora e as reunioes
-    # da SDR nesse funil nao contavam como validadas (confirmado com o usuario).
-    # Nao filtra por TIMES_VALIDOS: o time do Atlantis nao esta nessa lista.
-    for r in carrega_csv():
-        if not r["cargo"].startswith("legionario"):
-            continue
-        if r["mes"] != month or r["ano"] != year or not r["nome"]:
-            continue
-        uid = users.get(r["nome"].strip().lower())
-        if uid:
-            ids.add(uid)
-    return ids
-
-
-def reuniao_vencida(due_date_str, due_time_str):
-    """True se a data/hora de vencimento (due_date + due_time) da atividade
-    ja passou. Sem due_time, considera o fim do dia (23:59:59) -- so vence
-    depois que o dia inteiro passou, evita marcar reuniao de hoje sem hora
-    definida como vencida."""
-    if not due_date_str:
-        return False
-    hora_str = (due_time_str or "23:59:59").strip()[:8]
-    if len(hora_str) < 8:
-        hora_str = "23:59:59"
-    try:
-        due_dt = datetime.strptime(due_date_str + " " + hora_str, "%Y-%m-%d %H:%M:%S")
-    except ValueError:
-        due_dt = datetime.strptime(due_date_str, "%Y-%m-%d")
-    return due_dt < datetime.now()
-
-
-def status_simples_atividade(a):
-    """Classifica uma atividade (meeting/no_show/reagendamento) em um dos
-    status Feita/No Show/Reagendada/Planejada/Vencida -- versao simples
-    sem o conceito de 'Validada' (usado no cruzamento do log de
-    distribuicao de leads, que nao depende de negocio/proprietario)."""
+def _soma_em(counter, a, validada, nao_valida):
     tipo = a.get("type")
-    if tipo == "reagendamento":
-        return "Reagendada"
-    if tipo == "no_show":
-        return "No Show"
-    if tipo == "meeting" and a.get("done"):
-        return "Feita"
-    if tipo == "meeting":
-        return "Vencida" if reuniao_vencida(a.get("due_date"), a.get("due_time")) else "Planejada"
-    return "—"
-
-
-def status_reuniao_mais_recente_do_deal(deal_id):
-    """Desfecho mais ATUAL da reuniao de um negocio: busca todas as
-    atividades meeting/no_show/reagendamento vinculadas a ele (qualquer
-    Responsavel, inclusive apos reatribuicoes), pega a mais recente (por
-    due_date+due_time) e devolve o status dela. Cache curto por deal_id
-    -- cada consulta ao log de distribuicao pode bater varias vezes na
-    API, entao vale cachear mesmo por poucos minutos."""
-    with _lock:
-        c = _cache["acts"].get(("status_deal", deal_id))
-        if c and time.time() - c["ts"] < TTL:
-            return c["status"]
-    try:
-        acts = client.get_activities_by_deal(deal_id)
-    except Exception:
-        acts = []
-    mais_recente, mais_recente_dt = None, None
-    for a in acts:
-        due = a.get("due_date")
-        if not due:
-            continue
-        hora = (a.get("due_time") or "00:00:00").strip()[:8]
-        if len(hora) < 8:
-            hora = "00:00:00"
-        try:
-            dt = datetime.strptime(due + " " + hora, "%Y-%m-%d %H:%M:%S")
-        except ValueError:
-            continue
-        if mais_recente_dt is None or dt > mais_recente_dt:
-            mais_recente_dt, mais_recente = dt, a
-    status = status_simples_atividade(mais_recente) if mais_recente else "—"
-    with _lock:
-        _cache["acts"][("status_deal", deal_id)] = {"ts": time.time(), "status": status}
-    return status
-
-
-def atividades_do_deal(deal_id):
-    """Atividades (meeting/no_show/reagendamento) de UM negocio, com cache (TTL).
-    Usado so no caso raro em que o dono ATUAL do negocio mudou depois da reuniao."""
-    with _lock:
-        c = _cache.setdefault("acts_deal", {}).get(deal_id)
-        if c and time.time() - c["ts"] < TTL:
-            return c["acts"]
-    try:
-        acts = client.get_activities_by_deal(deal_id)
-    except Exception as e:
-        with _lock:
-            velho = _cache["acts_deal"].get(deal_id)
-        if velho:
-            print("[acts_deal] falha, usando a ultima leitura boa:", e)
-            return velho["acts"]
-        raise
-    with _lock:
-        _cache["acts_deal"][deal_id] = {"ts": time.time(), "acts": acts}
-    return acts
-
-
-def ids_populacao_sdr(year, month):
-    """ids de quem e SDR/lideranca no mes (SDRs, Stephanie/Marlon/Mylena). Quem esta
-    aqui NAO conta como closer ao validar uma reuniao pelo rastro do negocio."""
-    users, _ = carrega_meta()
-    nomes = set(sdrs_do_mes(year, month)) | set(lideres_na_meta(year, month))
-    nomes_norm = {norm(n) for n in nomes} | set(LIDERANCAS_PERMITIDAS) | set(SDR_EXCLUIDOS)
-    return {uid for nome, uid in users.items() if norm(nome) in nomes_norm}
-
-
-def dono_valido_pela_reuniao(a, proprietarios_ids):
-    """O dono ATUAL do negocio pode ter mudado depois da reuniao (negocio perdido e
-    reaberto, repassado pra Head/outro SDR...), mas a reuniao ja aconteceu e foi
-    validada na epoca. O rastro disso (mesma regra do script de referencia): no MESMO
-    negocio existe outra reuniao FEITA, do MESMO tipo, no mesmo dia (+-1 dia), cujo
-    responsavel e um closer -- dono valido (closer do mes / Denise / Legionario) ou
-    qualquer pessoa fora da populacao de SDR/lideranca. Nesse caso a validacao da
-    reuniao do SDR e mantida (caso #411006: Bruna -> Willian Maia, depois reaberto e
-    passado pro Marlon)."""
-    deal_id, due = a.get("deal_id"), a.get("due_date")
-    if not deal_id or not due:
-        return False
-    try:
-        d0 = datetime.strptime(str(due)[:10], "%Y-%m-%d")
-    except Exception:
-        return False
-    try:
-        outras = atividades_do_deal(deal_id)
-    except Exception as e:
-        print("[dono_valido_pela_reuniao] nao foi possivel consultar o negocio", deal_id, e)
-        return False
-    pop = None  # so calcula se precisar
-    for b in outras:
-        dono_b = b.get("owner_id")
-        if (b.get("id") == a.get("id") or not dono_b or dono_b == a.get("owner_id")
-                or b.get("is_deleted") or not b.get("done")
-                or b.get("type") != a.get("type")):
-            continue
-        try:
-            gap = abs((datetime.strptime(str(b.get("due_date"))[:10], "%Y-%m-%d") - d0).days)
-        except Exception:
-            continue
-        if gap > 1:
-            continue
-        if dono_b in proprietarios_ids:
-            return True
-        if pop is None:
-            try:
-                pop = ids_populacao_sdr(d0.year, d0.month)
-            except Exception as e:
-                print("[dono_valido_pela_reuniao] populacao SDR indisponivel:", e)
-                pop = set()
-                break
-        if dono_b not in pop:
-            return True
-    return False
-
-
-def atividade_e_validada(a, deal_info, proprietarios_ids):
-    """Para a coluna 'Validadas' na tela de Reunioes: feita (type=meeting,
-    done=true), o negocio vinculado tem PROPRIETARIO valido (closer do mes
-    ou PROPRIETARIOS_EXTRAS_PERMITIDOS) E o campo 'Reuniao Validada?' == 'Sim'
-    OU em branco (so 'Nao' explicito invalida)."""
-    if a.get("type") != "meeting" or not a.get("done"):
-        return False
-    info = deal_info.get(a.get("deal_id")) or {}
-    if not campo_validado_diferente_de_nao(info):
-        return False
-    if info.get("owner_id") in proprietarios_ids:
-        return True
-    return dono_valido_pela_reuniao(a, proprietarios_ids)
-
-
-def eh_reuniao_valida_para_auditoria(a, pessoa_id, deal_info, proprietarios_ids):
-    """Reuniao conta na Auditoria SDR/Lideranca quando:
-    - type == "meeting" e done == true (reuniao FEITA)
-    - o RESPONSAVEL (owner_id) da propria atividade e a pessoa auditada
-      -- ja garantido de fora, pois as atividades vem de acts_do_owner(pessoa_id)
-    - o negocio vinculado tem PROPRIETARIO (owner_id do negocio) diferente
-      da pessoa auditada E dentro do conjunto valido (closer do mes ou
-      PROPRIETARIOS_EXTRAS_PERMITIDOS) -- nao conta se o dono e a propria
-      pessoa auditada, nem se o dono for outro SDR/Team Leader qualquer
-    - o campo "Reuniao Validada?" do negocio == 'Sim' (ou em branco; so 'Nao' invalida -- em
-      branco NAO conta)."""
-    if a.get("type") != "meeting" or not a.get("done"):
-        return False
-    info = deal_info.get(a.get("deal_id")) or {}
-    if not campo_validado_diferente_de_nao(info):
-        return False
-    dono = info.get("owner_id")
-    if dono != pessoa_id and dono in proprietarios_ids:
-        return True
-    # dono atual mudou depois da reuniao (reaberto/repassado): vale o rastro da reuniao do closer
-    return dono_valido_pela_reuniao(a, proprietarios_ids)
-
-
-def soma_em(counter, a, eh_valid=False, eh_nao_valid=False):
-    tipo = a.get("type")
-    done = a.get("done")
     counter["planned"] += 1
-    if tipo == "meeting" and done:
+    if tipo == tipo_atividade("reuniao") and a.get("done") in (True, 1):
         counter["done"] += 1
-        if eh_valid and "validada" in counter:
+        if validada and "validada" in counter:
             counter["validada"] += 1
-        if eh_nao_valid:
+        if nao_valida:
             counter["nao_validada"] += 1
-    elif tipo == "no_show":
+    elif tipo == tipo_atividade("no_show"):
         counter["no_show"] += 1
-    elif tipo == "reagendamento":
+    elif tipo == tipo_atividade("reagendamento"):
         counter["reagendada"] += 1
 
 
-def soma_contadores(dest, src):
-    for k in dest:
-        dest[k] += src[k]
+def _feita(a):
+    return a.get("done") is True or a.get("done") == 1 or a.get("status") == "done"
 
 
-# ---------- CSV de colaboradores ----------
-
-def carrega_csv():
-    with _lock:
-        c = _cache["csv"]
-        if c and time.time() - c["ts"] < TTL:
-            return c["rows"]
-    try:
-        return _baixa_csv()
-    except Exception as e:
-        # falha passageira (planilha/rede): usa a ultima leitura boa em vez de derrubar
-        # o dash ou mudar a validacao (lista de closers/lideres vem daqui)
-        with _lock:
-            velho = _cache["csv"]
-        if velho:
-            print("[CSV] falha ao atualizar, usando a ultima leitura boa:", e)
-            return velho["rows"]
-        raise
+def _hora(a):
+    m = fuso.atividade_momento(a)
+    return m.strftime("%H:%M") if m else ""
 
 
-def _baixa_csv():
-    resp = requests.get(CSV_URL, timeout=30, allow_redirects=True,
-                        headers={"User-Agent": "Mozilla/5.0"})
-    if resp.status_code != 200:
-        print(f"[CSV] {resp.status_code} ao baixar. URL: {CSV_URL[:120]}...")
-        print(f"[CSV] resposta: {resp.text[:200]}")
-        resp.raise_for_status()
-    resp.encoding = "utf-8"
-    reader = csv.DictReader(io.StringIO(resp.text))
+def _status_rotulo(a, validada, nao_valida, agora):
+    s = st1.status(a, agora)            # ST1: Reagendada / No-show / Feita / Vencida / Planejada
+    if s == "No-show":
+        return "No Show"
+    if s == "Feita":
+        if validada:
+            return "Validada"
+        if nao_valida:
+            return "Não validada"
+    return s or "Planejada"
 
-    def achar(*nomes):
-        for col in nomes:
-            alvo = norm(col)
-            for h in reader.fieldnames:
-                if norm(h) == alvo:
-                    return h
-        return None
 
-    col_nome = achar("Nome", "NOME")
-    col_sub = achar("Subarea", "SUBAREA")
-    col_cargo = achar("Cargo", "CARGO")
-    col_mes = achar("Mês Referencia", "Mes Referencia", "MÊS REFERIDO")
-    col_ano = achar("Ano Referencia", "ANO REFERIDO")
-    faltando = [n for n, c in [("Nome", col_nome), ("Subarea", col_sub),
-                ("Cargo", col_cargo), ("Mês Referencia", col_mes),
-                ("Ano Referencia", col_ano)] if not c]
-    if faltando:
-        print("[CSV] Colunas nao encontradas:", faltando, "| Cabecalhos:", reader.fieldnames)
+def _build_dashboard_generico(pessoas, ano, mes, privilegiado=False, com_validada=False, lideres=None):
+    """pessoas = {nome: time}. Closer (com_validada=False) ou SDR (com_validada=True).
+    Totais: RC1 (agendadas, feitas, nao validadas, no-show, reagendadas). Validadas: M6.
+    Dia a dia, status e listas: as mesmas atividades que a RC1 contou (do_tipo)."""
+    ctx = contexto_mes(ano, mes)
+    P = dados_periodo(ano, mes)
+    ini, fim = P["ini"], P["fim"]
+    users, pipelines = ctx["users"], funis_pipedrive()
+    ultimo = fim.day
+    agora = fuso.agora_brasil()
+    reu = tipo_atividade("reuniao")
 
-    rows = []
-    for r in reader:
-        subarea = (r.get(col_sub) or "").strip().upper()
-        subarea = SUBAREA_ALIAS.get(subarea, subarea)
-        cargo = norm(r.get(col_cargo))
-        mes = parse_mes(r.get(col_mes))
-        ano = norm(r.get(col_ano))
-        ano = int(ano) if ano.isdigit() else None
-        rows.append({
-            "nome": (r.get(col_nome) or "").strip(),
-            "time": subarea,
-            "cargo": cargo,
-            "mes": mes,
-            "ano": ano,
+    ids = {}
+    nao_encontrados = []
+    for nome in pessoas:
+        uid = ctx["id_por_nome"].get(norm(nome))
+        if uid is None:
+            nao_encontrados.append(nome)
+        else:
+            ids[nome] = uid
+    ids_set = set(ids.values())
+
+    tot_rc1 = rc1.reunioes_closer(P["acts"], ini, fim, closer_ids=ids_set, status_do_deal=P["status_do_deal"])
+    listas = por_responsavel(do_tipo(P["acts"], ["reuniao", "no_show", "reagendamento"], ini, fim,
+                                     so_feitas=False, responsaveis=ids_set, sem_ia=True))
+    validas_ids = set()
+    if com_validada:
+        val = m6.reunioes_validadas(P["acts"], ini, fim, deals_validados=P["deals_validados"],
+                                    dono_do_deal=P["dono_do_deal"], sdr_ids=ctx["sdr_ids"],
+                                    lideranca_ids=ctx["lideranca_ids"], lideranca_que_agenda_ids=ctx["lq_ids"])
+        for lst in val.values():
+            validas_ids |= {_id_atividade_ou_obj(a) for a in lst}
+        val_por_resp = {r: len(l) for r, l in val.items()}
+    else:
+        val_por_resp = {}
+    status_atual = {did: d.get("status") for did, d in P["deals"].items()}
+
+    combined_days = {d: novo_contador(com_validada) for d in range(1, ultimo + 1)}
+    geral_dia = {d: [] for d in range(1, ultimo + 1)}
+    month_total = novo_contador(com_validada)
+    por_closer = []
+    por_time = defaultdict(lambda: novo_contador(com_validada))
+    por_time_days = {}
+
+    for nome, time_c in sorted(pessoas.items()):
+        if time_c not in por_time_days:
+            por_time_days[time_c] = {d: novo_contador(com_validada) for d in range(1, ultimo + 1)}
+        uid = ids.get(nome)
+        if uid is None:
+            continue
+        lista = listas.get(uid, [])
+        c_days = {d: novo_contador(com_validada) for d in range(1, ultimo + 1)}
+        c_pipes = defaultdict(lambda: novo_contador(com_validada))
+        c_criadas = {"proprio": 0, "outro": 0}
+        c_criadas_days = {d: {"proprio": 0, "outro": 0} for d in range(1, ultimo + 1)}
+        c_met_days = {d: {"proprio_done": 0, "proprio_validada": 0, "ganhos_done": 0, "ganhos_validada": 0}
+                      for d in range(1, ultimo + 1)}
+        feitas_dia = {d: [] for d in range(1, ultimo + 1)}
+        validas_dia = {d: [] for d in range(1, ultimo + 1)}
+        c_negocios_mes, c_negocios_dia = {}, {d: [] for d in range(1, ultimo + 1)}
+        proprio_done = proprio_val = 0
+
+        for a in lista:
+            dia = fuso.atividade_dia(a)
+            if dia is None or dia.year != ano or dia.month != mes:
+                continue
+            d = dia.day
+            did = a.get("deal_id")
+            deal = P["deals"].get(did) or {}
+            eh_reu = a.get("type") == reu
+            feita = eh_reu and _feita(a)
+            valida = com_validada and feita and _id_atividade_ou_obj(a) in validas_ids
+            nao_valida = feita and P["status_do_deal"].get(did) == "nao"
+
+            for alvo in (c_days[d], combined_days[d], por_time_days[time_c][d]):
+                _soma_em(alvo, a, valida, nao_valida)
+            pid = deal.get("pipeline_id")
+            pnome = pipelines.get(pid, f"Funil {pid}") if pid else "Sem funil"
+            _soma_em(c_pipes[pnome], a, valida, nao_valida)
+
+            chave = "proprio" if pr1.marcada_pelo_proprio(a) else "outro"      # PR1
+            c_criadas[chave] += 1
+            c_criadas_days[d][chave] += 1
+            if feita:
+                feitas_dia[d].append(a)
+                if chave == "proprio":
+                    proprio_done += 1
+                    c_met_days[d]["proprio_done"] += 1
+                    if valida:
+                        proprio_val += 1
+                        c_met_days[d]["proprio_validada"] += 1
+                if valida:
+                    validas_dia[d].append(a)
+
+            if privilegiado:
+                titulo = deal.get("title") or ("Negocio " + str(did))
+                url = PIPEDRIVE_BASE_URL + "/deal/" + str(did)
+                status = _status_rotulo(a, valida, nao_valida, agora)
+                status_negocio = {"open": "Aberto", "won": "Ganho", "lost": "Perdido"}.get(
+                    deal.get("status"), deal.get("status") or "—")
+                chave_rec = (str(a.get("due_date")), str(a.get("due_time") or ""), a.get("id") or 0)
+                atual = c_negocios_mes.get(did)
+                if atual is None or chave_rec > atual["_rec"]:
+                    c_negocios_mes[did] = {"id": did, "title": titulo, "url": url, "status": status,
+                                           "status_negocio": status_negocio, "_rec": chave_rec}
+                item = {"id": did, "title": titulo, "url": url, "hora": _hora(a), "tipo": a.get("type"),
+                        "done": bool(feita), "status": status, "status_negocio": status_negocio}
+                c_negocios_dia[d].append(item)
+                geral_dia[d].append({**item, "closer": nome, "time": time_c})
+
+        # ganhos (CV2): das feitas / validadas, quantos negocios estao ganhos hoje
+        for d in range(1, ultimo + 1):
+            c_met_days[d]["ganhos_done"] = cv2.conversao(feitas_dia[d], status_atual)["ganhas"]
+            c_met_days[d]["ganhos_validada"] = cv2.conversao(validas_dia[d], status_atual)["ganhas"]
+        todas_feitas = [a for d in feitas_dia.values() for a in d]
+        todas_validas = [a for d in validas_dia.values() for a in d]
+
+        r = tot_rc1.get(uid, {})
+        c_total = novo_contador(com_validada)
+        c_total.update({"planned": r.get("agendadas", 0), "done": r.get("feitas", 0),
+                        "no_show": r.get("no_show", 0), "reagendada": r.get("reagendadas", 0),
+                        "nao_validada": r.get("nao_validadas", 0)})
+        if com_validada:
+            c_total["validada"] = val_por_resp.get(uid, 0)
+        soma_contadores(month_total, c_total)
+        soma_contadores(por_time[time_c], c_total)
+
+        por_closer.append({
+            "name": nome, "time": time_c,
+            "lideranca": (lideres or {}).get(nome),
+            "total": c_total,
+            "days": [{"dia": d, "counter": c_days[d]} for d in range(1, ultimo + 1)],
+            "by_pipeline": dict(c_pipes),
+            "criadas": c_criadas,
+            "criadas_days": [{"dia": d, "c": c_criadas_days[d]} for d in range(1, ultimo + 1)],
+            "met_days": [{"dia": d, "c": c_met_days[d]} for d in range(1, ultimo + 1)],
+            "proprio_done": proprio_done,
+            "proprio_validada": proprio_val,
+            "ganhos_done": cv2.conversao(todas_feitas, status_atual)["ganhas"],
+            "ganhos_validada": cv2.conversao(todas_validas, status_atual)["ganhas"],
+            "negocios": sorted(({k: v for k, v in n.items() if k != "_rec"} for n in c_negocios_mes.values()),
+                               key=lambda x: x["id"]) if privilegiado else [],
+            "negocios_dia": ([{"dia": d, "itens": sorted(c_negocios_dia[d], key=lambda x: x["hora"])}
+                              for d in range(1, ultimo + 1)] if privilegiado else []),
         })
-    with _lock:
-        _cache["csv"] = {"ts": time.time(), "rows": rows}
-    return rows
+
+    por_closer.sort(key=lambda x: (bool(x.get("lideranca")), -x["total"]["planned"], x["name"]))
+    return {
+        "generated_at": fuso.agora_brasil().isoformat(),
+        "year": ano, "month": mes,
+        "month_label": f"{MESES_NOME[mes-1]}/{ano}",
+        "carimbo": carimbo(),
+        "days": [{"dia": d, "counter": combined_days[d]} for d in range(1, ultimo + 1)],
+        "month_total": month_total,
+        "por_time": dict(por_time),
+        "por_time_days": {t: [{"dia": d, "counter": dd[d]} for d in range(1, ultimo + 1)]
+                          for t, dd in por_time_days.items()},
+        "por_closer": por_closer,
+        "geral_dia": ([{"dia": d, "itens": sorted(geral_dia[d], key=lambda x: (x["hora"], x["closer"]))}
+                       for d in range(1, ultimo + 1)] if privilegiado else []),
+        "nao_encontrados": nao_encontrados,
+    }
+
+
+def _filtra(pessoas, time_filtro, quem_filtro):
+    if time_filtro and time_filtro.upper() != "TODOS":
+        pessoas = {n: t for n, t in pessoas.items() if str(t).upper() == time_filtro.upper()}
+    if quem_filtro and quem_filtro.upper() != "TODOS":
+        pessoas = {n: t for n, t in pessoas.items() if n == quem_filtro}
+    return pessoas
+
+
+def build_dashboard(ano, mes, time_filtro=None, closer_filtro=None, privilegiado=False):
+    ctx = contexto_mes(ano, mes)
+    return _build_dashboard_generico(_filtra(ctx["closers"], time_filtro, closer_filtro), ano, mes,
+                                     privilegiado, com_validada=False)
+
+
+def build_dashboard_sdr(ano, mes, time_filtro=None, sdr_filtro=None, privilegiado=False):
+    ctx = contexto_mes(ano, mes)
+    return _build_dashboard_generico(_filtra(ctx["sdrs"], time_filtro, sdr_filtro), ano, mes,
+                                     privilegiado, com_validada=True, lideres=ctx["lideres"])
+
+
+# ---------- auditoria: para quais closers cada SDR marca ----------
+
+def _ranking_por_criador(auditados, ano, mes):
+    """auditados = {nome: label}. Reunioes validadas (M6) de cada pessoa, agrupadas pelo dono do negocio."""
+    ctx = contexto_mes(ano, mes)
+    P = dados_periodo(ano, mes)
+    users = ctx["users"]
+    val = m6.reunioes_validadas(P["acts"], P["ini"], P["fim"], deals_validados=P["deals_validados"],
+                                dono_do_deal=P["dono_do_deal"], sdr_ids=ctx["sdr_ids"],
+                                lideranca_ids=ctx["lideranca_ids"], lideranca_que_agenda_ids=ctx["lq_ids"])
+    saida = []
+    for nome, label in sorted(auditados.items()):
+        uid = ctx["id_por_nome"].get(norm(nome))
+        contadores, negocios = defaultdict(int), defaultdict(list)
+        total = 0
+        for a in val.get(uid, []):
+            did = a.get("deal_id")
+            dono = P["dono_do_deal"].get(did)
+            closer = users.get(dono) or f"user {dono}"
+            contadores[closer] += 1
+            total += 1
+            negocios[closer].append({"id": did, "title": (P["deals"].get(did) or {}).get("title") or ("Negocio " + str(did)),
+                                     "url": PIPEDRIVE_BASE_URL + "/deal/" + str(did)})
+        ranking = sorted(contadores.items(), key=lambda x: (-x[1], x[0]))
+        saida.append({
+            "nome": nome, "label": label, "encontrado": uid is not None, "total": total,
+            "closers": [{"closer": k, "qtd": v, "negocios": sorted(negocios[k], key=lambda x: x["id"])}
+                        for k, v in ranking],
+        })
+    return saida
+
+
+def build_auditoria_sdr(ano, mes):
+    ctx = contexto_mes(ano, mes)
+    lideres = ctx["lideres"]
+    sdrs = {n: t for n, t in ctx["sdrs"].items() if n not in lideres}
+    return {
+        "year": ano, "month": mes, "month_label": f"{MESES_NOME[mes-1]}/{ano}",
+        "carimbo": carimbo(),
+        "sdrs": _ranking_por_criador(sdrs, ano, mes),
+        "liderancas": _ranking_por_criador(dict(lideres), ano, mes),
+    }
+
+
+# ---------- evolucao por horario (LP1 + FR2 + L3) ----------
+
+def _deals_atualizados_desde(desde):
+    """Deals mexidos desde `desde` (inclui reaplicacoes: a LP1 usa a Data da ultima aplicacao).
+    Busca unica por periodo, compartilhada por todos os SDRs."""
+    ini_utc = datetime(desde.year, desde.month, desde.day, tzinfo=fuso.TZ_BR).astimezone(fuso.UTC)
+    return pipedrive.deals(updated_since=ini_utc.strftime("%Y-%m-%dT%H:%M:%SZ"),
+                           include_option_labels="true")
+
+
+def _deals_do_periodo(desde):
+    return _cache_seguro(("deals_lp1", desde.isoformat()), 900,
+                         lambda: _deals_atualizados_desde(desde), tamanho=len)
+
+
+def _atividades_criadas(desde, ate):
+    """Reunioes criadas (add_time, Brasilia) entre desde e ate. A busca e pelo dia da reuniao: vai de
+    uma semana antes (registro retroativo) ate 60 dias depois do fim."""
+    ini = desde - timedelta(days=7)
+    fim = ate + timedelta(days=60)
+    return _cache_seguro(("reunioes_criadas", desde.isoformat(), ate.isoformat()), 900,
+                         lambda: pipedrive.atividades_do_periodo(ini, fim, tipos=[tipo_atividade("reuniao")]),
+                         tamanho=len)
+
+
+def evolucao_horario_sdr(nome_sdr, desde_str, ate_str=None):
+    """Para UMA SDR, entre `desde` e `ate` (Brasilia):
+    - Leads por hora: LP1 (primeiro proprietario), hora da Data da ultima aplicacao
+      (sem hora na data, hora do add_time do deal em Brasilia).
+    - Agendados por hora: base da FR2 (reuniao criada pela SDR, sem as da IA), hora do add_time em Brasilia.
+    - Prazo: L3 (dias entre a criacao e o dia da reuniao). Faixas mesmo dia / dia seguinte / mais adiante
+      sao escolha do painel. Registro retroativo (negativo) fica fora das faixas e e contado a parte."""
+    hoje = fuso.hoje_brasil()
+    ctx = contexto_mes(hoje.year, hoje.month)
+    sdr_id = ctx["id_por_nome"].get(norm(nome_sdr))
+    if not sdr_id:
+        return {"erro": "SDR nao encontrada no Pipedrive", "por_hora": [], "total": {}}
+    try:
+        desde = datetime.strptime(desde_str, "%Y-%m-%d").date()
+    except Exception:
+        desde = hoje - timedelta(days=7)
+    try:
+        ate = datetime.strptime(ate_str, "%Y-%m-%d").date() if ate_str else hoje
+    except Exception:
+        ate = hoje
+
+    por_hora = {h: {"leads": 0, "agendados": 0} for h in range(24)}
+
+    # ---- leads: LP1 ----
+    sdr_nomes = {norm(n) for n in ctx["sdrs"]}
+    opcoes_q = _cache_seguro(("opcoes_qualificador",), 3600, lambda: pipedrive.opcoes_campo(campo("qualificador")))
+    for d in _deals_do_periodo(desde):
+        if not lp1.entra(d):
+            continue
+        quem = lp1.primeiro_proprietario(d, sdr_nomes, ctx["users"], opcoes_q)
+        if norm(quem) != norm(nome_sdr):
+            continue
+        ap, tem_hora = fuso.ultima_aplicacao(cf(d, campo("ultima_aplicacao")))
+        criado = fuso.para_brasil(d.get("add_time"))
+        if ap is None:
+            marco_dia, hora = (criado.date() if criado else None), (criado.hour if criado else None)
+        elif tem_hora:
+            marco_dia, hora = ap.date(), ap.hour
+        else:                                   # so data: dia da aplicacao, hora do add_time
+            marco_dia, hora = ap, (criado.hour if criado else None)
+        if marco_dia is None or hora is None or not (desde <= marco_dia <= ate):
+            continue
+        por_hora[hora]["leads"] += 1
+
+    # ---- agendados: FR2 / prazo: L3 ----
+    prazo = {"mesmo_dia": 0, "dia_seguinte": 0, "mais_adiante": 0, "sem_data": 0, "retroativos": 0}
+    reu = tipo_atividade("reuniao")
+    mine = [a for a in _atividades_criadas(desde, ate)
+            if a.get("type") == reu and a.get("deal_id") and responsavel_id(a) == sdr_id and not criada_pela_ia(a)]
+    for a in deduplicar(mine):
+        criada = fuso.para_brasil(a.get("add_time"))
+        if criada is None or not (desde <= criada.date() <= ate):
+            continue
+        por_hora[criada.hour]["agendados"] += 1
+        dias, retro = l3.lead_time_agendamento(a)
+        if retro:
+            prazo["retroativos"] += 1
+        elif dias is None:
+            prazo["sem_data"] += 1
+        elif dias == 0:
+            prazo["mesmo_dia"] += 1
+        elif dias == 1:
+            prazo["dia_seguinte"] += 1
+        else:
+            prazo["mais_adiante"] += 1
+
+    total_leads = sum(v["leads"] for v in por_hora.values())
+    total_ag = sum(v["agendados"] for v in por_hora.values())
+    base_prazo = total_ag - prazo["retroativos"]
+    return {
+        "sdr": nome_sdr, "desde": desde.isoformat(), "ate": ate.isoformat(),
+        "por_hora": [{"hora": h, "leads": por_hora[h]["leads"], "agendados": por_hora[h]["agendados"]} for h in range(24)],
+        "total": {"leads": total_leads, "agendados": total_ag},
+        "taxa_agendamento": round(total_ag / total_leads * 100, 1) if total_leads else 0.0,
+        "prazo_agendamento": prazo,
+        "pct_agendado_dia_seguinte": round(prazo["dia_seguinte"] / base_prazo * 100, 1) if base_prazo > 0 else 0.0,
+        "carimbo": carimbo(extra="Leads: LP1 por Data da última aplicação · Prazo: mesmo dia = 0 dia, dia seguinte = 1, mais adiante = 2+ (L3)"),
+    }
+
+
+# ---------- taxas: reunioes marcadas fora da escala (OP2) ----------
+
+def _escala():
+    try:
+        return _cache_seguro(("escala_crn",), 600, fontes.carregar_escala), None
+    except Exception as e:
+        return {}, str(e)
+
+
+def reunioes_fora_da_escala(ano, mes, date_de=None, date_ate=None):
+    """Por SDR do mes: reunioes FEITAS e VALIDADAS (Sim/vazio), CRIADAS por ela (creator = responsavel),
+    cujo negocio tem Data da ultima aplicacao no mes, e quantas foram criadas fora do turno (OP2).
+    Escala pela chave da CRN: nome + funil do deal + dia da semana. Sem escala no dia = nao avaliada."""
+    ctx = contexto_mes(ano, mes)
+    P = dados_periodo(ano, mes)
+    escala, erro_escala = _escala()
+    pipelines = funis_pipedrive()
+    di, df = (date_de, date_ate) if (date_de and date_ate) else (P["ini"], P["fim"])
+    reu = tipo_atividade("reuniao")
+    por_criador = defaultdict(list)
+    for a in deduplicar([x for x in P["acts"] if x.get("type") == reu and _feita(x) and x.get("deal_id")]):
+        c = a.get("creator_user_id")
+        c = c.get("id") if isinstance(c, dict) else c
+        if c is None or criada_pela_ia(a):
+            continue
+        dia = fuso.atividade_dia(a)
+        if dia and di <= dia <= df:
+            por_criador[c].append(a)
+
+    lideres = ctx["lideres"]
+    resultado = []
+    hoje = fuso.hoje_brasil()
+    for nome, time_sdr in sorted(ctx["sdrs"].items()):
+        uid = ctx["id_por_nome"].get(norm(nome))
+        if uid is None:
+            resultado.append({"nome": nome, "time": time_sdr, "entrada": None, "saida": None,
+                              "lideranca": lideres.get(nome), "total_mes": 0, "fora_da_escala": 0,
+                              "pct_fora_escala": 0.0, "exemplos": [], "erro": "SDR nao encontrada no Pipedrive"})
+            continue
+        total = fora = sem_escala = 0
+        exemplos = []
+        for a in por_criador.get(uid, []):
+            deal = P["deals"].get(a.get("deal_id")) or {}
+            ap, _ = fuso.ultima_aplicacao(cf(deal, campo("ultima_aplicacao")))
+            if not fuso.no_mes(ap, ano, mes):
+                continue                                  # nao e "lead do mes" pela ultima aplicacao
+            if P["status_do_deal"].get(a.get("deal_id")) == "nao":
+                continue                                  # so validadas (Sim ou vazio)
+            funil = pipelines.get(deal.get("pipeline_id"), "")
+            r = op2.fora_da_escala(a, escala, nome, funil) if not erro_escala else None
+            if r is None:
+                sem_escala += 1
+                continue
+            total += 1
+            if r:
+                fora += 1
+                if len(exemplos) < 15:
+                    criada = fuso.para_brasil(a.get("add_time"))
+                    exemplos.append({"deal_id": a.get("deal_id"),
+                                     "titulo": deal.get("title") or ("Negocio " + str(a.get("deal_id"))),
+                                     "data_hora_criacao": criada.strftime("%d/%m/%Y %H:%M") if criada else "",
+                                     "url": PIPEDRIVE_BASE_URL + "/deal/" + str(a.get("deal_id"))})
+        entrada = saida = None
+        for (nn, _sub, dia_sem), (e, s) in escala.items():
+            if nn == norm(nome) and dia_sem == fontes.DIAS[hoje.weekday()]:
+                entrada, saida = e.strftime("%H:%M:%S"), s.strftime("%H:%M:%S")
+                break
+        resultado.append({"nome": nome, "time": time_sdr, "lideranca": lideres.get(nome),
+                          "entrada": entrada, "saida": saida, "total_mes": total, "fora_da_escala": fora,
+                          "sem_escala": sem_escala,
+                          "pct_fora_escala": round(fora / total * 100, 1) if total else 0.0, "exemplos": exemplos})
+    tg = sum(r["total_mes"] for r in resultado)
+    fg = sum(r["fora_da_escala"] for r in resultado)
+    if date_de and date_ate:
+        periodo_label = f"{date_de.strftime('%d/%m/%Y')} a {date_ate.strftime('%d/%m/%Y')} (leads de {MESES_NOME[mes-1]}/{ano})"
+    else:
+        periodo_label = f"{MESES_NOME[mes-1]}/{ano}"
+    return {
+        "ano": ano, "mes": mes, "month_label": periodo_label,
+        "escala_configurada": erro_escala is None and bool(escala), "erro_escala": erro_escala,
+        "sdrs": resultado,
+        "total": {"total_mes": tg, "fora_da_escala": fg, "pct_fora_escala": round(fg / tg * 100, 1) if tg else 0.0},
+        "carimbo": carimbo(extra="Fora da escala: OP2 (nome + funil + dia da semana); sem escala no dia não entra na base"),
+    }
+
+
+# ---------- ligacoes do dia (AT1) ----------
+
+LIGACOES_TTL = 120   # ligacoes do dia mudam toda hora; cache curto
+
+
+def ligacoes_do_dia(time_filtro="SNIPER"):
+    """{nome: ligacoes feitas HOJE} dos SDRs + lideranca do time. Hoje = dia de Brasilia;
+    AT1: type call, feita, com negocio, no dia do due_date (Brasilia), do responsavel."""
+    hoje = fuso.hoje_brasil()
+    ctx = contexto_mes(hoje.year, hoje.month)
+    nomes = [n for n, t in ctx["sdrs"].items() if str(t).upper() == time_filtro.upper()]
+
+    def buscar():
+        acts = pipedrive.atividades_do_periodo(hoje, hoje, tipos=[tipo_atividade("ligacao")], done=True)
+        return at1.ligacoes_feitas(acts, hoje, hoje)
+    por_resp = _cache_seguro(("ligacoes", hoje.isoformat()), LIGACOES_TTL, buscar)
+    por_pessoa = {}
+    for nome in nomes:
+        uid = ctx["id_por_nome"].get(norm(nome))
+        if uid is not None:
+            por_pessoa[nome] = len(por_resp.get(uid, []))
+    return {"date": hoje.isoformat(), "team": time_filtro, "por_pessoa": por_pessoa,
+            "total": sum(por_pessoa.values()), "carimbo": carimbo(extra="Ligações: AT1 (due_date em Brasília)")}
+
 
 
 def _parse_data_flex(texto):
@@ -828,1099 +1130,80 @@ def _parse_hora_hhmmss(texto):
     return None
 
 
-def closers_do_mes(year, month):
-    """{nome: time} dos closers ativos naquele mes/ano, so times validos."""
-    out = {}
-    for r in carrega_csv():
-        if not r["cargo"].startswith("closer"):   # "closer 1", "closer 2"...
-            continue
-        if r["mes"] != month or r["ano"] != year:
-            continue
-        if r["time"] not in TIMES_VALIDOS:
-            continue
-        if r["nome"]:
-            out[r["nome"]] = r["time"]
-    return out
-
-
-# nomes (normalizados, sem acento/minusculo) excluidos manualmente da auditoria de SDR
-SDR_EXCLUIDOS = {"priscila ribeiro"}
-
-
-def sdrs_do_mes(year, month):
-    """{nome: time} dos SDRs ativos naquele mes/ano (cargo comeca com 'sdr'),
-    so times validos (mesmo filtro dos closers -- exclui times como LATAM)."""
-    out = {}
-    for r in carrega_csv():
-        if not r["cargo"].startswith("sdr"):
-            continue
-        if r["mes"] != month or r["ano"] != year:
-            continue
-        if r["time"] not in TIMES_VALIDOS:
-            continue
-        if norm(r["nome"]) in SDR_EXCLUIDOS:
-            continue
-        if r["nome"]:
-            out[r["nome"]] = r["time"]
-    return out
-
-
-# unica lista de liderancas que entra na auditoria (nome normalizado -> cargo de exibicao)
-LIDERANCAS_PERMITIDAS = {
-    "mylena oliveira": "Team Leader",
-    "stephanie nascimento": "Team Leader",
-    "marlon silva": "Head",
-}
-
-
-def liderancas_do_mes(year, month):
-    """{nome: cargo} -- so os nomes em LIDERANCAS_PERMITIDAS, com o nome de
-    exibicao (grafia) tirado do CSV daquele mes quando existir."""
-    out = {}
-    for r in carrega_csv():
-        chave = norm(r["nome"])
-        if chave not in LIDERANCAS_PERMITIDAS:
-            continue
-        if r["mes"] != month or r["ano"] != year:
-            continue
-        out[r["nome"]] = LIDERANCAS_PERMITIDAS[chave]
-    return out
-
-
-def meses_disponiveis():
-    pares = set()
-    for r in carrega_csv():
-        if r["mes"] and r["ano"]:
-            pares.add((r["ano"], r["mes"]))
-    hoje = date.today()
-    pares.add((hoje.year, hoje.month))
-    saida = []
-    for ano, mes in sorted(pares, reverse=True):
-        saida.append({"value": f"{ano}-{mes:02d}", "label": f"{MESES_NOME[mes-1]}/{ano}"})
-    return saida
-
-
-# ---------- meta Pipedrive ----------
-
-def carrega_meta():
-    with _lock:
-        m = _cache["meta"]
-        if m and time.time() - m["ts"] < TTL:
-            return m["users"], m["pipelines"]
-    try:
-        users = client.get_users_map()
-        pipelines = client.get_pipelines_map()
-    except Exception as e:
-        with _lock:
-            velho = _cache["meta"]
-        if velho:
-            print("[meta] falha ao atualizar, usando a ultima leitura boa:", e)
-            return velho["users"], velho["pipelines"]
-        raise
-    with _lock:
-        _cache["meta"] = {"ts": time.time(), "users": users, "pipelines": pipelines}
-    return users, pipelines
-
-
-def _busca_acts_segura(key, buscar):
-    """Busca atividades com 2 protecoes contra leitura incompleta do Pipedrive:
-    1) se a busca falhar, devolve a ultima leitura boa (se houver) em vez de erro;
-    2) se vier com uma QUEDA GRANDE (>10%) em relacao a ultima leitura boa, refaz a
-       busca uma vez antes de aceitar (a paginacao por cursor pode pular itens quando
-       as atividades estao sendo editadas durante a busca)."""
-    with _lock:
-        velho = _cache["acts"].get(key)
-    try:
-        acts = buscar()
-        if velho and len(velho["acts"]) >= 20 and len(acts) < 0.9 * len(velho["acts"]):
-            print(f"[acts] queda suspeita {len(velho['acts'])} -> {len(acts)}; refazendo a busca")
-            acts = buscar()
-    except Exception as e:
-        if velho:
-            print("[acts] falha ao atualizar, usando a ultima leitura boa:", e)
-            return velho["acts"]
-        raise
-    with _lock:
-        _cache["acts"][key] = {"ts": time.time(), "acts": acts}
-    return acts
-
-
-def acts_do_owner(owner_id, year, month):
-    key = (owner_id, year, month)
-    with _lock:
-        c = _cache["acts"].get(key)
-        if c and time.time() - c["ts"] < TTL:
-            return c["acts"]
-    inicio = (date(year, month, 1) - timedelta(days=31)).strftime("%Y-%m-%dT00:00:00Z")
-    return _busca_acts_segura(key, lambda: client.get_meeting_activities(owner_id, updated_since=inicio))
-
-
-def acts_todos_do_mes(year, month):
-    """Todas as atividades meeting/no_show/reagendamento da CONTA INTEIRA
-    (sem filtro de owner_id), na mesma janela usada em acts_do_owner. Usada
-    na aba "Taxas %": o RESPONSAVEL (owner_id) de uma reuniao pode mudar
-    depois que a SDR agenda (repasse pro closer), o que faz acts_do_owner
-    (filtrado por owner_id no Pipedrive) perder a atividade -- mas o
-    CRIADOR (creator_user_id) nunca muda, entao aqui buscamos tudo uma vez
-    e filtramos por criador do lado de fora (confirmado com o usuario:
-    reuniao #112559, criada por Bruna Goes, sumia porque o responsavel
-    tinha mudado)."""
-    key = ("acts_todos", year, month)
-    with _lock:
-        c = _cache["acts"].get(key)
-        if c and time.time() - c["ts"] < TTL:
-            return c["acts"]
-    inicio = (date(year, month, 1) - timedelta(days=31)).strftime("%Y-%m-%dT00:00:00Z")
-    return _busca_acts_segura(key, lambda: client.get_meeting_activities_todos(updated_since=inicio))
-
-
-def _ranking_por_criador(auditados, year, month):
-    """Para cada pessoa em `auditados` ({nome: label}): ranking de closers
-    (donos dos negocios) pra quem as reunioes dela contam como validadas.
-
-    Criterio (conforme definido pelo usuario):
-      - type = meeting
-      - due_date (vencimento) no mes selecionado
-      - RESPONSAVEL (owner_id) da atividade = a propria pessoa auditada
-        -> por isso busca direto com acts_do_owner(pessoa_id), a MESMA
-           funcao/cache ja usada pros closers, so que com o id da pessoa
-      - PROPRIETARIO do negocio (owner_id do deal) DIFERENTE da pessoa
-        auditada -- nao conta reuniao de negocio que e dela mesma
-      - campo "Reuniao Validada?" do negocio DIFERENTE de "Nao"
-        (em branco ou "Sim" contam)
-
-    Funciona pra SDR, Team Leader, Head -- qualquer um que tenha usuario
-    no Pipedrive."""
-    users, _ = carrega_meta()
-    closers = closers_do_mes(year, month)   # nome -> time (so pra exibicao)
-    proprietarios_ids = proprietarios_validos_ids(year, month)
-
-    id_to_closer_nome = {}
-    for nome in closers:
-        uid = users.get(nome.strip().lower())
-        if uid:
-            id_to_closer_nome[uid] = nome
-    # fallback de nome (ex.: Denise Mussolin, que e permitida mas nao e closer)
-    id_to_nome_geral = {}
-    for nome_lower, uid in users.items():
-        id_to_nome_geral.setdefault(uid, nome_lower.title())
-
-    contadores = {nome: defaultdict(int) for nome in auditados}
-    negocios_por = {nome: defaultdict(list) for nome in auditados}  # nome -> {closer: [negocios]}
-    totais = {nome: 0 for nome in auditados}
-
-    for nome_pessoa in auditados:
-        pessoa_id = users.get(nome_pessoa.strip().lower())
-        if not pessoa_id:
-            continue
-        acts = acts_do_owner(pessoa_id, year, month)
-        deal_ids = {a["deal_id"] for a in acts if a.get("deal_id")}
-        deal_info = info_dos_deals(deal_ids)
-        for a in acts:
-            due = a.get("due_date")
-            if not due:
-                continue
-            d = data_ajustada_br(due, a.get("due_time"))
-            if d.year != year or d.month != month:
-                continue
-            if not eh_reuniao_valida_para_auditoria(a, pessoa_id, deal_info, proprietarios_ids):
-                continue
-            deal_id = a.get("deal_id")
-            info = deal_info.get(deal_id) or {}
-            dono_negocio = info.get("owner_id")
-            nome_closer = (id_to_closer_nome.get(dono_negocio)
-                           or id_to_nome_geral.get(dono_negocio)
-                           or f"user {dono_negocio}")
-            contadores[nome_pessoa][nome_closer] += 1
-            totais[nome_pessoa] += 1
-            negocios_por[nome_pessoa][nome_closer].append({
-                "id": deal_id,
-                "title": info.get("title") or ("Negocio " + str(deal_id)),
-                "url": PIPEDRIVE_BASE_URL + "/deal/" + str(deal_id),
-            })
-
-    saida = []
-    for nome, label in sorted(auditados.items()):
-        encontrado = users.get(nome.strip().lower()) is not None
-        ranking = sorted(contadores[nome].items(), key=lambda x: (-x[1], x[0]))
-        saida.append({
-            "nome": nome, "label": label, "encontrado": encontrado,
-            "total": totais[nome],
-            "closers": [
-                {"closer": k, "qtd": v,
-                 "negocios": sorted(negocios_por[nome][k], key=lambda x: x["id"])}
-                for k, v in ranking
-            ],
-        })
-    return saida
-
-
-def build_auditoria_sdr(year, month):
-    sdrs = sdrs_do_mes(year, month)
-    lideres = liderancas_do_mes(year, month)
-    return {
-        "year": year, "month": month,
-        "month_label": f"{MESES_NOME[month-1]}/{year}",
-        "sdrs": _ranking_por_criador(sdrs, year, month),
-        "liderancas": _ranking_por_criador(lideres, year, month),
-    }
-
-
-# escala de trabalho considerada na "evolucao por horario" (horas de INICIO
-# de cada slot; o expediente vai ate a proxima hora cheia apos a ultima)
-HORAS_ESCALA_SDR = [12, 13, 14, 15, 18, 19, 20, 21, 22]
-
-
-def _cache_deals_owner(owner_id, desde_dt):
-    """Busca (com cache) todos os deals de um owner, atualizados desde
-    `desde_dt`. Cache curto (mesmo TTL do resto) pra nao repetir a busca
-    a cada clique."""
-    key = ("deals_owner", owner_id, desde_dt.date().isoformat())
-    with _lock:
-        c = _cache["acts"].get(key)
-        if c and time.time() - c["ts"] < TTL:
-            return c["acts"]
-    updated_since = desde_dt.strftime("%Y-%m-%dT00:00:00Z")
-    deals = client.get_deals_by_owner(owner_id, updated_since=updated_since)
-    with _lock:
-        _cache["acts"][key] = {"ts": time.time(), "acts": deals}
-    return deals
-
-
-# Pipedrive devolve os timestamps em UTC; Brasilia = UTC-3. Sem esse
-# ajuste, os horarios aparecem 3h ADIANTADOS (confirmado com o usuario).
-AJUSTE_FUSO_HORAS = -3
-
-
-def hora_br(due_time_str):
-    """Formata um due_time (HH:MM:SS, cru do Pipedrive) pro horario de
-    Brasilia, aplicando AJUSTE_FUSO_HORAS. Devolve 'HH:MM' (ou '' se nao
-    tiver due_time). Cuida da virada de dia (ex.: 01:30 - 3h = 22:30 do
-    dia anterior) usando um datetime auxiliar."""
-    if not due_time_str:
-        return ""
-    texto = due_time_str.strip()
-    t = None
-    try:
-        t = datetime.strptime(texto[:8], "%H:%M:%S")
-    except ValueError:
-        try:
-            t = datetime.strptime(texto[:5], "%H:%M")
-        except ValueError:
-            pass
-    if t is None:
-        return texto[:5]
-    t = t + timedelta(hours=AJUSTE_FUSO_HORAS)
-    return t.strftime("%H:%M")
-
-
-def data_ajustada_br(due_date_str, due_time_str):
-    """Data do agendamento (due_date), ajustada pro fuso de Brasilia.
-    O Pipedrive devolve due_date/due_time no horario americano (UTC),
-    3h a mais que o Brasil -- entao uma reuniao marcada pra 00:00-02:59
-    de um dia, no Brasil cai no dia ANTERIOR (21:00-23:59). Usada pra
-    decidir em qual DIA a reuniao e contabilizada -- nao so a hora
-    exibida (hora_br), senao a reuniao aparecia no dia errado.
-    Sem due_time (reuniao sem hora definida), mantem a data como veio,
-    sem ajuste (nao ha hora suficiente pra saber se cruzou a virada)."""
-    if due_time_str:
-        texto = due_time_str.strip()
-        for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M"):
-            try:
-                dt = datetime.strptime(due_date_str + " " + texto[:8], fmt)
-                dt = dt + timedelta(hours=AJUSTE_FUSO_HORAS)
-                return dt.date()
-            except ValueError:
-                continue
-    return datetime.strptime(due_date_str, "%Y-%m-%d").date()
-
-
-def evolucao_horario_sdr(nome_sdr, desde_str, ate_str=None):
-    """Pra UMA SDR especifica (exclusivamente ela), somando os dias entre
-    `desde_str` e `ate_str` (formato YYYY-MM-DD; sem ate_str, vai ate agora):
-    - Vol. Leads por HORA: quantos negocios ela recebeu em cada hora
-      (hora em que o negocio foi criado/atualizado pra ela).
-    - Vol. Agendados por HORA: quantas reunioes ela CRIOU em cada hora
-      (hora em que a ATIVIDADE de reuniao foi criada -- nao a hora do
-      lead nem a hora marcada pra reuniao acontecer).
-    - Prazo de agendamento: dos leads que ela agendou, quantos ela marcou
-      pra acontecer no MESMO DIA que criou a reuniao, quantos pro DIA
-      SEGUINTE, e quantos mais pra frente (due_date - dia da criacao).
-    Os horarios ja vem ajustados pro fuso de Brasilia (UTC-3).
-
-    "Recebeu" = o negocio tem ela como Proprietario (owner_id) atual, E foi
-    CRIADO ou TROCOU DE ETAPA (stage_change_time) dentro do periodo informado
-    (aproximacao -- nao rastreia o changelog exato de troca de dono; usa
-    stage_change_time em vez de update_time pra nao inflar com negocios
-    antigos que so tiveram nota/campo editado, sem de fato "chegar" pra ela)."""
-    users, pipelines = carrega_meta()
-    sdr_id = users.get(nome_sdr.strip().lower())
-    if not sdr_id:
-        return {"erro": "SDR nao encontrada no Pipedrive", "por_hora": [], "total": {}}
-
-    try:
-        desde_dt = datetime.strptime(desde_str, "%Y-%m-%d")
-    except Exception:
-        desde_dt = datetime.now() - timedelta(days=7)
-
-    try:
-        ate_dt = datetime.strptime(ate_str, "%Y-%m-%d") + timedelta(hours=23, minutes=59, seconds=59)
-    except Exception:
-        ate_dt = datetime.now()
-
-    deals = _cache_deals_owner(sdr_id, desde_dt)
-    deal_ids_dela = {d.get("id") for d in deals}
-
-    # pra cada deal_id dela: hora em que a PRIMEIRA reuniao foi CRIADA
-    # *dentro do periodo analisado* (nao a primeira da vida do negocio --
-    # um negocio que ja teve reuniao antes do periodo, mas ganhou uma NOVA
-    # reuniao dentro do periodo, agora conta; reagendamentos multiplos
-    # dentro do MESMO periodo contam so uma vez, pela mais antiga)
-    # -- reaproveita acts_do_owner, ja cacheado, sem custo extra de API
-    hora_criacao_agendamento = {}  # deal_id -> datetime (menor add_time DENTRO do periodo)
-    due_date_agendamento = {}      # deal_id -> due_date (str) dessa mesma reuniao
-    mes_cursor = date(desde_dt.year, desde_dt.month, 1)
-    vistos = set()
-    while mes_cursor <= date(ate_dt.year, ate_dt.month, 1):
-        chave_mes = (mes_cursor.year, mes_cursor.month)
-        if chave_mes not in vistos:
-            vistos.add(chave_mes)
-            acts = acts_do_owner(sdr_id, mes_cursor.year, mes_cursor.month)
-            for a in acts:
-                deal_id = a.get("deal_id")
-                if a.get("type") != "meeting" or not deal_id:
-                    continue
-                criada_em = _parse_dt_pipedrive(a.get("add_time"))
-                if not criada_em:
-                    continue
-                criada_em = criada_em + timedelta(hours=AJUSTE_FUSO_HORAS)
-                if not (desde_dt <= criada_em <= ate_dt):
-                    continue  # essa reuniao foi criada FORA do periodo -- ignora
-                atual = hora_criacao_agendamento.get(deal_id)
-                if atual is None or criada_em < atual:
-                    hora_criacao_agendamento[deal_id] = criada_em
-                    due_date_agendamento[deal_id] = a.get("due_date")
-        if mes_cursor.month == 12:
-            mes_cursor = date(mes_cursor.year + 1, 1, 1)
-        else:
-            mes_cursor = date(mes_cursor.year, mes_cursor.month + 1, 1)
-
-    deal_ids_agendados = set(hora_criacao_agendamento.keys())
-
-    por_hora = {h: {"leads": 0, "agendados": 0} for h in range(24)}
-    por_dia = {}  # mantido pra uso futuro / diagnostico
-
-    for d in deals:
-        add_dt = _parse_dt_pipedrive(d.get("add_time"))
-        # usa stage_change_time (so muda quando o negocio TROCA DE ETAPA) em
-        # vez de update_time (que muda em QUALQUER edicao -- nota, campo,
-        # automacao -- e inflava demais o volume de "leads" em janelas
-        # longas, contando negocios antigos so tocados, nao recebidos)
-        estagio_dt = _parse_dt_pipedrive(d.get("stage_change_time"))
-        # aplica o ajuste de fuso ANTES de comparar com "desde"/"ate" e de extrair a hora
-        if add_dt:
-            add_dt = add_dt + timedelta(hours=AJUSTE_FUSO_HORAS)
-        if estagio_dt:
-            estagio_dt = estagio_dt + timedelta(hours=AJUSTE_FUSO_HORAS)
-
-        marco = None
-        if add_dt and desde_dt <= add_dt <= ate_dt:
-            marco = add_dt
-        elif estagio_dt and desde_dt <= estagio_dt <= ate_dt:
-            marco = estagio_dt
-        if not marco:
-            continue  # fora do periodo
-
-        deal_id = d.get("id")
-        agendado = deal_id in deal_ids_agendados
-
-        por_hora[marco.hour]["leads"] += 1
-
-        dia_iso = marco.date().isoformat()
-        por_dia.setdefault(dia_iso, []).append({
-            "id": deal_id,
-            "title": d.get("title") or ("Negocio " + str(deal_id)),
-            "hora": marco.strftime("%H:%M"),
-            "agendado": agendado,
-            "url": PIPEDRIVE_BASE_URL + "/deal/" + str(deal_id),
-        })
-
-    # Vol. Agendados: conta na hora que a ATIVIDADE de reuniao foi criada.
-    # NAO checa mais "o negocio ainda e dela hoje" (deal_id in deal_ids_dela)
-    # -- isso descartava agendamentos legitimos sempre que o negocio e
-    # repassado pro closer depois da reuniao marcada (fluxo normal de SDR),
-    # fazendo o Vol. Agendados ficar artificialmente perto de zero. A
-    # atividade ja veio de acts_do_owner(sdr_id), entao ja sabemos que ela
-    # e a Responsavel -- checar o dono do negocio de novo era redundante
-    # e incorreto.
-    prazo = {"mesmo_dia": 0, "dia_seguinte": 0, "mais_adiante": 0, "sem_data": 0}
-    for deal_id, criada_em in hora_criacao_agendamento.items():
-        if desde_dt <= criada_em <= ate_dt:
-            por_hora[criada_em.hour]["agendados"] += 1
-
-            due_str = due_date_agendamento.get(deal_id)
-            if not due_str:
-                prazo["sem_data"] += 1
-                continue
-            try:
-                due_data = datetime.strptime(due_str, "%Y-%m-%d").date()
-                gap = (due_data - criada_em.date()).days
-            except ValueError:
-                prazo["sem_data"] += 1
-                continue
-            if gap <= 0:
-                prazo["mesmo_dia"] += 1
-            elif gap == 1:
-                prazo["dia_seguinte"] += 1
-            else:
-                prazo["mais_adiante"] += 1
-
-    total_leads = sum(v["leads"] for v in por_hora.values())
-    total_agendados = sum(v["agendados"] for v in por_hora.values())
-    taxa_agendamento = round((total_agendados / total_leads * 100), 1) if total_leads else 0.0
-    pct_dia_seguinte = round((prazo["dia_seguinte"] / total_agendados * 100), 1) if total_agendados else 0.0
-
-    return {
-        "sdr": nome_sdr,
-        "desde": desde_dt.date().isoformat(),
-        "ate": ate_dt.date().isoformat(),
-        "por_hora": [{"hora": h, "leads": por_hora[h]["leads"], "agendados": por_hora[h]["agendados"]}
-                     for h in range(24)],
-        "total": {"leads": total_leads, "agendados": total_agendados},
-        "taxa_agendamento": taxa_agendamento,
-        "prazo_agendamento": prazo,
-        "pct_agendado_dia_seguinte": pct_dia_seguinte,
-    }
-
-
-def _parse_dt_pipedrive(valor):
-    """Converte a string de data/hora que o Pipedrive devolve (geralmente
-    'YYYY-MM-DD HH:MM:SS') pra datetime. Tolerante a variacoes de formato."""
-    if not valor:
-        return None
-    for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%dT%H:%M:%S%z", "%Y-%m-%dT%H:%M:%SZ", "%Y-%m-%d"):
-        try:
-            dt = datetime.strptime(valor, fmt)
-            return dt.replace(tzinfo=None)
-        except ValueError:
-            continue
-    return None
-
-
-def info_dos_deals(deal_ids):
-    """{deal_id: {"pipeline_id":..., "title":...}} com cache local."""
-    faltando = []
-    with _lock:
-        for d in deal_ids:
-            if d not in _cache["deals"]:
-                faltando.append(d)
-    if faltando:
-        novos = client.get_deals_info(faltando)
-        with _lock:
-            _cache["deals"].update(novos)
-    with _lock:
-        return {d: _cache["deals"].get(d) for d in deal_ids}
-
-
-def reunioes_fora_da_escala(year, month, date_de=None, date_ate=None):
-    """Aba "Taxas %": pra cada SDR do mes, quantas reunioes AGENDADAS
-    (type=meeting), REALIZADAS NESSE MES (done=true e due_date, ajustado
-    pro fuso de Brasilia, cai no mes/ano pedido) e VALIDADAS (campo
-    "Reuniao Validada?" do negocio == "Sim") -- os tres criterios juntos,
-    confirmado com o usuario -- ela mesma CRIOU (creator_user_id = a
-    propria, o mesmo criterio de "criadas pelo proprio" usado na
-    Distribuicao por Closer) cujo NEGOCIO tem TAMBEM a "Data da ultima
-    aplicacao" dentro do mesmo mes/ano -- esse campo inclui reaplicacoes,
-    nao so negocios criados no mes (confirmado com o usuario) -- e, dessas,
-    quantas foram CRIADAS (a atividade, nao o negocio) FORA do horario de
-    trabalho dela na escala comercial -- depois da Saida (fim de turno) OU
-    antes da Entrada (inicio de turno).
-
-    date_de/date_ate (opcionais, objetos date): quando os DOIS sao
-    informados, restringe a data em que a reuniao foi REALIZADA a esse
-    intervalo (inclusive) em vez de exigir que caia no mes/ano inteiro --
-    pedido pelo usuario pra fatiar por dia (ex.: so de 21/09/2026 a
-    30/09/2026) sem perder a condicao de "leads desse mes" (Data da ultima
-    aplicacao), que continua usando o mes/ano do parametro `month`/`year`
-    normalmente.
-
-    Comparacao: hora de criacao da ATIVIDADE (add_time, ajustado pro fuso
-    de Brasilia) vs. o campo Saida (fim de turno) da planilha
-    escala_comercial.
-
-    IMPORTANTE: usa acts_todos_do_mes (busca a conta INTEIRA, sem filtro de
-    owner_id) em vez de acts_do_owner(sdr_id) -- o RESPONSAVEL (owner_id) de
-    uma reuniao pode mudar depois que a SDR agenda (repasse pro closer), e
-    acts_do_owner e filtrado no Pipedrive pelo owner_id ATUAL, entao perderia
-    essas reunioes. O CRIADOR (creator_user_id) nao muda, entao filtramos
-    por ele aqui (confirmado com o usuario: reuniao #112559 sumia por causa
-    disso)."""
-    users, _ = carrega_meta()
-    try:
-        saida_por_nome = escala_saida_por_nome()
-        entrada_por_nome = escala_entrada_por_nome()
-        escala_ok = True
-    except RuntimeError:
-        saida_por_nome = {}
-        entrada_por_nome = {}
-        escala_ok = False
-
-    sdrs, lideres_cargo = sdrs_e_lideres(year, month)   # SDRs + lideres (mesma regra)
-    mes_str = f"{month:02d}/{year}"
-    resultado = []
-
-    # busca UMA VEZ (nao por SDR) todas as reunioes da conta, e agrupa por
-    # criador -- assim nao depende de quem e o responsavel ATUAL
-    # a automacao de agendamento cria DUAS atividades tipo "meeting" pra cada
-    # reuniao real marcada (ex.: uma "Reuniao Board Academy - <nome>" com o
-    # closer como owner, e outra "Agendamento Reuniao" com a SDR como owner)
-    # -- mesmo criador, mesmo negocio, mesmo due_date/due_time, ids diferentes.
-    # sem deduplicar isso conta cada reuniao 2x (confirmado com o usuario:
-    # negocio #290267 e outros aparecendo duplicados). Colapsa pela chave
-    # (criador, negocio, due_date, due_time), mantendo so a primeira.
-    acts_por_criador = defaultdict(list)
-    vistos_reuniao = set()
-    for a in acts_todos_do_mes(year, month):
-        if a.get("type") == "meeting" and a.get("creator_user_id"):
-            chave = (a["creator_user_id"], a.get("deal_id"), a.get("due_date"), a.get("due_time"))
-            if chave in vistos_reuniao:
-                continue
-            vistos_reuniao.add(chave)
-            acts_por_criador[a["creator_user_id"]].append(a)
-
-    for nome_sdr, time_sdr in sorted(sdrs.items()):
-        sdr_id = users.get(nome_sdr.strip().lower())
-        if not sdr_id:
-            resultado.append({
-                "nome": nome_sdr, "time": time_sdr, "entrada": None, "saida": None,
-                "lideranca": lideres_cargo.get(nome_sdr),
-                "total_mes": 0, "fora_da_escala": 0, "pct_fora_escala": 0.0,
-                "exemplos": [], "erro": "SDR nao encontrada no Pipedrive",
-            })
-            continue
-
-        saida_str = saida_por_nome.get(norm(nome_sdr))
-        saida_time = _parse_hora_hhmmss(saida_str) if saida_str else None
-        entrada_str = entrada_por_nome.get(norm(nome_sdr))
-        entrada_time = _parse_hora_hhmmss(entrada_str) if entrada_str else None
-
-        acts = acts_por_criador.get(sdr_id, [])
-        deal_ids = [a.get("deal_id") for a in acts if a.get("deal_id")]
-        deals_info = info_dos_deals(deal_ids) if deal_ids else {}
-
-        total_mes = 0
-        fora = 0
-        exemplos = []
-        for a in acts:
-            if not a.get("done"):
-                continue  # so conta reuniao REALIZADA (done = true)
-            due = a.get("due_date")
-            if not due:
-                continue
-            dia_realizada = data_ajustada_br(due, a.get("due_time"))
-            if date_de and date_ate:
-                if dia_realizada < date_de or dia_realizada > date_ate:
-                    continue  # reuniao nao foi REALIZADA dentro do intervalo De/Ate pedido
-            elif dia_realizada.year != year or dia_realizada.month != month:
-                continue  # reuniao nao foi REALIZADA no mes/ano pedido
-
-            deal_id = a.get("deal_id")
-            deal = deals_info.get(deal_id) or {}
-            cf = (deal.get("custom_fields") or {})
-            data_aplicacao = cf.get(CAMPO_DATA_ULTIMA_APLICACAO_ID)
-            if not data_aplicacao or mes_str not in str(data_aplicacao):
-                continue  # negocio nao e "lead do mes" pela ultima aplicacao
-            if not campo_validado_diferente_de_nao(deal):
-                continue  # so conta reuniao VALIDADA (Reuniao Validada? == "Sim" ou em branco)
-
-            criada_em = _parse_dt_pipedrive(a.get("add_time"))
-            if not criada_em:
-                continue
-            criada_em_br = criada_em + timedelta(hours=AJUSTE_FUSO_HORAS)
-
-            total_mes += 1
-            hora_criacao = criada_em_br.time()
-            # fora da escala = criada DEPOIS do fim do turno (saida) OU ANTES
-            # do inicio do turno (entrada) -- os dois casos sao "fora do
-            # horario de trabalho da SDR". So exigir "depois da saida" perdia
-            # reunioes criadas de manha bem cedo, antes do turno comecar
-            # (confirmado com o usuario a partir dos casos #112559 e #410476,
-            # ambos criados por volta das 9h-10h, bem antes do turno da SDR).
-            esta_fora = (
-                (bool(saida_time) and hora_criacao > saida_time)
-                or (bool(entrada_time) and hora_criacao < entrada_time)
-            )
-            if esta_fora:
-                fora += 1
-                if len(exemplos) < 15:
-                    exemplos.append({
-                        "deal_id": deal_id,
-                        "titulo": deal.get("title") or ("Negocio " + str(deal_id)),
-                        "data_hora_criacao": criada_em_br.strftime("%d/%m/%Y %H:%M"),
-                        "url": PIPEDRIVE_BASE_URL + "/deal/" + str(deal_id),
-                    })
-
-        resultado.append({
-            "nome": nome_sdr,
-            "time": time_sdr,
-            "lideranca": lideres_cargo.get(nome_sdr),
-            "entrada": entrada_str,
-            "saida": saida_str,
-            "total_mes": total_mes,
-            "fora_da_escala": fora,
-            "pct_fora_escala": round((fora / total_mes * 100), 1) if total_mes else 0.0,
-            "exemplos": exemplos,
-        })
-
-    total_geral = sum(r["total_mes"] for r in resultado)
-    fora_geral = sum(r["fora_da_escala"] for r in resultado)
-    if date_de and date_ate:
-        periodo_label = f"{date_de.strftime('%d/%m/%Y')} a {date_ate.strftime('%d/%m/%Y')} (leads de {MESES_NOME[month-1]}/{year})"
-    else:
-        periodo_label = f"{MESES_NOME[month-1]}/{year}"
-    return {
-        "ano": year, "mes": month,
-        "month_label": periodo_label,
-        "escala_configurada": escala_ok,
-        "sdrs": resultado,
-        "total": {
-            "total_mes": total_geral,
-            "fora_da_escala": fora_geral,
-            "pct_fora_escala": round((fora_geral / total_geral * 100), 1) if total_geral else 0.0,
-        },
-    }
-
-
-# ---------- construcao ----------
-
-# nomes de "criador" cujas atividades devem ser IGNORADAS na contagem
-# (ex.: integracoes/automacoes -- nao sao reunioes marcadas por gente de verdade)
-CRIADORES_EXCLUIDOS = {"matheus paz"}
-# ids fixos conhecidos -- garantia que funciona mesmo se o nome no Pipedrive
-# nao bater exatamente com CRIADORES_EXCLUIDOS (confirmado com o usuario)
-CRIADORES_EXCLUIDOS_IDS_FIXOS = {14326654}  # Matheus Paz -- integracao de IA
-
-
-def ids_criadores_excluidos():
-    """ids do Pipedrive dos nomes em CRIADORES_EXCLUIDOS, somados aos ids
-    fixos conhecidos (a busca por nome pode falhar por causa de grafia
-    diferente no Pipedrive -- o id fixo garante a exclusao de qualquer jeito)."""
-    users, _ = carrega_meta()
-    alvo_norm = {norm(n) for n in CRIADORES_EXCLUIDOS}
-    ids = {uid for nome_lower, uid in users.items() if norm(nome_lower) in alvo_norm}
-    ids |= CRIADORES_EXCLUIDOS_IDS_FIXOS
-    return ids
-
-
-def build_dashboard(year, month, time_filtro=None, closer_filtro=None, privilegiado=False):
-    closers = closers_do_mes(year, month)
-    if time_filtro and time_filtro.upper() != "TODOS":
-        closers = {n: t for n, t in closers.items() if t == time_filtro.upper()}
-    if closer_filtro and closer_filtro.upper() != "TODOS":
-        closers = {n: t for n, t in closers.items() if n == closer_filtro}
-    return _build_dashboard_generico(
-        closers, year, month, privilegiado, com_validada=False,
-        excluir_criadores_ids=ids_criadores_excluidos(),
-    )
-
-
-# Lideres que marcam reuniao e entram na aba SDRs (secao "Lideranca") e na
-# meta do time SNIPER: nome normalizado -> (nome de exibicao padrao, cargo)
-LIDERES_NA_META = {
-    "stephanie nascimento": ("Stephanie Nascimento", "Team Leader"),
-    "marlon silva": ("Marlon Silva", "Head"),
-}
-LIDERES_TIME = "SNIPER"   # time onde a producao deles soma (meta do SNIPER)
-
-
-def lideres_na_meta(year, month):
-    """{nome: cargo} dos lideres que entram na aba SDRs. Usa a grafia do CSV do
-    mes quando existir, senao o nome padrao."""
-    out = {}
-    for chave, (nome_pad, cargo) in LIDERES_NA_META.items():
-        nome = nome_pad
-        for r in carrega_csv():
-            if norm(r["nome"]) == chave and r["mes"] == month and r["ano"] == year:
-                nome = r["nome"]
-                break
-        out[nome] = cargo
-    return out
-
-
-def sdrs_e_lideres(year, month):
-    """({nome: time} com SDRs + lideres, {nome: cargo} so dos lideres)."""
-    sdrs = dict(sdrs_do_mes(year, month))
-    lideres = lideres_na_meta(year, month)
-    for nome in lideres:
-        sdrs[nome] = LIDERES_TIME
-    return sdrs, lideres
-
-
-def build_dashboard_sdr(year, month, time_filtro=None, sdr_filtro=None, privilegiado=False):
-    sdrs, lideres = sdrs_e_lideres(year, month)
-    if time_filtro and time_filtro.upper() != "TODOS":
-        sdrs = {n: t for n, t in sdrs.items() if str(t).upper() == time_filtro.upper()}
-    if sdr_filtro and sdr_filtro.upper() != "TODOS":
-        sdrs = {n: t for n, t in sdrs.items() if n == sdr_filtro}
-    return _build_dashboard_generico(sdrs, year, month, privilegiado, com_validada=True, lideres=lideres)
-
-
-def dedup_atividades_da_pessoa(acts):
-    """Remove atividades duplicadas DA MESMA PESSOA: mesmo negocio, tipo, data e
-    hora. Acontece quando a reuniao volta do closer (reagendamento) e as duas
-    atividades ficam no nome do SDR -- sem isso a mesma reuniao contava 2x
-    (ex.: #413992 aparecia duas vezes como Reagendada). Entre duas copias,
-    fica a que ja esta feita (done), senao a primeira."""
-    vistos = {}
-    ordem = []
-    for a in acts:
-        k = (a.get("deal_id"), a.get("type"), str(a.get("due_date")), str(a.get("due_time")))
-        if k not in vistos:
-            vistos[k] = a
-            ordem.append(k)
-        elif a.get("done") and not vistos[k].get("done"):
-            vistos[k] = a
-    return [vistos[k] for k in ordem]
-
-
-def _build_dashboard_generico(closers, year, month, privilegiado=False, com_validada=False,
-                               excluir_criadores_ids=None, lideres=None):
-    """Nucleo do dashboard de reunioes -- recebe `closers` ja resolvido
-    ({nome: time}) e calcula dias/KPIs/matriz/etc. Usado tanto pra closers
-    quanto pra SDRs (so muda quem entra no dict de entrada)."""
-    users, pipelines = carrega_meta()
-    proprietarios_ids = proprietarios_validos_ids(year, month) if com_validada else set()
-
-    last_day = calendar.monthrange(year, month)[1]
-    combined_days = {d: novo_contador(com_validada) for d in range(1, last_day + 1)}
-    geral_dia = {d: [] for d in range(1, last_day + 1)}  # dia -> reunioes de todos os closers (so priv)
-    month_total = novo_contador(com_validada)
-    por_closer = []
-    por_time = defaultdict(lambda: novo_contador(com_validada))
-    por_time_days = {}          # time -> {dia: contador}
-    nao_encontrados = []
-
-    for nome, time_c in sorted(closers.items()):
-        if time_c not in por_time_days:
-            por_time_days[time_c] = {d: novo_contador(com_validada) for d in range(1, last_day + 1)}
-
-        owner_id = users.get(nome.strip().lower())
-        if not owner_id:
-            nao_encontrados.append(nome)
-            continue
-
-        acts = dedup_atividades_da_pessoa(acts_do_owner(owner_id, year, month))
-        deal_ids = {a["deal_id"] for a in acts if a.get("deal_id")}
-        deal_info = info_dos_deals(deal_ids)
-
-        c_total = novo_contador(com_validada)
-        c_days = {d: novo_contador(com_validada) for d in range(1, last_day + 1)}
-        c_pipes = defaultdict(lambda: novo_contador(com_validada))
-        c_criadas = {"proprio": 0, "outro": 0}
-        c_criadas_days = {d: {"proprio": 0, "outro": 0} for d in range(1, last_day + 1)}
-        c_proprio_done = 0      # das reunioes FEITAS, quantas foram marcadas pelo proprio
-        c_proprio_validada = 0  # idem, mas das VALIDADAS (so relevante na aba SDR)
-        c_ganhos_done = 0       # das reunioes FEITAS, quantas tem o negocio Ganho hoje
-        c_ganhos_validada = 0   # idem, mas das VALIDADAS
-        # os 4 contadores acima quebrados por dia (pra somar um periodo De/Ate)
-        c_met_days = {d: {"proprio_done": 0, "proprio_validada": 0, "ganhos_done": 0, "ganhos_validada": 0}
-                      for d in range(1, last_day + 1)}
-        c_negocios_mes = {}   # deal_id -> {id,title,url}  (dedupe do mes)
-        c_negocios_dia = {d: [] for d in range(1, last_day + 1)}  # dia -> lista de reunioes com negocio
-
-        for a in acts:
-            if excluir_criadores_ids and a.get("creator_user_id") in excluir_criadores_ids:
-                continue  # atividade criada por integracao/automacao -- nao conta
-            due = a.get("due_date")
-            deal_id = a.get("deal_id")
-            tipo = a.get("type")
-            done = a.get("done")
-            if not due or not deal_id:
-                continue
-            d = data_ajustada_br(due, a.get("due_time"))
-            if d.year != year or d.month != month:
-                continue
-
-            info = deal_info.get(deal_id) or {}
-            eh_valid = com_validada and atividade_e_validada(a, deal_info, proprietarios_ids)
-            # "Nao validada": reuniao feita cujo negocio tem "Reuniao Validada?" = Nao
-            eh_nao_valid = tipo == "meeting" and bool(done) and campo_validado_e_nao(info)
-
-            soma_em(combined_days[d.day], a, eh_valid, eh_nao_valid)
-            soma_em(month_total, a, eh_valid, eh_nao_valid)
-            soma_em(c_total, a, eh_valid, eh_nao_valid)
-            soma_em(c_days[d.day], a, eh_valid, eh_nao_valid)
-            soma_em(por_time[time_c], a, eh_valid, eh_nao_valid)
-            soma_em(por_time_days[time_c][d.day], a, eh_valid, eh_nao_valid)
-
-            pid = info.get("pipeline_id")
-            pnome = pipelines.get(pid, f"Funil {pid}") if pid else "Sem funil"
-            soma_em(c_pipes[pnome], a, eh_valid, eh_nao_valid)
-
-            chave = "proprio" if a.get("creator_user_id") == owner_id else "outro"
-            c_criadas[chave] += 1
-            c_criadas_days[d.day][chave] += 1
-            if chave == "proprio" and tipo == "meeting" and done:
-                c_proprio_done += 1
-                c_met_days[d.day]["proprio_done"] += 1
-                if eh_valid:
-                    c_proprio_validada += 1
-                    c_met_days[d.day]["proprio_validada"] += 1
-
-            # Ganhos: do total de reunioes FEITAS (e das VALIDADAS), quantas tem
-            # o negocio hoje com status "Ganho" -- publico, nao depende de login
-            if tipo == "meeting" and done and info.get("status") == "won":
-                c_ganhos_done += 1
-                c_met_days[d.day]["ganhos_done"] += 1
-                if eh_valid:
-                    c_ganhos_validada += 1
-                    c_met_days[d.day]["ganhos_validada"] += 1
-
-            if privilegiado:
-                titulo = info.get("title") or ("Negocio " + str(deal_id))
-                url = PIPEDRIVE_BASE_URL + "/deal/" + str(deal_id)
-                hora = hora_br(a.get("due_time"))  # HH:MM ja ajustado pro fuso de Brasilia
-                if tipo == "reagendamento":
-                    status = "Reagendada"
-                elif tipo == "no_show":
-                    status = "No Show"
-                elif tipo == "meeting" and done and eh_valid:
-                    status = "Validada"
-                elif tipo == "meeting" and done and eh_nao_valid:
-                    status = "Não validada"   # feita, mas "Reuniao Validada?" = Nao no negocio
-                elif tipo == "meeting" and done:
-                    status = "Feita"
-                else:
-                    # ainda nao aconteceu -- confere se o prazo (due_date/due_time)
-                    # ja passou, pra marcar como Vencida em vez de Planejada
-                    status = "Vencida" if reuniao_vencida(due, a.get("due_time")) else "Planejada"
-                # status do NEGOCIO (aberto/ganho/perdido), independente do status da reuniao
-                status_negocio = {"open": "Aberto", "won": "Ganho", "lost": "Perdido"}.get(
-                    info.get("status"), info.get("status") or "—")
-                # dedupe do mes (por negocio) -- guarda o status da reuniao MAIS
-                # RECENTE do negocio no mes (due_date + due_time, desempate pelo
-                # id da atividade), nao a 1a encontrada: um negocio reagendado
-                # que depois foi feito ficava como "Reagendada" (caso #412707)
-                chave_rec = (str(due), str(a.get("due_time") or ""), a.get("id") or 0)
-                atual = c_negocios_mes.get(deal_id)
-                if atual is None or chave_rec > atual["_rec"]:
-                    c_negocios_mes[deal_id] = {
-                        "id": deal_id, "title": titulo, "url": url,
-                        "status": status, "status_negocio": status_negocio,
-                        "_rec": chave_rec,
-                    }
-                # lista do dia (uma linha por reuniao, com hora)
-                item_dia = {
-                    "id": deal_id, "title": titulo, "url": url,
-                    "hora": hora, "tipo": tipo, "done": bool(done),
-                    "status": status, "status_negocio": status_negocio,
-                }
-                c_negocios_dia[d.day].append(item_dia)
-                # lista geral (todos os closers) para a secao "dia a dia"
-                geral_dia[d.day].append({**item_dia, "closer": nome, "time": time_c})
-
-        por_closer.append({
-            "name": nome, "time": time_c,
-            "lideranca": (lideres or {}).get(nome),   # cargo (Team Leader/Head) ou None
-            "total": c_total,
-            "days": [{"dia": d, "counter": c_days[d]} for d in range(1, last_day + 1)],
-            "by_pipeline": dict(c_pipes),
-            "criadas": c_criadas,
-            "criadas_days": [{"dia": d, "c": c_criadas_days[d]} for d in range(1, last_day + 1)],
-            "met_days": [{"dia": d, "c": c_met_days[d]} for d in range(1, last_day + 1)],
-            "proprio_done": c_proprio_done,
-            "proprio_validada": c_proprio_validada,
-            "ganhos_done": c_ganhos_done,
-            "ganhos_validada": c_ganhos_validada,
-            "negocios": sorted(({k: v for k, v in n.items() if k != "_rec"} for n in c_negocios_mes.values()),
-                               key=lambda x: x["id"]) if privilegiado else [],
-            "negocios_dia": ([{"dia": d, "itens": sorted(c_negocios_dia[d], key=lambda x: x["hora"])}
-                              for d in range(1, last_day + 1)] if privilegiado else []),
-        })
-
-    dias = [{"dia": d, "counter": combined_days[d]} for d in range(1, last_day + 1)]
-    geral_dia_out = ([{"dia": d, "itens": sorted(geral_dia[d], key=lambda x: (x["hora"], x["closer"]))}
-                      for d in range(1, last_day + 1)] if privilegiado else [])
-    por_closer.sort(key=lambda x: (bool(x.get("lideranca")), -x["total"]["planned"], x["name"]))
-
-    por_time_days_out = {
-        t: [{"dia": d, "counter": dd[d]} for d in range(1, last_day + 1)]
-        for t, dd in por_time_days.items()
-    }
-
-    return {
-        "generated_at": datetime.now().isoformat(),
-        "year": year, "month": month,
-        "month_label": f"{MESES_NOME[month-1]}/{year}",
-        "days": dias,
-        "month_total": month_total,
-        "por_time": dict(por_time),
-        "por_time_days": por_time_days_out,
-        "por_closer": por_closer,
-        "geral_dia": geral_dia_out,
-        "nao_encontrados": nao_encontrados,
-    }
-
-
-def eh_default(year, month, team, closer):
-    hoje = date.today()
-    return (year == hoje.year and month == hoje.month
-            and (not team or team.upper() == "TODOS")
-            and (not closer or closer.upper() == "TODOS"))
-
-
-def refresh_current_loop():
-    """Reconstroi o mes atual a cada REFRESH_SECONDS. So roda LOCAL --
-    na Vercel (serverless) nao existe processo de fundo; o refresh vem do navegador."""
-    while True:
-        try:
-            hoje = date.today()
-            data_comum = build_dashboard(hoje.year, hoje.month, privilegiado=False)
-            data_priv = build_dashboard(hoje.year, hoje.month, privilegiado=True)
-            with _lock:
-                _cache["current"] = {
-                    "ts": time.time(), "key": (hoje.year, hoje.month),
-                    "data": {False: data_comum, True: data_priv},
-                }
-            print(f"[auto] mes atual atualizado {datetime.now():%H:%M:%S}")
-        except Exception as e:
-            import traceback
-            traceback.print_exc()
-            print("Erro no refresh automatico:", e)
-        time.sleep(REFRESH_SECONDS)
-
-
 # ---------- rotas ----------
+
+def _erro(e):
+    import traceback
+    traceback.print_exc()
+    if isinstance(e, fontes.FonteInvalida):
+        return jsonify({"error": f"Planilha: {e}"}), 500
+    return jsonify({"error": str(e)}), 500
+
+
+@app.route("/crn-versao")
+def crn_versao():
+    """Regra 11 da CRN: publico, so a versao das regras em uso (nenhum dado)."""
+    return jsonify({"versao": crn.versao()})
+
 
 @app.route("/api/init")
 def api_init():
-    hoje = date.today()
-    return jsonify({
+    hoje = fuso.hoje_brasil()
+    teams, aviso = [], None
+    try:
+        ctx = contexto_mes(hoje.year, hoje.month)
+        teams = sorted({t for t in list(ctx["sdrs"].values()) + list(ctx["closers"].values())})
+    except Exception as e:
+        aviso = str(e)
+        print("[init] contexto do mes indisponivel:", e)
+    out = {
         "months": meses_disponiveis(),
         "current": f"{hoje.year}-{hoje.month:02d}",
-        "teams": ["Todos"] + sorted(TIMES_VALIDOS),
+        "teams": ["Todos"] + teams,
         "refresh_seconds": REFRESH_SECONDS,
-    })
+        "crn": crn.versao(),
+    }
+    if aviso:
+        out["aviso"] = aviso
+    return jsonify(out)
 
 
 @app.route("/api/closers")
 def api_closers():
-    mes = request.args.get("month", "")
+    ano, mes = parse_ym(request.args.get("month", ""))
     try:
-        year, month = map(int, mes.split("-"))
-    except Exception:
-        hoje = date.today()
-        year, month = hoje.year, hoje.month
-    closers = closers_do_mes(year, month)
-    return jsonify({"closers": ["Todos"] + sorted(closers.keys())})
+        return jsonify({"closers": ["Todos"] + sorted(contexto_mes(ano, mes)["closers"].keys())})
+    except Exception as e:
+        return _erro(e)
 
 
 @app.route("/api/dashboard")
 def api_dashboard():
-    mes = request.args.get("month", "")
+    ano, mes = parse_ym(request.args.get("month", ""))
     try:
-        year, month = map(int, mes.split("-"))
-    except Exception:
-        hoje = date.today()
-        year, month = hoje.year, hoje.month
-    team = request.args.get("team")
-    closer = request.args.get("closer")
-    priv = eh_privilegiado(request)
-
-    if eh_default(year, month, team, closer):
-        with _lock:
-            c = _cache["current"]
-            if c and c.get("key") == (year, month) and priv in c["data"]:
-                return jsonify(c["data"][priv])
-
-    try:
-        return jsonify(build_dashboard(year, month, team, closer, privilegiado=priv))
+        return jsonify(build_dashboard(ano, mes, request.args.get("team"), request.args.get("closer"),
+                                       privilegiado=eh_privilegiado(request)))
     except Exception as e:
-        import traceback
-        traceback.print_exc()
-        return jsonify({"error": str(e)}), 500
+        return _erro(e)
 
 
 @app.route("/api/sdrs")
 def api_sdrs():
-    mes = request.args.get("month", "")
+    ano, mes = parse_ym(request.args.get("month", ""))
     try:
-        year, month = map(int, mes.split("-"))
-    except Exception:
-        hoje = date.today()
-        year, month = hoje.year, hoje.month
-    sdrs, _ = sdrs_e_lideres(year, month)
-    return jsonify({"sdrs": ["Todos"] + sorted(sdrs.keys())})
+        return jsonify({"sdrs": ["Todos"] + sorted(contexto_mes(ano, mes)["sdrs"].keys())})
+    except Exception as e:
+        return _erro(e)
 
 
 @app.route("/api/dashboard_sdr")
 def api_dashboard_sdr():
-    mes = request.args.get("month", "")
+    ano, mes = parse_ym(request.args.get("month", ""))
     try:
-        year, month = map(int, mes.split("-"))
-    except Exception:
-        hoje = date.today()
-        year, month = hoje.year, hoje.month
-    team = request.args.get("team")
-    sdr = request.args.get("sdr")
-    priv = eh_privilegiado(request)
-    try:
-        return jsonify(build_dashboard_sdr(year, month, team, sdr, privilegiado=priv))
+        return jsonify(build_dashboard_sdr(ano, mes, request.args.get("team"), request.args.get("sdr"),
+                                           privilegiado=eh_privilegiado(request)))
     except Exception as e:
-        import traceback
-        traceback.print_exc()
-        return jsonify({"error": str(e)}), 500
-
-
-LIGACOES_TTL = 120   # ligacoes do dia mudam toda hora; cache curto
-
-
-def ligacoes_do_dia(time_filtro="SNIPER"):
-    """{nome: ligacoes feitas HOJE} dos SDRs + lideranca do time. "Hoje" = dia de Brasilia;
-    conta type=call, done=true cuja marcacao como feita (marked_as_done_time, UTC -> Brasilia)
-    cai hoje (sem esse campo, vale a due_date de hoje). Zera sozinho a cada dia."""
-    agora_br = datetime.utcnow() + timedelta(hours=AJUSTE_FUSO_HORAS)
-    hoje = agora_br.date()
-    chave = ("ligacoes", time_filtro, hoje.isoformat())
-    with _lock:
-        c = _cache["acts"].get(chave)
-        if c and time.time() - c["ts"] < LIGACOES_TTL:
-            return c["dados"]
-    users, _ = carrega_meta()
-    sdrs, _lideres = sdrs_e_lideres(hoje.year, hoje.month)
-    nomes = [n for n, t in sdrs.items() if str(t).upper() == time_filtro.upper()]
-    # inicio do dia de Brasilia em UTC (00:00 BR = 03:00Z)
-    desde = datetime(hoje.year, hoje.month, hoje.day) - timedelta(hours=AJUSTE_FUSO_HORAS)
-    desde_iso = desde.strftime("%Y-%m-%dT%H:%M:%SZ")
-
-    def conta(nome):
-        uid = users.get(nome.strip().lower())
-        if not uid:
-            return nome, None
-        n = 0
-        for a in client.get_calls_done(uid, desde_iso):
-            m = _parse_dt_pipedrive(a.get("marked_as_done_time"))
-            dia = (m + timedelta(hours=AJUSTE_FUSO_HORAS)).date() if m else None
-            if dia is None and a.get("due_date"):
-                try:
-                    dia = datetime.strptime(a["due_date"], "%Y-%m-%d").date()
-                except ValueError:
-                    dia = None
-            if dia == hoje:
-                n += 1
-        return nome, n
-
-    from concurrent.futures import ThreadPoolExecutor
-    por_pessoa = {}
-    with ThreadPoolExecutor(max_workers=4) as ex:
-        for nome, n in ex.map(conta, nomes):
-            if n is not None:
-                por_pessoa[nome] = n
-    dados = {"date": hoje.isoformat(), "team": time_filtro,
-             "por_pessoa": por_pessoa, "total": sum(por_pessoa.values())}
-    with _lock:
-        _cache["acts"][chave] = {"ts": time.time(), "dados": dados}
-    return dados
+        return _erro(e)
 
 
 @app.route("/api/ligacoes_hoje")
@@ -1929,14 +1212,7 @@ def api_ligacoes_hoje():
     try:
         return jsonify(ligacoes_do_dia(team))
     except Exception as e:
-        import traceback
-        traceback.print_exc()
-        with _lock:
-            velho = [c for k, c in _cache["acts"].items() if isinstance(k, tuple) and k and k[0] == "ligacoes"]
-        if velho:
-            return jsonify(max(velho, key=lambda c: c["ts"])["dados"])
-        return jsonify({"error": str(e)}), 500
-
+        return _erro(e)
 
 
 @app.route("/api/auditoria_sdr")
@@ -1944,18 +1220,11 @@ def api_auditoria_sdr():
     # auditoria revela pra quem cada SDR marca -> so privilegiado
     if not eh_privilegiado(request):
         return jsonify({"error": "acesso restrito", "sdrs": []}), 401
-    mes = request.args.get("month", "")
+    ano, mes = parse_ym(request.args.get("month", ""))
     try:
-        year, month = map(int, mes.split("-"))
-    except Exception:
-        hoje = date.today()
-        year, month = hoje.year, hoje.month
-    try:
-        return jsonify(build_auditoria_sdr(year, month))
+        return jsonify(build_auditoria_sdr(ano, mes))
     except Exception as e:
-        import traceback
-        traceback.print_exc()
-        return jsonify({"error": str(e)}), 500
+        return _erro(e)
 
 
 @app.route("/api/evolucao_sdr")
@@ -1968,17 +1237,13 @@ def api_evolucao_sdr():
         return jsonify({"error": "informe ?sdr=<nome>"}), 400
     desde = request.args.get("desde", "").strip()
     if not desde:
-        # default: segunda-feira desta semana
-        hoje = date.today()
-        segunda = hoje - timedelta(days=hoje.weekday())
-        desde = segunda.isoformat()
-    ate = request.args.get("ate", "").strip() or None  # opcional -- sem isso, vai ate agora
+        hoje = fuso.hoje_brasil()                       # default: segunda-feira desta semana
+        desde = (hoje - timedelta(days=hoje.weekday())).isoformat()
+    ate = request.args.get("ate", "").strip() or None   # opcional -- sem isso, vai ate hoje
     try:
         return jsonify(evolucao_horario_sdr(nome_sdr, desde, ate))
     except Exception as e:
-        import traceback
-        traceback.print_exc()
-        return jsonify({"error": str(e)}), 500
+        return _erro(e)
 
 
 @app.route("/api/taxas_escala")
@@ -1986,19 +1251,7 @@ def api_taxas_escala():
     # reunioes fora do horario de escala -- dado operacional interno, so privilegiado
     if not eh_privilegiado(request):
         return jsonify({"error": "acesso restrito"}), 401
-    mes = request.args.get("month", "")
-    try:
-        year, month = map(int, mes.split("-"))
-    except Exception:
-        hoje = date.today()
-        year, month = hoje.year, hoje.month
-
-    # filtro opcional "De"/"Ate" (YYYY-MM-DD): restringe a data em que a
-    # reuniao foi REALIZADA a esse intervalo, mas mantem a condicao de
-    # "leads do mes" (Data da ultima aplicacao) pelo mes/ano selecionado
-    # acima -- pedido pelo usuario pra ver so as reunioes fora da escala de
-    # um recorte de dias (ex.: 21/09/2026 a 30/09/2026) sem perder a
-    # condicao de leads desse mes.
+    ano, mes = parse_ym(request.args.get("month", ""))
     date_de = date_ate = None
     de_str = request.args.get("de", "").strip()
     ate_str = request.args.get("ate", "").strip()
@@ -2008,13 +1261,10 @@ def api_taxas_escala():
             date_ate = datetime.strptime(ate_str, "%Y-%m-%d").date()
         except Exception:
             date_de = date_ate = None
-
     try:
-        return jsonify(reunioes_fora_da_escala(year, month, date_de, date_ate))
+        return jsonify(reunioes_fora_da_escala(ano, mes, date_de, date_ate))
     except Exception as e:
-        import traceback
-        traceback.print_exc()
-        return jsonify({"error": str(e)}), 500
+        return _erro(e)
 
 
 @app.route("/api/debug_deals_owner")
@@ -2080,6 +1330,37 @@ def analisa_log_distribuicao(rows):
     return out
 
 
+def status_reuniao_mais_recente_do_deal(deal_id):
+    """Desfecho mais ATUAL da reuniao de um negocio (Distribuicao de Leads): a atividade
+    meeting/no_show/reagendamento mais recente do negocio (qualquer responsavel), com o status da ST1.
+    Cache curto por deal_id."""
+    with _lock:
+        c = _cache["acts"].get(("status_deal", deal_id))
+        if c and time.time() - c["ts"] < TTL:
+            return c["status"]
+    try:
+        acts = client.get_activities_by_deal(deal_id)
+    except Exception:
+        acts = []
+    recente, recente_chave = None, None
+    for a in acts:
+        mom = fuso.atividade_momento(a)
+        dia = fuso.atividade_dia(a)
+        if dia is None:
+            continue
+        chave = (mom.replace(tzinfo=None) if mom else datetime(dia.year, dia.month, dia.day))
+        if recente_chave is None or chave > recente_chave:
+            recente_chave, recente = chave, a
+    if recente is None:
+        status = "—"
+    else:
+        s = st1.status(recente)
+        status = "No Show" if s == "No-show" else (s or "—")
+    with _lock:
+        _cache["acts"][("status_deal", deal_id)] = {"ts": time.time(), "status": status}
+    return status
+
+
 @app.route("/api/distribuicao_resumo")
 def api_distribuicao_resumo():
     """Resumo por colaborador de quantos leads deveria receber, ja
@@ -2103,7 +1384,7 @@ def api_distribuicao_resumo():
         # entao so a ULTIMA linha (maior DATA_HORA) de cada deal_id no dia
         # representa o resultado final; as anteriores sao so tentativas e
         # NAO devem contar.
-        hoje = date.today()
+        hoje = fuso.hoje_brasil()
         # ALTERADO=Sim (DATA_HORA de hoje): o negocio SAIU do COLABORADOR da
         # linha e foi para NOVO_PROPRIETARIO. Conta por colaborador de origem
         # e guarda pra quem foi. Cada (deal, colaborador, destino) conta uma vez.
@@ -2160,7 +1441,7 @@ def api_distribuicao_log():
     try:
         year, month = map(int, mes.split("-"))
     except Exception:
-        hoje = date.today()
+        hoje = fuso.hoje_brasil()
         year, month = hoje.year, hoje.month
     try:
         rows = carrega_distribuicao_log()
@@ -2302,7 +1583,7 @@ def index():
 
 
 # rotas de API "de verdade" que existem
-_API_ROTAS = ("/api/init", "/api/closers", "/api/dashboard", "/api/sdrs", "/api/dashboard_sdr", "/api/login", "/api/me", "/api/auditoria_sdr", "/api/evolucao_sdr", "/api/debug_activity", "/api/debug_deal", "/api/debug_deal_compare", "/api/debug_deals_owner", "/api/distribuicao_resumo", "/api/distribuicao_log", "/api/taxas_escala", "/api/ligacoes_hoje")
+_API_ROTAS = ("/crn-versao", "/api/init", "/api/closers", "/api/dashboard", "/api/sdrs", "/api/dashboard_sdr", "/api/login", "/api/me", "/api/auditoria_sdr", "/api/evolucao_sdr", "/api/debug_activity", "/api/debug_deal", "/api/debug_deal_compare", "/api/debug_deals_owner", "/api/distribuicao_resumo", "/api/distribuicao_log", "/api/taxas_escala", "/api/ligacoes_hoje")
 
 
 @app.errorhandler(404)
@@ -2320,5 +1601,4 @@ application = app
 handler = app
 
 if __name__ == "__main__":
-    threading.Thread(target=refresh_current_loop, daemon=True).start()
     app.run(debug=True, port=5000, use_reloader=False)

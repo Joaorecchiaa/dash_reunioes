@@ -256,7 +256,7 @@ def funis_pipedrive():
 
 
 # Squads exibidos no painel (pedido do painel, nao regra da CRN). So quem esta nesses squads na Colab do mes aparece.
-TIMES_EXIBIDOS = {t.strip().upper() for t in os.environ.get("TIMES_EXIBIDOS", "SNIPER,ELITE").split(",") if t.strip()}
+TIMES_EXIBIDOS = {t.strip().upper() for t in os.environ.get("TIMES_EXIBIDOS", "SNIPER,ELITE,OLYMPUS").split(",") if t.strip()}
 
 
 def _licenciado(squad):

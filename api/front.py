@@ -184,7 +184,7 @@ HTML = r"""<!DOCTYPE html>
   table.neg-tbl td, table.neg-tbl th { overflow:hidden; text-overflow:ellipsis; }
   table.neg-tbl col.c-hora { width:60px; }
   table.neg-tbl col.c-id { width:120px; }
-  table.neg-tbl col.c-status { width:130px; }
+  table.neg-tbl col.c-status { width:150px; }
   /* linha vertical separando ID do Negocio (2a coluna), alinhada nas duas tabelas */
   table.neg-tbl th:nth-child(2), table.neg-tbl td:nth-child(2) { border-right:1px solid var(--border); }
   .status-badge { display:inline-block; padding:2px 8px; border-radius:10px; font-size:10px; font-weight:700;
@@ -534,7 +534,7 @@ function dealBadge(status) {
 
 // ---- filtro por status (negocios do dia / do mes / dia a dia) ----
 let filtroStatus = '';
-const STATUS_OPCOES = ['Planejada','Feita','Validada','Não validada','No Show','Reagendada','Vencida'];
+const STATUS_OPCOES = ['Planejada','Feita','Validada','Feita/Não validada','No Show','Reagendada','Vencida'];
 function filtroStatusHtml() {
   const ops = ['<option value="">Todos os status</option>'].concat(
     STATUS_OPCOES.map(s => `<option value="${s}"${s === filtroStatus ? ' selected' : ''}>${s}</option>`));
@@ -555,7 +555,7 @@ const porNome = (a, b) => String(a.title || '').localeCompare(String(b.title || 
 
 function statusBadge(status) {
   const mapa = {
-    'Planejada': 'st-planejada', 'Feita': 'st-feita', 'Validada': 'st-validada', 'Não validada': 'st-vencida',
+    'Planejada': 'st-planejada', 'Feita': 'st-feita', 'Validada': 'st-validada', 'Feita/Não validada': 'st-vencida',
     'No Show': 'st-noshow', 'Reagendada': 'st-reagendada', 'Vencida': 'st-vencida',
   };
   const cls = mapa[status] || 'st-planejada';

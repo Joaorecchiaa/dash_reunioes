@@ -380,9 +380,7 @@ def dados_periodo(ano, mes):
 def carimbo(ano=None, mes=None, extra=""):
     agora = fuso.agora_brasil()
     partes = [f"CRN {crn.versao()}",
-              "Eixo: data da reunião (due_date + hora, Brasília)",
-              "Squads: " + " e ".join(sorted(TIMES_EXIBIDOS)),
-              "Recorte: quem tem meta no mês (Metas)"]
+              "Squads: " + " e ".join(sorted(TIMES_EXIBIDOS))]
     if extra:
         partes.append(extra)
     partes.append("Atualizado: " + agora.strftime("%d/%m/%Y %H:%M"))

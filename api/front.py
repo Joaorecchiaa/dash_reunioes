@@ -1150,8 +1150,9 @@ async function carregaLigacoesSdr(data, box) {
     const nDias = new Date(d.year, d.month, 0).getDate();
     const deVal = $('f-de').value, ateVal = $('f-ate').value;
     const mesStr = d.year + '-' + String(d.month).padStart(2, '0');
-    let ini, fim, rot;
+    let ini, fim, rot, comPeriodo = false;
     if (deVal && ateVal && deVal <= ateVal && deVal.slice(0, 7) === mesStr && ateVal.slice(0, 7) === mesStr) {
+      comPeriodo = true;
       ini = parseInt(deVal.slice(8, 10), 10); fim = parseInt(ateVal.slice(8, 10), 10);
       rot = 'Período ' + deVal.slice(8, 10) + '/' + deVal.slice(5, 7) + ' a ' + ateVal.slice(8, 10) + '/' + ateVal.slice(5, 7);
     } else {
@@ -1165,6 +1166,15 @@ async function carregaLigacoesSdr(data, box) {
       return { nome, time: d.pessoas[nome].time, n, m, nm, mm };
     });
     const tot = linhas.reduce((t, l) => ({ n: t.n + l.n, m: t.m + l.m, nm: t.nm + l.nm, mm: t.mm + l.mm }), { n: 0, m: 0, nm: 0, mm: 0 });
+    // destaques do topo: cards do dia/período e faixa do total (período ou mês)
+    const kp = $('root-sdr').querySelector('.kpis');
+    if (kp) kp.insertAdjacentHTML('beforeend',
+      `<div class="kpi"><div class="lbl">Ligações</div><div class="val">${tot.n}</div></div>
+       <div class="kpi"><div class="lbl">Ligação/MicroSIP</div><div class="val">${tot.m}</div></div>`);
+    const ms = $('root-sdr').querySelector('.month-strip');
+    if (ms) ms.insertAdjacentHTML('beforeend',
+      `<span class="ms-item">Ligações <b>${comPeriodo ? tot.n : tot.nm}</b></span>
+       <span class="ms-item">Ligação/MicroSIP <b>${comPeriodo ? tot.m : tot.mm}</b></span>`);
     box.innerHTML = `<div class="neg-box" style="margin-top:14px"><div class="nb-title">Ligações dos SDRs — ${rot}</div>
       <div class="muted" style="margin-bottom:8px">Ligação = atividade call feita (AT1) registrada pelo SDR · Ligação/MicroSIP = call feita com o assunto padrão "Ligação efetuada via Voip do Brasil" (AT3).</div>
       <table><tr><th class="l">SDR</th><th class="l">Time</th><th>Ligação</th><th>Ligação/MicroSIP</th><th>Total</th><th>Mês: Ligação</th><th>Mês: MicroSIP</th><th>Mês: Total</th></tr>

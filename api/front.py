@@ -1177,9 +1177,9 @@ async function carregaLigacoesSdr(data, box) {
        <span class="ms-item">Ligação/MicroSIP <b>${comPeriodo ? tot.m : tot.mm}</b></span>`);
     box.innerHTML = `<div class="neg-box" style="margin-top:14px"><div class="nb-title">Ligações dos SDRs — ${rot}</div>
       <div class="muted" style="margin-bottom:8px">Ligação = atividade call feita (AT1) registrada pelo SDR · Ligação/MicroSIP = call feita com o assunto padrão "Ligação efetuada via Voip do Brasil" (AT3).</div>
-      <table><tr><th class="l">SDR</th><th class="l">Time</th><th>Ligação</th><th>Ligação/MicroSIP</th><th>Total</th><th>Mês: Ligação</th><th>Mês: MicroSIP</th><th>Mês: Total</th></tr>
-      ${linhas.map(l => `<tr><td class="l">${l.nome}</td><td class="l">${l.time}</td><td>${l.n}</td><td>${l.m}</td><td><b>${l.n + l.m}</b></td><td>${l.nm}</td><td>${l.mm}</td><td><b>${l.nm + l.mm}</b></td></tr>`).join('')}
-      <tr><td class="l"><b>Total</b></td><td></td><td><b>${tot.n}</b></td><td><b>${tot.m}</b></td><td><b>${tot.n + tot.m}</b></td><td><b>${tot.nm}</b></td><td><b>${tot.mm}</b></td><td><b>${tot.nm + tot.mm}</b></td></tr></table></div>`;
+      <table><tr><th class="l">SDR</th><th class="l">Time</th><th>Ligação</th><th>Ligação/MicroSIP</th><th>Total</th></tr>
+      ${linhas.map(l => `<tr><td class="l">${l.nome}</td><td class="l">${l.time}</td><td>${l.n}</td><td>${l.m}</td><td><b>${l.n + l.m}</b></td></tr>`).join('')}
+      <tr><td class="l"><b>Total</b></td><td></td><td><b>${tot.n}</b></td><td><b>${tot.m}</b></td><td><b>${tot.n + tot.m}</b></td></tr></table></div>`;
   } catch (e) {
     box.innerHTML = '<div class="warn" style="margin-top:14px">Falha ao buscar ligações: ' + e + '</div>';
   }

@@ -739,7 +739,7 @@ function grfMonta(prefix) {
   const c = GRF_CTX[prefix], e = GRF_EST[prefix];
   const box = document.getElementById('grf-' + prefix);
   if (!c || !box) return;
-  const sts = GRF_STATUS.filter(s => s[0] !== 'validada' || c.comValidada).map(s => s[0] === 'planned' && c.comValidada ? [s[0], 'Agendadas', s[2]] : s);
+  const sts = GRF_STATUS.filter(s => s[0] !== 'validada' || c.comValidada).map(s => s);
   [...e.status].forEach(k => { if (!sts.some(s => s[0] === k)) e.status.delete(k); });
   const sel = new Set(e.pessoas ? c.nomes.filter(n => e.pessoas.has(n)) : c.nomes);
   document.getElementById('grf-' + prefix + '-st').innerHTML = sts.map(s =>
@@ -813,8 +813,8 @@ function renderGenerico(data, cfg) {
   $('updated').innerText = 'Atualizado: ' + new Date(data.generated_at).toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' });
   $('carimbo').innerText = (data.carimbo || '').replace(/\s*·\s*Atualizado:.*$/, '');
   $('auto').innerText = (cfg.ehAtual && cfg.ehAtual()) ? '● atualiza sozinho a cada ' + Math.round(REFRESH_MS/60000) + ' min' : '';
-  const lblPlan = cfg.comValidada ? 'Agendadas' : 'Planejadas';
-  const lblPlanAbrev = cfg.comValidada ? 'agend' : 'plan';
+  const lblPlan = 'Planejadas';
+  const lblPlanAbrev = 'plan';
   const periodo = periodoAtivoPara(data);
   const mt = periodo ? somaPeriodo(periodo, d => d.days) : data.month_total;
   const rotuloTotal = periodo
@@ -1080,7 +1080,7 @@ function renderGenerico(data, cfg) {
   }
   const multiMes = periodo && periodo.segs.length > 1;
   html += `<details class="diaria"><summary>Dia a dia — todos os times (${rotuloMes})${priv ? ' · clique num dia para ver as reuniões' : ''}</summary><div class="inner">
-    <table><tr>${priv ? '<th style="width:24px"></th>' : ''}<th class="l">Dia</th><th>${cfg.comValidada ? 'Agendadas' : 'Planejado'}</th><th>Feitas</th>${cfg.comValidada ? '<th>Validadas</th>' : ''}<th>Não validadas</th><th>No Show</th><th>Reagendadas</th></tr>`;
+    <table><tr>${priv ? '<th style="width:24px"></th>' : ''}<th class="l">Dia</th><th>Planejadas</th><th>Feitas</th>${cfg.comValidada ? '<th>Validadas</th>' : ''}<th>Não validadas</th><th>No Show</th><th>Reagendadas</th></tr>`;
 
   for (const it0 of diasLista) {
     const row = it0.row, itens = priv ? it0.itens : [];
@@ -1133,6 +1133,46 @@ function renderSdr(data) {
     rootId: 'root-sdr', label: 'SDR', comCriador: false, idPrefix: 'sr',
     ehAtual: null, comValidada: true,
   });
+  const box = document.createElement('div');
+  box.id = 'blk-ligacoes';
+  $('root-sdr').appendChild(box);
+  carregaLigacoesSdr(data, box);
+}
+
+// Bloco "Ligações dos SDRs": ligação normal (call) x Ligação/MicroSIP (call + assunto padrão), no mesmo recorte dos blocos de cima
+async function carregaLigacoesSdr(data, box) {
+  box.innerHTML = '<div class="muted" style="margin-top:14px">Buscando ligações…</div>';
+  try {
+    const p = new URLSearchParams({ month: $('f-mes').value, team: $('f-time').value, sdr: $('f-closer').value });
+    const res = await fetch('/api/ligacoes_sdr?' + p.toString(), { headers: authHeaders() });
+    const d = await res.json();
+    if (d.error) { box.innerHTML = '<div class="warn" style="margin-top:14px">Ligações: ' + d.error + '</div>'; return; }
+    const nDias = new Date(d.year, d.month, 0).getDate();
+    const deVal = $('f-de').value, ateVal = $('f-ate').value;
+    const mesStr = d.year + '-' + String(d.month).padStart(2, '0');
+    let ini, fim, rot;
+    if (deVal && ateVal && deVal <= ateVal && deVal.slice(0, 7) === mesStr && ateVal.slice(0, 7) === mesStr) {
+      ini = parseInt(deVal.slice(8, 10), 10); fim = parseInt(ateVal.slice(8, 10), 10);
+      rot = 'Período ' + deVal.slice(8, 10) + '/' + deVal.slice(5, 7) + ' a ' + ateVal.slice(8, 10) + '/' + ateVal.slice(5, 7);
+    } else {
+      ini = fim = Math.min(diaSelecionado() || 1, nDias);
+      rot = 'Dia ' + String(ini).padStart(2, '0') + '/' + String(d.month).padStart(2, '0');
+    }
+    const soma = (dias, a, b) => { let n = 0, m = 0; for (let k = a; k <= b; k++) { const x = dias[k]; if (x) { n += x.n; m += x.m; } } return [n, m]; };
+    const linhas = Object.keys(d.pessoas).sort().map(nome => {
+      const dias = d.pessoas[nome].days;
+      const [n, m] = soma(dias, ini, fim), [nm, mm] = soma(dias, 1, nDias);
+      return { nome, time: d.pessoas[nome].time, n, m, nm, mm };
+    });
+    const tot = linhas.reduce((t, l) => ({ n: t.n + l.n, m: t.m + l.m, nm: t.nm + l.nm, mm: t.mm + l.mm }), { n: 0, m: 0, nm: 0, mm: 0 });
+    box.innerHTML = `<div class="neg-box" style="margin-top:14px"><div class="nb-title">Ligações dos SDRs — ${rot}</div>
+      <div class="muted" style="margin-bottom:8px">Ligação = atividade call feita (AT1) registrada pelo SDR · Ligação/MicroSIP = call feita com o assunto padrão "Ligação efetuada via Voip do Brasil" (AT3).</div>
+      <table><tr><th class="l">SDR</th><th class="l">Time</th><th>Ligação</th><th>Ligação/MicroSIP</th><th>Total</th><th>Mês: Ligação</th><th>Mês: MicroSIP</th><th>Mês: Total</th></tr>
+      ${linhas.map(l => `<tr><td class="l">${l.nome}</td><td class="l">${l.time}</td><td>${l.n}</td><td>${l.m}</td><td><b>${l.n + l.m}</b></td><td>${l.nm}</td><td>${l.mm}</td><td><b>${l.nm + l.mm}</b></td></tr>`).join('')}
+      <tr><td class="l"><b>Total</b></td><td></td><td><b>${tot.n}</b></td><td><b>${tot.m}</b></td><td><b>${tot.n + tot.m}</b></td><td><b>${tot.nm}</b></td><td><b>${tot.mm}</b></td><td><b>${tot.nm + tot.mm}</b></td></tr></table></div>`;
+  } catch (e) {
+    box.innerHTML = '<div class="warn" style="margin-top:14px">Falha ao buscar ligações: ' + e + '</div>';
+  }
 }
 
 function ligaCriador() {

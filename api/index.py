@@ -80,6 +80,10 @@ from crn.regras import (m6_reunioes_sdr as m6, rc1_reunioes_closer as rc1, st1_s
                         h1_hierarquia as h1, l3_lead_time_agendamento as l3,
                         lp1_leads_sdr as lp1, at1_ligacoes as at1, op2_fora_da_escala as op2)
 from crn.regras._atividades import do_tipo, por_responsavel
+try:                                    # AT3 (Validar): só existe na CRN depois que o Rodrigo subir para a main
+    from crn.regras import at3_ligacoes_microsip as at3
+except ImportError:
+    at3 = None
 from crn.regras._comum import deduplicar, criada_pela_ia
 
 app = Flask(__name__, static_folder=None)
@@ -861,25 +865,63 @@ def reunioes_fora_da_escala(ano, mes, date_de=None, date_ate=None):
 LIGACOES_TTL = 120   # ligacoes do dia mudam toda hora; cache curto
 
 
-def ligacoes_do_dia(time_filtro="SNIPER"):
-    """{nome: ligacoes feitas HOJE} dos SDRs + lideranca do time. Hoje = dia de Brasilia;
-    AT1: type call, feita, com negocio, no dia do due_date (Brasilia), do responsavel."""
+def _exige_at3():
+    if at3 is None:
+        raise RuntimeError("A regra AT3 (Ligação/MicroSIP) ainda não está na main da CRN. Peça ao Rodrigo para subir.")
+
+
+def ligacoes_do_dia(time_filtro="SNIPER", tipo="todas"):
+    """{nome: ligacoes feitas HOJE} dos SDRs do time. Hoje = dia de Brasilia.
+    tipo: 'todas' (AT1), 'microsip' (AT3) ou 'normal' (AT1 sem MicroSIP)."""
+    if tipo not in ("todas", "microsip", "normal"):
+        tipo = "todas"
+    if tipo != "todas":
+        _exige_at3()
     hoje = fuso.hoje_brasil()
     ctx = contexto_mes(hoje.year, hoje.month)
     nomes = [n for n, t in ctx["sdrs"].items() if str(t).upper() == time_filtro.upper()]
 
     def buscar():
-        acts = pipedrive.atividades_do_periodo(hoje, hoje, tipos=[tipo_atividade("ligacao")], done=True)
-        return at1.ligacoes_feitas(acts, hoje, hoje)
-    por_resp = _cache_seguro(("ligacoes", hoje.isoformat()), LIGACOES_TTL, buscar)
+        return pipedrive.atividades_do_periodo(hoje, hoje, tipos=[tipo_atividade("ligacao")], done=True)
+    acts = _cache_seguro(("ligacoes_acts", hoje.isoformat()), LIGACOES_TTL, buscar)
+    fn = {"todas": at1.ligacoes_feitas, "microsip": getattr(at3, "ligacoes_microsip", None),
+          "normal": getattr(at3, "ligacoes_normais", None)}[tipo]
+    por_resp = fn(acts, hoje, hoje)
     por_pessoa = {}
     for nome in nomes:
         uid = ctx["id_por_nome"].get(norm(nome))
         if uid is not None:
             por_pessoa[nome] = len(por_resp.get(uid, []))
-    return {"date": hoje.isoformat(), "team": time_filtro, "por_pessoa": por_pessoa,
-            "total": sum(por_pessoa.values()), "carimbo": carimbo(extra="Ligações: AT1 (due_date em Brasília)")}
+    rot = {"todas": "AT1", "microsip": "AT3 (Ligação/MicroSIP)", "normal": "AT1 sem MicroSIP"}[tipo]
+    return {"date": hoje.isoformat(), "team": time_filtro, "tipo": tipo, "por_pessoa": por_pessoa,
+            "total": sum(por_pessoa.values()), "carimbo": carimbo(extra=f"Ligações: {rot} (due_date em Brasília)")}
 
+
+def ligacoes_sdr_mes(ano, mes, time_filtro=None, sdr_filtro=None):
+    """Por SDR e por dia do mes: ligacoes normais (AT1 sem MicroSIP) e Ligacao/MicroSIP (AT3)."""
+    _exige_at3()
+    ctx = contexto_mes(ano, mes)
+    ini = date(ano, mes, 1)
+    fim = date(ano, mes, calendar.monthrange(ano, mes)[1])
+
+    def buscar():
+        return pipedrive.atividades_do_periodo(ini, fim, tipos=[tipo_atividade("ligacao")], done=True)
+    acts = _cache_seguro(("ligacoes_mes", ano, mes), LIGACOES_TTL * 2, buscar)
+    normais = at3.ligacoes_normais(acts, ini, fim)
+    micro = at3.ligacoes_microsip(acts, ini, fim)
+    pessoas = {}
+    for nome, t in _filtra(ctx["sdrs"], time_filtro, sdr_filtro).items():
+        uid = ctx["id_por_nome"].get(norm(nome))
+        if uid is None:
+            continue
+        dias = {}
+        for chave, base in (("n", normais), ("m", micro)):
+            for a in base.get(uid, []):
+                dia = fuso.atividade_dia(a).day
+                dias.setdefault(dia, {"n": 0, "m": 0})[chave] += 1
+        pessoas[nome] = {"time": str(t), "days": dias}
+    return {"year": ano, "month": mes, "pessoas": pessoas,
+            "carimbo": carimbo(extra="Ligações: AT1 separada em normais e AT3 (Ligação/MicroSIP)")}
 
 
 def _parse_data_flex(texto):
@@ -1216,7 +1258,16 @@ def api_dashboard_sdr():
 def api_ligacoes_hoje():
     team = request.args.get("team") or "SNIPER"
     try:
-        return jsonify(ligacoes_do_dia(team))
+        return jsonify(ligacoes_do_dia(team, request.args.get("tipo") or "todas"))
+    except Exception as e:
+        return _erro(e)
+
+
+@app.route("/api/ligacoes_sdr")
+def api_ligacoes_sdr():
+    ano, mes = parse_ym(request.args.get("month", ""))
+    try:
+        return jsonify(ligacoes_sdr_mes(ano, mes, request.args.get("team") or None, request.args.get("sdr") or None))
     except Exception as e:
         return _erro(e)
 
@@ -1623,7 +1674,7 @@ def api_me():
 # wallpaper SNIPER (arquivo separado, fora do projeto) leia o placar do dia
 @app.after_request
 def cors_leitura(resp):
-    if request.method == "GET" and request.path in ("/api/dashboard_sdr", "/api/dashboard", "/api/ligacoes_hoje"):
+    if request.method == "GET" and request.path in ("/api/dashboard_sdr", "/api/dashboard", "/api/ligacoes_hoje", "/api/ligacoes_sdr"):
         resp.headers["Access-Control-Allow-Origin"] = "*"
     return resp
 
@@ -1637,7 +1688,7 @@ def index():
 
 
 # rotas de API "de verdade" que existem
-_API_ROTAS = ("/crn-versao", "/api/init", "/api/closers", "/api/dashboard", "/api/sdrs", "/api/dashboard_sdr", "/api/login", "/api/me", "/api/auditoria_sdr", "/api/evolucao_sdr", "/api/debug_activity", "/api/debug_m6", "/api/debug_deal", "/api/debug_deal_compare", "/api/debug_deals_owner", "/api/distribuicao_resumo", "/api/distribuicao_log", "/api/taxas_escala", "/api/ligacoes_hoje")
+_API_ROTAS = ("/crn-versao", "/api/init", "/api/closers", "/api/dashboard", "/api/sdrs", "/api/dashboard_sdr", "/api/login", "/api/me", "/api/auditoria_sdr", "/api/evolucao_sdr", "/api/debug_activity", "/api/debug_m6", "/api/debug_deal", "/api/debug_deal_compare", "/api/debug_deals_owner", "/api/distribuicao_resumo", "/api/distribuicao_log", "/api/taxas_escala", "/api/ligacoes_hoje", "/api/ligacoes_sdr")
 
 
 @app.errorhandler(404)

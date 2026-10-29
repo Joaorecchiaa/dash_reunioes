@@ -96,7 +96,8 @@ HTML = r"""<!DOCTYPE html>
   .grf-pessoas { max-height:96px; overflow:auto; padding:2px; }
   .grf-btn { font-size:11px; padding:2px 8px; border:1px solid var(--border); border-radius:6px; background:#fff; cursor:pointer; }
   .grf-leg { display:flex; flex-wrap:wrap; gap:4px 14px; font-size:11px; color:var(--muted); margin-top:6px; }
-  .grf-leg i { display:inline-block; width:14px; height:3px; margin-right:5px; vertical-align:middle; border-radius:2px; }
+  .grf-leg i { display:inline-block; width:11px; height:11px; margin-right:5px; vertical-align:middle; border-radius:2px; }
+  .grf-leg { font-size:12px; }
   .panel { background:var(--card); border:1px solid var(--border); border-radius:12px; padding:16px; margin-bottom:20px;
            box-shadow:none; }
   .panel h2 { font-size:14px; margin:0 0 12px; color:var(--gold-ink); text-transform:uppercase; letter-spacing:.5px; font-weight:700; }
@@ -750,45 +751,68 @@ function grfMonta(prefix) {
   cb.checked = e.soma;
   document.getElementById('grf-' + prefix + '-somalbl').className = 'grf-chip' + (e.soma ? ' on' : '');
 
-  // series
+  // modelo: grupos de colunas dentro de cada dia. Cor = status quando há mais de um status;
+  // com um status só, cor = pessoa.
   const stAtivos = sts.filter(s => e.status.has(s[0]));
   const pessoas = c.nomes.map((n, i) => ({ n, i })).filter(x => sel.has(x.n));
-  const series = [];
+  const curto = n => { const p = n.split(' '); const dup = pessoas.filter(x => x.n.split(' ')[0] === p[0]).length > 1; return dup && p[1] ? p[0] + ' ' + p[1][0] + '.' : p[0]; };
+  let grupos = [], legenda = '', dica = '';
   if (e.soma) {
-    for (const s of stAtivos) series.push({ nome: s[1], cor: s[2], dash: '', vals: c.dias.map(d => pessoas.reduce((t, p) => t + ((d.por[p.n] || {})[s[0]] || 0), 0)) });
-  } else {
-    for (const p of pessoas) stAtivos.forEach((s, si) => series.push({
-      nome: stAtivos.length > 1 ? p.n + ' · ' + s[1] : p.n, cor: grfCor(p.i, c.nomes.length), dash: GRF_DASH[si % GRF_DASH.length],
-      vals: c.dias.map(d => (d.por[p.n] || {})[s[0]] || 0) }));
+    grupos = [{ rot: '', bars: stAtivos.map(s => ({ nome: s[1], cor: s[2], vals: c.dias.map(d => pessoas.reduce((t, p) => t + ((d.por[p.n] || {})[s[0]] || 0), 0)) })) }];
+    legenda = stAtivos.map(s => `<span><i style="background:${s[2]}"></i>${s[1]}</span>`).join('');
+    dica = `Soma dos ${c.label.toLowerCase()}s selecionados · cada cor é um status`;
+  } else if (stAtivos.length > 1) {
+    grupos = pessoas.map(p => ({ rot: curto(p.n), bars: stAtivos.map(s => ({ nome: p.n + ' · ' + s[1], cor: s[2], vals: c.dias.map(d => (d.por[p.n] || {})[s[0]] || 0) })) }));
+    legenda = stAtivos.map(s => `<span><i style="background:${s[2]}"></i>${s[1]}</span>`).join('');
+    dica = pessoas.length > 1 ? `Cada cor é um status · cada grupo de colunas é um ${c.label.toLowerCase()} (nome embaixo)` : `Cada cor é um status`;
+  } else if (stAtivos.length === 1) {
+    grupos = [{ rot: '', bars: pessoas.map(p => ({ nome: p.n, cor: grfCor(p.i, c.nomes.length), vals: c.dias.map(d => (d.por[p.n] || {})[stAtivos[0][0]] || 0) })) }];
+    legenda = grupos[0].bars.map(b => `<span><i style="background:${b.cor}"></i>${b.nome}</span>`).join('');
+    dica = `Status: ${stAtivos[0][1]} · cada cor é um ${c.label.toLowerCase()}`;
   }
   const alvo = document.getElementById('grf-' + prefix + '-svg');
-  if (!series.length) { alvo.innerHTML = `<div class="muted" style="font-size:12px;padding:20px 0">Selecione ao menos um status e um ${c.label.toLowerCase()}.</div>`; document.getElementById('grf-' + prefix + '-leg').innerHTML = ''; return; }
-  const W = 1000, H = 300, L = 38, R = 12, T = 12, B = 28;
-  const max0 = Math.max(1, ...series.flatMap(s => s.vals));
+  if (!grupos.length || !grupos[0].bars.length) { alvo.innerHTML = `<div class="muted" style="font-size:12px;padding:20px 0">Selecione ao menos um status e um ${c.label.toLowerCase()}.</div>`; document.getElementById('grf-' + prefix + '-leg').innerHTML = ''; return; }
+  const G = grupos.length, S = grupos[0].bars.length;
+  const W = 1000, L = 38, R = 12, T = 18;
+  const n = c.dias.length;
+  const slot = (W - L - R) / Math.max(n, 1);
+  const gapDia = Math.min(14, slot * 0.2), gapGrupo = G > 1 ? Math.min(6, slot * 0.06) : 0;
+  const bw = Math.max(2, Math.min(26, (slot - gapDia - gapGrupo * (G - 1)) / (G * S)));
+  const larguraGrupo = bw * S;
+  const rotular = G > 1;
+  const girar = rotular && (larguraGrupo + gapGrupo) < 46;
+  const B = rotular ? (girar ? 78 : 44) : 28, H = 280 + B - 28;
+  const max0 = Math.max(1, ...grupos.flatMap(g => g.bars.flatMap(b => b.vals)));
   const passo = max0 <= 5 ? 1 : max0 <= 10 ? 2 : max0 <= 25 ? 5 : max0 <= 50 ? 10 : 20;
   const max = Math.ceil(max0 / passo) * passo;
-  const n = c.dias.length, k = series.length;
-  const slot = (W - L - R) / Math.max(n, 1);                 // largura de cada dia
-  const gap = Math.min(14, slot * 0.2);                       // respiro entre os dias
-  const bw = Math.max(2, Math.min(28, (slot - gap) / k));     // largura de cada coluna
   const y = v => T + (H - T - B) * (1 - v / max);
   let g = '';
   for (let v = 0; v <= max; v += passo) g += `<line x1="${L}" x2="${W - R}" y1="${y(v)}" y2="${y(v)}" stroke="#cbd5e1" stroke-width="1" stroke-dasharray="2 4"/><text x="${L - 6}" y="${y(v) + 4}" font-size="11" fill="#6b7280" text-anchor="end">${v}</text>`;
   for (let i = 1; i < n; i++) g += `<line x1="${L + i * slot}" x2="${L + i * slot}" y1="${T}" y2="${H - B}" stroke="#e2e8f0" stroke-width="1" stroke-dasharray="2 5"/>`;
   const cada = Math.ceil(n / 31);
-  c.dias.forEach((d, i) => { if (i % cada === 0) g += `<text x="${L + i * slot + slot / 2}" y="${H - 8}" font-size="10" fill="#6b7280" text-anchor="middle">${d.rot}</text>`; });
-  const comRotulo = bw >= 11;
-  series.forEach((s, j) => {
-    s.vals.forEach((v, i) => {
-      const bx = L + i * slot + (slot - bw * k) / 2 + j * bw;
-      const h = (H - T - B) * (v / max);
-      g += `<rect x="${bx.toFixed(1)}" y="${(y(v)).toFixed(1)}" width="${(bw - 1).toFixed(1)}" height="${Math.max(h, v > 0 ? 1 : 0).toFixed(1)}" rx="2" fill="${s.cor}" fill-opacity="0.9"><title>${s.nome} — dia ${c.dias[i].rot}: ${v}</title></rect>`;
-      if (comRotulo && v > 0) g += `<text x="${(bx + (bw - 1) / 2).toFixed(1)}" y="${(y(v) - 3).toFixed(1)}" font-size="10" font-weight="600" fill="#374151" text-anchor="middle">${v}</text>`;
+  const totalW = G * larguraGrupo + (G - 1) * gapGrupo;
+  const yDia = H - B + (rotular ? (girar ? 72 : 36) : 20);
+  c.dias.forEach((d, i) => { if (i % cada === 0) g += `<text x="${L + i * slot + slot / 2}" y="${H - 6}" font-size="11" font-weight="600" fill="#374151" text-anchor="middle">${d.rot}</text>`; });
+  const comNum = bw >= 9;
+  grupos.forEach((gr, gi) => {
+    c.dias.forEach((d, i) => {
+      const gx = L + i * slot + (slot - totalW) / 2 + gi * (larguraGrupo + gapGrupo);
+      if (rotular && i % cada === 0) {
+        const cx = gx + larguraGrupo / 2, ty = H - B + 12;
+        g += girar
+          ? `<text x="${cx.toFixed(1)}" y="${ty}" font-size="9" fill="#6b7280" text-anchor="end" transform="rotate(-60 ${cx.toFixed(1)} ${ty})">${gr.rot}</text>`
+          : `<text x="${cx.toFixed(1)}" y="${ty}" font-size="9" fill="#6b7280" text-anchor="middle">${gr.rot}</text>`;
+      }
+      gr.bars.forEach((bar, j) => {
+        const v = bar.vals[i], bx = gx + j * bw, h = (H - T - B) * (v / max);
+        g += `<rect x="${bx.toFixed(1)}" y="${y(v).toFixed(1)}" width="${(bw - 1).toFixed(1)}" height="${Math.max(h, v > 0 ? 1 : 0).toFixed(1)}" rx="2" fill="${bar.cor}" fill-opacity="0.92"><title>${bar.nome} — dia ${d.rot}: ${v}</title></rect>`;
+        if (comNum && v > 0) g += `<text x="${(bx + (bw - 1) / 2).toFixed(1)}" y="${(y(v) - 3).toFixed(1)}" font-size="10" font-weight="600" fill="#374151" text-anchor="middle">${v}</text>`;
+      });
     });
   });
-  alvo.innerHTML = `<svg viewBox="0 0 ${W} ${H}" style="width:100%;height:auto;max-height:360px">${g}</svg>`;
-  document.getElementById('grf-' + prefix + '-leg').innerHTML = series.length > 40 ? '' :
-    series.map(s => `<span><i style="background:${s.cor};height:10px;width:10px;border-radius:2px"></i>${s.nome}</span>`).join('');
+  alvo.innerHTML = `<svg viewBox="0 0 ${W} ${H}" style="width:100%;height:auto;max-height:420px">${g}</svg>`;
+  document.getElementById('grf-' + prefix + '-leg').innerHTML =
+    `<div style="width:100%;font-size:12px;color:#374151;margin-bottom:2px"><b>Como ler:</b> ${dica}. Passe o mouse numa coluna para ver o valor.</div>` + (legenda.length > 0 && grupos[0].bars.length <= 40 ? legenda : '');
 }
 
 document.addEventListener('change', ev => {

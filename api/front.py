@@ -767,21 +767,28 @@ function grfMonta(prefix) {
   const max0 = Math.max(1, ...series.flatMap(s => s.vals));
   const passo = max0 <= 5 ? 1 : max0 <= 10 ? 2 : max0 <= 25 ? 5 : max0 <= 50 ? 10 : 20;
   const max = Math.ceil(max0 / passo) * passo;
-  const n = c.dias.length;
-  const x = i => L + (n <= 1 ? (W - L - R) / 2 : i * (W - L - R) / (n - 1));
+  const n = c.dias.length, k = series.length;
+  const slot = (W - L - R) / Math.max(n, 1);                 // largura de cada dia
+  const gap = Math.min(14, slot * 0.2);                       // respiro entre os dias
+  const bw = Math.max(2, Math.min(28, (slot - gap) / k));     // largura de cada coluna
   const y = v => T + (H - T - B) * (1 - v / max);
   let g = '';
-  for (let v = 0; v <= max; v += passo) g += `<line x1="${L}" x2="${W - R}" y1="${y(v)}" y2="${y(v)}" stroke="#e5e7eb"/><text x="${L - 6}" y="${y(v) + 4}" font-size="11" fill="#6b7280" text-anchor="end">${v}</text>`;
+  for (let v = 0; v <= max; v += passo) g += `<line x1="${L}" x2="${W - R}" y1="${y(v)}" y2="${y(v)}" stroke="#cbd5e1" stroke-width="1" stroke-dasharray="2 4"/><text x="${L - 6}" y="${y(v) + 4}" font-size="11" fill="#6b7280" text-anchor="end">${v}</text>`;
+  for (let i = 1; i < n; i++) g += `<line x1="${L + i * slot}" x2="${L + i * slot}" y1="${T}" y2="${H - B}" stroke="#e2e8f0" stroke-width="1" stroke-dasharray="2 5"/>`;
   const cada = Math.ceil(n / 31);
-  c.dias.forEach((d, i) => { if (i % cada === 0) g += `<text x="${x(i)}" y="${H - 8}" font-size="10" fill="#6b7280" text-anchor="middle">${d.rot}</text>`; });
-  for (const s of series) {
-    const pts = s.vals.map((v, i) => `${x(i).toFixed(1)},${y(v).toFixed(1)}`).join(' ');
-    g += `<polyline points="${pts}" fill="none" stroke="${s.cor}" stroke-width="2" ${s.dash ? 'stroke-dasharray="' + s.dash + '"' : ''} stroke-linejoin="round"/>`;
-    s.vals.forEach((v, i) => { g += `<circle cx="${x(i).toFixed(1)}" cy="${y(v).toFixed(1)}" r="3.2" fill="${s.cor}"><title>${s.nome} — dia ${c.dias[i].rot}: ${v}</title></circle>`; });
-  }
+  c.dias.forEach((d, i) => { if (i % cada === 0) g += `<text x="${L + i * slot + slot / 2}" y="${H - 8}" font-size="10" fill="#6b7280" text-anchor="middle">${d.rot}</text>`; });
+  const comRotulo = bw >= 11;
+  series.forEach((s, j) => {
+    s.vals.forEach((v, i) => {
+      const bx = L + i * slot + (slot - bw * k) / 2 + j * bw;
+      const h = (H - T - B) * (v / max);
+      g += `<rect x="${bx.toFixed(1)}" y="${(y(v)).toFixed(1)}" width="${(bw - 1).toFixed(1)}" height="${Math.max(h, v > 0 ? 1 : 0).toFixed(1)}" rx="2" fill="${s.cor}" fill-opacity="0.9"><title>${s.nome} — dia ${c.dias[i].rot}: ${v}</title></rect>`;
+      if (comRotulo && v > 0) g += `<text x="${(bx + (bw - 1) / 2).toFixed(1)}" y="${(y(v) - 3).toFixed(1)}" font-size="10" font-weight="600" fill="#374151" text-anchor="middle">${v}</text>`;
+    });
+  });
   alvo.innerHTML = `<svg viewBox="0 0 ${W} ${H}" style="width:100%;height:auto;max-height:360px">${g}</svg>`;
   document.getElementById('grf-' + prefix + '-leg').innerHTML = series.length > 40 ? '' :
-    series.map(s => `<span><i style="background:${s.cor}"></i>${s.nome}</span>`).join('');
+    series.map(s => `<span><i style="background:${s.cor};height:10px;width:10px;border-radius:2px"></i>${s.nome}</span>`).join('');
 }
 
 document.addEventListener('change', ev => {

@@ -876,13 +876,17 @@ def reunioes_fora_da_escala(ano, mes, date_de=None, date_ate=None, liberados=Non
                 if len(exemplos) < 500:
                     exemplos.append(item(a, deal, "fim de semana" if fds else ""))
         entrada = saida = None
-        for (nn, _sub, dia_sem), (e, s_) in escala.items():
-            if nn == norm(nome) and dia_sem == fontes.DIAS[hoje.weekday()]:
+        semana = []
+        for (nn, sub_, dia_sem), (e, s_) in escala.items():
+            if nn != norm(nome):
+                continue
+            semana.append((fontes.DIAS.index(dia_sem), f"{dia_sem} · {sub_}: {e.strftime('%H:%M')}–{s_.strftime('%H:%M')}"))
+            if dia_sem == fontes.DIAS[hoje.weekday()] and entrada is None:
                 entrada, saida = e.strftime("%H:%M:%S"), s_.strftime("%H:%M:%S")
-                break
+        semana = [t for _, t in sorted(semana)]
         resultado.append({"nome": nome, "time": time_sdr, "lideranca": lideres.get(nome),
                           "entrada": entrada, "saida": saida, "total_mes": len(validadas), "avaliadas": avaliadas,
-                          "fora_da_escala": fora, "dias_liberados": liberadas, "motivos": motivos, "detalhe": detalhe,
+                          "fora_da_escala": fora, "dias_liberados": liberadas, "escala_semana": semana, "motivos": motivos, "detalhe": detalhe,
                           "pct_fora_escala": round(fora / avaliadas * 100, 1) if avaliadas else 0.0, "exemplos": exemplos})
     tv = sum(r["total_mes"] for r in resultado)
     ta = sum(r["avaliadas"] for r in resultado)

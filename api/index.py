@@ -794,14 +794,21 @@ def reunioes_fora_da_escala(ano, mes, date_de=None, date_ate=None):
     di, df = (date_de, date_ate) if (date_de and date_ate) else (P["ini"], P["fim"])
     reu = tipo_atividade("reuniao")
     por_criador = defaultdict(list)
+    diag = defaultdict(int)          # onde as reunioes ficam pelo caminho (para achar porque a tabela zera)
+    funis_sem_escala = defaultdict(int)
+    subareas = sorted({sub for (_n, sub, _d) in escala})
     for a in deduplicar([x for x in P["acts"] if x.get("type") == reu and _feita(x) and x.get("deal_id")]):
+        diag["feitas_com_deal"] += 1
         c = a.get("creator_user_id")
         c = c.get("id") if isinstance(c, dict) else c
         if c is None or criada_pela_ia(a):
+            diag["sem_criador_ou_ia"] += 1
             continue
         dia = fuso.atividade_dia(a)
         if dia and di <= dia <= df:
             por_criador[c].append(a)
+        else:
+            diag["fora_do_periodo"] += 1
 
     lideres = ctx["lideres"]
     resultado = []
@@ -818,15 +825,21 @@ def reunioes_fora_da_escala(ano, mes, date_de=None, date_ate=None):
         for a in por_criador.get(uid, []):
             deal = P["deals"].get(a.get("deal_id")) or {}
             ap, _ = fuso.ultima_aplicacao(cf(deal, campo("ultima_aplicacao")))
+            diag["criadas_por_sdr"] += 1
             if not fuso.no_mes(ap, ano, mes):
+                diag["aplicacao_fora_do_mes"] += 1
                 continue                                  # nao e "lead do mes" pela ultima aplicacao
             if P["status_do_deal"].get(a.get("deal_id")) == "nao":
+                diag["nao_validada"] += 1
                 continue                                  # so validadas (Sim ou vazio)
             funil = pipelines.get(deal.get("pipeline_id"), "")
             r = op2.fora_da_escala(a, escala, nome, funil) if not erro_escala else None
             if r is None:
                 sem_escala += 1
+                diag["sem_escala"] += 1
+                funis_sem_escala[funil or "(funil vazio)"] += 1
                 continue
+            diag["avaliadas"] += 1
             total += 1
             if r:
                 fora += 1
@@ -855,6 +868,7 @@ def reunioes_fora_da_escala(ano, mes, date_de=None, date_ate=None):
         "ano": ano, "mes": mes, "month_label": periodo_label,
         "escala_configurada": erro_escala is None and bool(escala), "erro_escala": erro_escala,
         "sdrs": resultado,
+        "diagnostico": {"etapas": dict(diag), "funis_sem_escala": dict(funis_sem_escala), "subareas_da_escala": subareas},
         "total": {"total_mes": tg, "fora_da_escala": fg, "pct_fora_escala": round(fg / tg * 100, 1) if tg else 0.0},
         "carimbo": carimbo(extra="Fora da escala: OP2 (nome + funil + dia da semana); sem escala no dia não entra na base"),
     }
@@ -1674,7 +1688,7 @@ def api_me():
 # wallpaper SNIPER (arquivo separado, fora do projeto) leia o placar do dia
 @app.after_request
 def cors_leitura(resp):
-    if request.method == "GET" and request.path in ("/api/dashboard_sdr", "/api/dashboard", "/api/ligacoes_hoje", "/api/ligacoes_sdr"):
+    if request.method == "GET" and request.path in ("/api/dashboard_sdr", "/api/dashboard", "/api/ligacoes_hoje", "/api/ligacoes_sdr", "/crn-versao"):
         resp.headers["Access-Control-Allow-Origin"] = "*"
     return resp
 

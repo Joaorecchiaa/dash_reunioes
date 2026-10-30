@@ -783,6 +783,15 @@ def _escala():
         return {}, str(e)
 
 
+def _subarea_da_sdr(escala, nome, time_sdr, dia):
+    """Subarea da escala a usar para a SDR naquele dia: a do time dela; se nao houver, a unica linha do dia."""
+    nn, dsem = norm(nome), fontes.DIAS[dia.weekday()]
+    subs = [sub for (n, sub, d) in escala if n == nn and d == dsem]
+    if norm(time_sdr) in subs:
+        return norm(time_sdr)
+    return subs[0] if len(subs) == 1 else None
+
+
 def _criador_id(a):
     """Quem criou a atividade (v2: creator_user_id; v1: created_by_user_id; pode vir como objeto)."""
     c = a.get("creator_user_id", a.get("created_by_user_id"))
@@ -843,10 +852,16 @@ def reunioes_fora_da_escala(ano, mes, date_de=None, date_ate=None):
                 guarda("aplicacao_fora_do_mes", item(a, deal, "última aplicação " + (ap.strftime("%d/%m/%Y") if ap else "vazia")))
                 continue
             funil = pipelines.get(deal.get("pipeline_id"), "")
-            r = op2.fora_da_escala(a, escala, nome, funil) if not erro_escala else None
+            r = None
+            if not erro_escala:
+                # TESTE (nao e a OP2 oficial): escala da propria SDR = nome + dia da semana + subarea do TIME dela,
+                # sem olhar o funil em que o negocio esta hoje. Sem a linha do time, vale a unica linha do dia.
+                criada = fuso.para_brasil(a.get("add_time"))
+                sub = _subarea_da_sdr(escala, nome, time_sdr, criada.date()) if criada else None
+                r = op2.fora_da_escala(a, escala, nome, sub) if sub is not None else None
             if r is None:
                 funis_sem_escala[funil or "(funil vazio)"] += 1
-                guarda("sem_escala", item(a, deal, "funil " + (funil or "vazio")))
+                guarda("sem_escala", item(a, deal, "sem linha de escala no dia (funil " + (funil or "vazio") + ")"))
                 continue
             avaliadas += 1
             if r:
@@ -875,7 +890,7 @@ def reunioes_fora_da_escala(ano, mes, date_de=None, date_ate=None):
         "sdrs": resultado,
         "diagnostico": {"funis_sem_escala": dict(funis_sem_escala), "subareas_da_escala": sorted({sub for (_n, sub, _d) in escala})},
         "total": {"total_mes": tv, "avaliadas": ta, "fora_da_escala": fg, "pct_fora_escala": round(fg / ta * 100, 1) if ta else 0.0},
-        "carimbo": carimbo(extra="Fora da escala: base = validadas M6; OP2 avalia quem criou (nome + funil + dia da semana)"),
+        "carimbo": carimbo(extra="Fora da escala (TESTE, não é a OP2 oficial): base = validadas M6; escala pelo time da SDR + dia da semana, sem olhar o funil"),
     }
 
 

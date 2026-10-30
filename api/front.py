@@ -1730,8 +1730,8 @@ function renderTaxasAba(resEscala, resDash, resEvolucoes, resNS, rangeNS, mesNS)
     if (!resEscala.escala_configurada) {
       html += `<div class="warn" style="margin-bottom:8px">A escala comercial ainda não está configurada (ESCALA_COMERCIAL_CSV_URL) — o total de reuniões do mês aparece, mas "fora da escala" fica zerado até isso ser configurado.</div>`;
     }
-    html += `<div class="muted" style="margin-bottom:8px">Conta, por SDR, quantas reuniões AGENDADAS, REALIZADAS neste mês e VALIDADAS (de leads/reaplicações também deste mês, pela "Data da última aplicação") ela mesma agendou FORA do horário de trabalho dela na escala comercial (antes da entrada ou depois da saída). Preenchendo "De" e "Até" no cabeçalho, restringe pelo dia em que a reunião foi realizada (mantendo a condição de leads do mês selecionado).</div>`;
-    const ROT_MOT = { criada_por_outro: 'Criada por outra pessoa', aplicacao_fora_do_mes: 'Última aplicação fora do mês', sem_escala: 'Sem linha de escala no dia' };
+    html += `<div class="muted" style="margin-bottom:8px">Conta, por SDR, quantas reuniões FEITAS e VALIDADAS no período ela mesma criou FORA do horário de trabalho dela na escala comercial (antes da entrada ou depois da saída). O período é o do filtro "De" e "Até" do cabeçalho (ou o mês inteiro), pelo dia em que a reunião foi realizada, independente de quando o lead foi criado ou aplicado.</div>`;
+    const ROT_MOT = { criada_por_outro: 'Criada por outra pessoa', sem_escala: 'Sem linha de escala no dia' };
     const motivosHtml = s => {
       const m = s.motivos || {}, d = s.detalhe || {};
       const resumo = Object.keys(ROT_MOT).filter(k => m[k]).map(k => `${ROT_MOT[k]}: <b>${m[k]}</b>`).join(' · ');
@@ -1773,7 +1773,7 @@ function renderTaxasAba(resEscala, resDash, resEvolucoes, resNS, rangeNS, mesNS)
       <td class="qtd">${t.fora_da_escala||0}<div class="muted" style="font-size:11px">${t.pct_fora_escala||0}%</div></td>
       <td></td><td></td></tr>`;
     html += `</table>`;
-    html += `<div class="muted" style="margin-top:8px;font-size:12px">Validadas (M6) = o mesmo número da aba Reuniões - SDRs. <b>Versão de teste (não é a OP2 oficial):</b> a escala usada é a da própria SDR (nome + dia da semana + time dela), sem olhar o funil do negócio. Só entram na conta as <b>avaliadas</b>: criadas pela própria SDR, de lead com última aplicação no mês e com escala no dia. A % é fora ÷ avaliadas. Clique em "Não avaliadas — por quê" para ver os negócios de cada motivo.</div>`;
+    html += `<div class="muted" style="margin-top:8px;font-size:12px">Validadas (M6) = o mesmo número da aba Reuniões - SDRs. <b>Versão de teste (não é a OP2 oficial):</b> a escala usada é a da própria SDR (nome + dia da semana + time dela), sem olhar o funil do negócio. Só entram na conta as <b>avaliadas</b>: feitas e validadas no período, criadas pela própria SDR e com escala no dia. A última aplicação do lead não é considerada. A % é fora ÷ avaliadas. Clique em "Não avaliadas — por quê" para ver os negócios de cada motivo.</div>`;
     const dg = resEscala.diagnostico;
     if (dg && Object.keys(dg.funis_sem_escala || {}).length) {
       html += `<div class="muted" style="margin-top:4px;font-size:12px">Funis sem escala: ${Object.entries(dg.funis_sem_escala).map(([k, v]) => k + ' (' + v + ')').join(', ')} · Subáreas na planilha de escala: ${(dg.subareas_da_escala || []).join(', ') || '—'}</div>`;

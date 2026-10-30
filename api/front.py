@@ -1743,7 +1743,7 @@ function renderTaxasAba(resEscala, resDash, resEvolucoes, resNS, rangeNS, mesNS)
       return `<details><summary style="cursor:pointer">${resumo}</summary>${lista}</details>`;
     };
     html += `<table class="aud-tbl"><tr><th class="l">SDR</th><th class="l">Time</th><th class="l">Entrada</th><th class="l">Saída</th>
-      <th>Validadas (M6)</th><th>Avaliadas</th><th>Fora da escala</th><th class="l">Não avaliadas — por quê</th><th class="barcell"></th></tr>`;
+      <th>Validadas (M6)</th><th>Avaliadas</th><th>Fora da escala</th><th class="l" title="Reuniões validadas que ficaram fora da conta de fora da escala, e o motivo">Não avaliadas — por quê</th><th class="l">Negócios fora da escala</th></tr>`;
     const sdrsEscala = (resEscala.sdrs || []).slice().sort((a,b) => (!!a.lideranca - !!b.lideranca) || ((b.total_mes||0) - (a.total_mes||0)));
     for (const s of sdrsEscala) {
       if (s.erro) {
@@ -1751,9 +1751,12 @@ function renderTaxasAba(resEscala, resDash, resEvolucoes, resNS, rangeNS, mesNS)
           <td class="l muted" colspan="7">${s.erro}</td></tr>`;
         continue;
       }
-      const exemplos = (s.exemplos || []).map(e =>
-        `<a href="${e.url}" target="_blank" rel="noopener" title="${e.titulo} — ${e.data_hora_criacao}">#${e.deal_id}</a>`
-      ).join(', ');
+      const lista = (s.exemplos || []).map(e =>
+        `<a href="${e.url}" target="_blank" rel="noopener" title="${e.titulo}">#${e.deal_id}</a> <span class="muted">(criada ${e.data_hora_criacao})</span>`
+      ).join('<br>');
+      const exemplos = lista
+        ? `<details><summary style="cursor:pointer">Ver ${(s.exemplos || []).length} negócio${(s.exemplos || []).length > 1 ? 's' : ''}</summary><div style="margin-top:4px;font-size:12px;line-height:1.6">${lista}</div></details>`
+        : '<span class="muted">—</span>';
       html += `<tr><td class="l">${s.nome}${s.lideranca ? ' <span class="cargo-lider">' + s.lideranca + '</span>' : ''}</td><td class="l muted">${s.time||''}</td>
         <td class="l muted">${s.entrada || '—'}</td>
         <td class="l muted">${s.saida || '—'}</td>
@@ -1761,7 +1764,7 @@ function renderTaxasAba(resEscala, resDash, resEvolucoes, resNS, rangeNS, mesNS)
         <td class="qtd">${s.avaliadas || 0}</td>
         <td class="qtd">${s.fora_da_escala}<div class="muted" style="font-size:11px">${s.pct_fora_escala}%</div></td>
         <td class="l" style="font-size:12px">${motivosHtml(s)}</td>
-        <td class="aud-negs">${exemplos}</td></tr>`;
+        <td class="l" style="font-size:12px">${exemplos}</td></tr>`;
     }
     if (!sdrsEscala.length) {
       html += `<tr><td colspan="9" class="aud-empty">Nenhum SDR encontrado no mês.</td></tr>`;

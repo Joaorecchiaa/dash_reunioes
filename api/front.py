@@ -1627,6 +1627,19 @@ function renderDistribuicaoLeads(resResumo, resLog) {
 // ---- Taxas % -- reune num so lugar as taxas ja calculadas em outras abas,
 // mais a nova metrica principal (reunioes agendadas fora da escala) ----
 let TAXAS_CARREGADA_MES = null;
+// dias liberados (ex.: sabados trabalhados): reunioes criadas nesses dias contam como dentro da escala, qualquer horario.
+// Ficam salvos neste navegador; nao e preciso mexer no codigo.
+const LIB_KEY = 'taxas_dias_liberados';
+function lerLiberados() { try { return JSON.parse(localStorage.getItem(LIB_KEY) || '[]').filter(x => /^\d{4}-\d{2}-\d{2}$/.test(x)); } catch (e) { return []; } }
+let TAXAS_LIBERADOS = lerLiberados();
+function salvaLiberados() { try { localStorage.setItem(LIB_KEY, JSON.stringify(TAXAS_LIBERADOS)); } catch (e) {} }
+function taxasAddLiberado() {
+  const v = ($('lib-novo') || {}).value;
+  if (!v || TAXAS_LIBERADOS.includes(v)) return;
+  TAXAS_LIBERADOS = TAXAS_LIBERADOS.concat([v]).sort(); salvaLiberados(); buscaTaxasAba(true);
+}
+function taxasRemLiberado(v) { TAXAS_LIBERADOS = TAXAS_LIBERADOS.filter(x => x !== v); salvaLiberados(); buscaTaxasAba(true); }
+const fmtDia = v => { const d = new Date(v + 'T12:00:00'); return v.slice(8, 10) + '/' + v.slice(5, 7) + ' ' + ['dom','seg','ter','qua','qui','sex','sáb'][d.getDay()]; };
 
 function carregaTaxasAba() {
   if (!document.getElementById('taxas-resultado')) {
@@ -1641,6 +1654,7 @@ async function buscaEscalaPeriodo(mes, de, ate) {
   const um = (m, d1, d2) => {
     let u = '/api/taxas_escala?month=' + m;
     if (d1 && d2) u += '&de=' + d1 + '&ate=' + d2;
+    if (TAXAS_LIBERADOS.length) u += '&liberados=' + TAXAS_LIBERADOS.join(',');
     return fetch(u, { headers: authHeaders() }).then(r => r.json());
   };
   if (!de || !ate || de.slice(0, 7) === ate.slice(0, 7)) return um(mes, de, ate);
@@ -1660,6 +1674,7 @@ async function buscaEscalaPeriodo(mes, de, ate) {
       if (s.erro) continue;
       a.total_mes = (a.total_mes || 0) + (s.total_mes || 0);
       a.avaliadas = (a.avaliadas || 0) + (s.avaliadas || 0);
+      a.dias_liberados = (a.dias_liberados || 0) + (s.dias_liberados || 0);
       a.fora_da_escala = (a.fora_da_escala || 0) + (s.fora_da_escala || 0);
       a.motivos = a.motivos || {}; a.detalhe = a.detalhe || {};
       for (const k in (s.motivos || {})) { a.motivos[k] = (a.motivos[k] || 0) + s.motivos[k]; a.detalhe[k] = (a.detalhe[k] || []).concat((s.detalhe || {})[k] || []); }
@@ -1697,7 +1712,7 @@ async function buscaTaxasAba(forcar) {
   const de = $('f-de').value;
   const ate = $('f-ate').value;
   const usaRange = !!(de && ate && de <= ate);
-  const chave = mes + '|' + (usaRange ? de + '|' + ate : '');
+  const chave = mes + '|' + (usaRange ? de + '|' + ate : '') + '|' + TAXAS_LIBERADOS.join(',');
   if (!forcar && TAXAS_CARREGADA_MES === chave) return;
   $('taxas-resultado').innerHTML = '<div class="muted">Buscando no Pipedrive… (pode levar alguns segundos)</div>';
   try {
@@ -1730,8 +1745,16 @@ function renderTaxasAba(resEscala, resDash, resEvolucoes, resNS, rangeNS, mesNS)
     if (!resEscala.escala_configurada) {
       html += `<div class="warn" style="margin-bottom:8px">A escala comercial ainda não está configurada (ESCALA_COMERCIAL_CSV_URL) — o total de reuniões do mês aparece, mas "fora da escala" fica zerado até isso ser configurado.</div>`;
     }
-    html += `<div class="muted" style="margin-bottom:8px">Conta, por SDR, quantas reuniões FEITAS e VALIDADAS no período ela mesma criou FORA do horário de trabalho dela na escala comercial (antes da entrada ou depois da saída). O período é o do filtro "De" e "Até" do cabeçalho (ou o mês inteiro), pelo dia em que a reunião foi realizada, independente de quando o lead foi criado ou aplicado.</div>`;
-    const ROT_MOT = { criada_por_outro: 'Criada por outra pessoa', sem_escala: 'Sem linha de escala no dia' };
+    html += `<div class="panel" style="margin:8px 0 12px;padding:10px 12px">
+      <div style="font-size:12px;font-weight:700;margin-bottom:6px">Dias liberados (ex.: sábados trabalhados)</div>
+      <div class="muted" style="font-size:12px;margin-bottom:8px">Reuniões criadas nesses dias são desconsideradas (não entram em avaliadas nem em fora da escala), sem olhar a escala. Sábados e domingos que não estiverem aqui, e sem escala na planilha, contam como <b>fora da escala</b>.</div>
+      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+        <input type="date" id="lib-novo" style="padding:4px 6px">
+        <button class="grf-btn" onclick="taxasAddLiberado()">Adicionar dia</button>
+        ${TAXAS_LIBERADOS.length ? TAXAS_LIBERADOS.map(d => `<span class="grf-chip on" style="cursor:default">${fmtDia(d)} <a href="#" onclick="taxasRemLiberado('${d}');return false" style="margin-left:4px;text-decoration:none" title="Remover">✕</a></span>`).join(' ') : '<span class="muted" style="font-size:12px">nenhum dia liberado</span>'}
+      </div></div>`;
+    html += `<div class="muted" style="margin-bottom:8px">Conta, por SDR, quantas reuniões FEITAS e VALIDADAS no período ela mesma criou FORA do horário de trabalho dela na escala comercial (antes da entrada, depois da saída ou no fim de semana). O período é o do filtro "De" e "Até" do cabeçalho (ou o mês inteiro), pelo dia em que a reunião foi realizada, independente de quando o lead foi criado ou aplicado.</div>`;
+    const ROT_MOT = { criada_por_outro: 'Criada por outra pessoa', sem_escala: 'Sem linha de escala no dia', dia_liberado: 'Dia liberado (desconsiderado)' };
     const motivosHtml = s => {
       const m = s.motivos || {}, d = s.detalhe || {};
       const resumo = Object.keys(ROT_MOT).filter(k => m[k]).map(k => `${ROT_MOT[k]}: <b>${m[k]}</b>`).join(' · ');
@@ -1776,7 +1799,7 @@ function renderTaxasAba(resEscala, resDash, resEvolucoes, resNS, rangeNS, mesNS)
       <td class="qtd">${t.fora_da_escala||0}<div class="muted" style="font-size:11px">${t.pct_fora_escala||0}%</div></td>
       <td></td><td></td></tr>`;
     html += `</table>`;
-    html += `<div class="muted" style="margin-top:8px;font-size:12px">Validadas (M6) = o mesmo número da aba Reuniões - SDRs. <b>Versão de teste (não é a OP2 oficial):</b> a escala usada é a da própria SDR (nome + dia da semana + time dela), sem olhar o funil do negócio. Só entram na conta as <b>avaliadas</b>: feitas e validadas no período, criadas pela própria SDR e com escala no dia. A última aplicação do lead não é considerada. A % é fora ÷ avaliadas. Clique em "Não avaliadas — por quê" para ver os negócios de cada motivo.</div>`;
+    html += `<div class="muted" style="margin-top:8px;font-size:12px">Validadas (M6) = o mesmo número da aba Reuniões - SDRs. <b>Versão de teste (não é a OP2 oficial):</b> a escala usada é a da própria SDR (nome + dia da semana + time dela), sem olhar o funil do negócio. Só entram na conta as <b>avaliadas</b>: feitas e validadas no período, criadas pela própria SDR e com escala no dia (fim de semana sem escala conta como fora; reuniões criadas em dias liberados são desconsideradas). A % é fora ÷ avaliadas. Clique em "Não avaliadas — por quê" para ver os negócios de cada motivo.</div>`;
     const dg = resEscala.diagnostico;
     if (dg && Object.keys(dg.funis_sem_escala || {}).length) {
       html += `<div class="muted" style="margin-top:4px;font-size:12px">Funis sem escala: ${Object.entries(dg.funis_sem_escala).map(([k, v]) => k + ' (' + v + ')').join(', ')} · Subáreas na planilha de escala: ${(dg.subareas_da_escala || []).join(', ') || '—'}</div>`;

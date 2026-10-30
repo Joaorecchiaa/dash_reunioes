@@ -476,6 +476,7 @@ async function aoMudarData(campo) {
 $('f-de').addEventListener('change', () => aoMudarData('de'));
 $('f-ate').addEventListener('change', () => aoMudarData('ate'));
 $('btn').addEventListener('click', () => {
+  if (ABA === 'taxas') { buscaTaxasAba(true); return; }   // aba Taxas % tem busca propria (De/Até)
   if (MODO_PESSOA === 'sdr') buscarSdr(false); else buscar(false);
 });
 

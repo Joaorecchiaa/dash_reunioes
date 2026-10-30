@@ -839,7 +839,7 @@ def reunioes_fora_da_escala(ano, mes, date_de=None, date_ate=None):
 
         def guarda(chave, it):
             motivos[chave] += 1
-            if len(detalhe[chave]) < 40:
+            if len(detalhe[chave]) < 500:
                 detalhe[chave].append(it)
         for a in validadas:
             deal = P["deals"].get(a.get("deal_id")) or {}
@@ -862,7 +862,7 @@ def reunioes_fora_da_escala(ano, mes, date_de=None, date_ate=None):
             avaliadas += 1
             if r:
                 fora += 1
-                if len(exemplos) < 15:
+                if len(exemplos) < 500:
                     exemplos.append(item(a, deal))
         entrada = saida = None
         for (nn, _sub, dia_sem), (e, s_) in escala.items():

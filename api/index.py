@@ -861,8 +861,8 @@ def reunioes_fora_da_escala(ano, mes, date_de=None, date_ate=None, liberados=Non
                 # sem olhar o funil em que o negocio esta hoje. Sem a linha do time, vale a unica linha do dia.
                 sub = _subarea_da_sdr(escala, nome, time_sdr, dia_criacao)
                 r = op2.fora_da_escala(a, escala, nome, sub) if sub is not None else None
-            if r is None and criada and dia_criacao.weekday() >= 5 and not erro_escala:
-                r = True                             # sabado/domingo sem escala: criada no fim de semana = fora da escala
+            if criada and dia_criacao.weekday() >= 5 and not erro_escala:
+                r = True                             # sabado/domingo nao tem escala: criada no fim de semana = fora, mesmo com linha na planilha (so 'dias liberados' escapam)
                 fds = True
             else:
                 fds = False
@@ -1348,6 +1348,35 @@ def api_evolucao_sdr():
         return _erro(e)
 
 
+def _rastro_deal(ano, mes, date_de, date_ate, deal_id):
+    """Diagnostico: o que a M6 e a tabela de fora da escala fazem com as atividades de UM negocio."""
+    ctx = contexto_mes(ano, mes)
+    P = dados_periodo(ano, mes)
+    di, df = (date_de, date_ate) if (date_de and date_ate) else (P["ini"], P["fim"])
+    val = m6.reunioes_validadas(P["acts"], di, df, deals_validados=P["deals_validados"],
+                                dono_do_deal=P["dono_do_deal"], sdr_ids=ctx["sdr_ids"],
+                                lideranca_ids=ctx["lideranca_ids"], lideranca_que_agenda_ids=ctx["lq_ids"])
+    nomes = {v: k for k, v in ctx["id_por_nome"].items()}
+    nas_validadas = {}
+    for uid, lst in val.items():
+        for a in lst:
+            if str(a.get("deal_id")) == str(deal_id):
+                nas_validadas.setdefault(nomes.get(uid, uid), []).append(a.get("id"))
+    atividades = []
+    for a in P["acts"]:
+        if str(a.get("deal_id")) != str(deal_id):
+            continue
+        c = fuso.para_brasil(a.get("add_time"))
+        atividades.append({"id": a.get("id"), "tipo": a.get("type"), "done": a.get("done"),
+                           "owner": a.get("owner_id", a.get("user_id")), "criador": _criador_id(a),
+                           "criada_br": c.strftime("%d/%m/%Y %H:%M (%a)") if c else None,
+                           "due": f"{a.get('due_date')} {a.get('due_time')}"})
+    return {"deal": deal_id, "periodo": f"{di} a {df}", "atividades_no_periodo": atividades,
+            "negocio_validado": str(deal_id) in {str(x) for x in (P["deals_validados"] or [])},
+            "dono_do_deal": (P["dono_do_deal"] or {}).get(int(deal_id)) if str(deal_id).isdigit() else None,
+            "contada_na_m6_para": nas_validadas}
+
+
 @app.route("/api/taxas_escala")
 def api_taxas_escala():
     # reunioes fora do horario de escala -- dado operacional interno, so privilegiado
@@ -1364,6 +1393,8 @@ def api_taxas_escala():
         except Exception:
             date_de = date_ate = None
     try:
+        if request.args.get("deal"):
+            return jsonify(_rastro_deal(ano, mes, date_de, date_ate, request.args.get("deal").strip()))
         lib = set()
         for x in (request.args.get("liberados", "") or "").split(","):
             try:

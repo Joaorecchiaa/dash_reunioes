@@ -783,6 +783,12 @@ def _escala():
         return {}, str(e)
 
 
+def _criador_id(a):
+    """Quem criou a atividade (v2: creator_user_id; v1: created_by_user_id; pode vir como objeto)."""
+    c = a.get("creator_user_id", a.get("created_by_user_id"))
+    return c.get("id", c.get("value")) if isinstance(c, dict) else c
+
+
 def reunioes_fora_da_escala(ano, mes, date_de=None, date_ate=None):
     """Por SDR do mes: reunioes FEITAS e VALIDADAS (Sim/vazio), CRIADAS por ela (creator = responsavel),
     cujo negocio tem Data da ultima aplicacao no mes, e quantas foram criadas fora do turno (OP2).
@@ -799,8 +805,7 @@ def reunioes_fora_da_escala(ano, mes, date_de=None, date_ate=None):
     subareas = sorted({sub for (_n, sub, _d) in escala})
     for a in deduplicar([x for x in P["acts"] if x.get("type") == reu and _feita(x) and x.get("deal_id")]):
         diag["feitas_com_deal"] += 1
-        c = a.get("creator_user_id")
-        c = c.get("id") if isinstance(c, dict) else c
+        c = _criador_id(a)
         if c is None or criada_pela_ia(a):
             diag["sem_criador_ou_ia"] += 1
             continue
@@ -1599,7 +1604,7 @@ def api_debug_m6():
                 "responsavel_id": responsavel_id(a), "responsavel": nome(responsavel_id(a)),
                 "responsavel_eh_sdr": responsavel_id(a) in ctx["sdr_ids"],
                 "responsavel_eh_lideranca_que_agenda": responsavel_id(a) in ctx["lq_ids"],
-                "criador": nome(a.get("creator_user_id")), "criada_pela_ia": criada_pela_ia(a),
+                "criador": nome(_criador_id(a)), "criada_pela_ia": criada_pela_ia(a),
                 "dia": str(fuso.atividade_dia(a)), "hora": _hora(a),
                 "m6_validada_para": validadas.get(a.get("id")),
             } for a in sorted(acts, key=lambda x: (str(x.get("due_date")), str(x.get("due_time"))))],

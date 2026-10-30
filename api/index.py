@@ -798,10 +798,11 @@ def _criador_id(a):
     return c.get("id", c.get("value")) if isinstance(c, dict) else c
 
 
-def reunioes_fora_da_escala(ano, mes, date_de=None, date_ate=None):
+def reunioes_fora_da_escala(ano, mes, date_de=None, date_ate=None, liberados=None):
     """Por SDR: base = reunioes VALIDADAS pela M6 no periodo (o mesmo numero da aba Reunioes - SDRs).
     Cada uma e classificada: criada por outra pessoa (OP2 avalia quem criou, nao entra na conta do SDR),
     sem escala para o funil/dia, ou AVALIADA (dentro ou fora do turno, OP2)."""
+    liberados = set(liberados or [])      # dias (data de criacao, Brasilia) tratados como trabalhados normais: nunca contam como fora
     ctx = contexto_mes(ano, mes)
     P = dados_periodo(ano, mes)
     escala, erro_escala = _escala()
@@ -832,9 +833,9 @@ def reunioes_fora_da_escala(ano, mes, date_de=None, date_ate=None):
                               "erro": "SDR nao encontrada no Pipedrive"})
             continue
         validadas = val.get(uid, [])
-        motivos = {"criada_por_outro": 0, "sem_escala": 0}
-        detalhe = {"criada_por_outro": [], "sem_escala": []}
-        avaliadas = fora = 0
+        motivos = {"criada_por_outro": 0, "sem_escala": 0, "dia_liberado": 0}
+        detalhe = {"criada_por_outro": [], "sem_escala": [], "dia_liberado": []}
+        avaliadas = fora = liberadas = 0
         exemplos = []
 
         def guarda(chave, it):
@@ -848,13 +849,23 @@ def reunioes_fora_da_escala(ano, mes, date_de=None, date_ate=None):
                 guarda("criada_por_outro", item(a, deal, "criada por " + str(users.get(criador) or criador)))
                 continue
             funil = pipelines.get(deal.get("pipeline_id"), "")
+            criada = fuso.para_brasil(a.get("add_time"))
+            dia_criacao = criada.date() if criada else None
+            if dia_criacao in liberados:
+                liberadas += 1                       # dia liberado pelo usuario: dia todo desconsiderado, sem olhar escala
+                guarda("dia_liberado", item(a, deal, "dia liberado"))
+                continue
             r = None
-            if not erro_escala:
+            if not erro_escala and criada:
                 # TESTE (nao e a OP2 oficial): escala da propria SDR = nome + dia da semana + subarea do TIME dela,
                 # sem olhar o funil em que o negocio esta hoje. Sem a linha do time, vale a unica linha do dia.
-                criada = fuso.para_brasil(a.get("add_time"))
-                sub = _subarea_da_sdr(escala, nome, time_sdr, criada.date()) if criada else None
+                sub = _subarea_da_sdr(escala, nome, time_sdr, dia_criacao)
                 r = op2.fora_da_escala(a, escala, nome, sub) if sub is not None else None
+            if r is None and criada and dia_criacao.weekday() >= 5 and not erro_escala:
+                r = True                             # sabado/domingo sem escala: criada no fim de semana = fora da escala
+                fds = True
+            else:
+                fds = False
             if r is None:
                 funis_sem_escala[funil or "(funil vazio)"] += 1
                 guarda("sem_escala", item(a, deal, "sem linha de escala no dia (funil " + (funil or "vazio") + ")"))
@@ -863,7 +874,7 @@ def reunioes_fora_da_escala(ano, mes, date_de=None, date_ate=None):
             if r:
                 fora += 1
                 if len(exemplos) < 500:
-                    exemplos.append(item(a, deal))
+                    exemplos.append(item(a, deal, "fim de semana" if fds else ""))
         entrada = saida = None
         for (nn, _sub, dia_sem), (e, s_) in escala.items():
             if nn == norm(nome) and dia_sem == fontes.DIAS[hoje.weekday()]:
@@ -871,7 +882,7 @@ def reunioes_fora_da_escala(ano, mes, date_de=None, date_ate=None):
                 break
         resultado.append({"nome": nome, "time": time_sdr, "lideranca": lideres.get(nome),
                           "entrada": entrada, "saida": saida, "total_mes": len(validadas), "avaliadas": avaliadas,
-                          "fora_da_escala": fora, "motivos": motivos, "detalhe": detalhe,
+                          "fora_da_escala": fora, "dias_liberados": liberadas, "motivos": motivos, "detalhe": detalhe,
                           "pct_fora_escala": round(fora / avaliadas * 100, 1) if avaliadas else 0.0, "exemplos": exemplos})
     tv = sum(r["total_mes"] for r in resultado)
     ta = sum(r["avaliadas"] for r in resultado)
@@ -886,7 +897,7 @@ def reunioes_fora_da_escala(ano, mes, date_de=None, date_ate=None):
         "sdrs": resultado,
         "diagnostico": {"funis_sem_escala": dict(funis_sem_escala), "subareas_da_escala": sorted({sub for (_n, sub, _d) in escala})},
         "total": {"total_mes": tv, "avaliadas": ta, "fora_da_escala": fg, "pct_fora_escala": round(fg / ta * 100, 1) if ta else 0.0},
-        "carimbo": carimbo(extra="Fora da escala (TESTE, não é a OP2 oficial): base = feitas e validadas do período (M6), sem olhar a última aplicação; escala pelo time da SDR + dia da semana, sem olhar o funil"),
+        "carimbo": carimbo(extra="Fora da escala (TESTE, não é a OP2 oficial): base = feitas e validadas do período (M6), sem olhar a última aplicação; escala pelo time da SDR + dia da semana, sem olhar o funil; fim de semana sem escala = fora; dias liberados = desconsiderados"),
     }
 
 
@@ -1349,7 +1360,13 @@ def api_taxas_escala():
         except Exception:
             date_de = date_ate = None
     try:
-        return jsonify(reunioes_fora_da_escala(ano, mes, date_de, date_ate))
+        lib = set()
+        for x in (request.args.get("liberados", "") or "").split(","):
+            try:
+                lib.add(datetime.strptime(x.strip(), "%Y-%m-%d").date())
+            except Exception:
+                pass
+        return jsonify(reunioes_fora_da_escala(ano, mes, date_de, date_ate, lib))
     except Exception as e:
         return _erro(e)
 

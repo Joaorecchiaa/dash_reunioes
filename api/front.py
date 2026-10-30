@@ -1675,6 +1675,7 @@ async function buscaEscalaPeriodo(mes, de, ate) {
       a.total_mes = (a.total_mes || 0) + (s.total_mes || 0);
       a.avaliadas = (a.avaliadas || 0) + (s.avaliadas || 0);
       a.dias_liberados = (a.dias_liberados || 0) + (s.dias_liberados || 0);
+      a.escala_semana = a.escala_semana || s.escala_semana;
       a.fora_da_escala = (a.fora_da_escala || 0) + (s.fora_da_escala || 0);
       a.motivos = a.motivos || {}; a.detalhe = a.detalhe || {};
       for (const k in (s.motivos || {})) { a.motivos[k] = (a.motivos[k] || 0) + s.motivos[k]; a.detalhe[k] = (a.detalhe[k] || []).concat((s.detalhe || {})[k] || []); }
@@ -1780,7 +1781,9 @@ function renderTaxasAba(resEscala, resDash, resEvolucoes, resNS, rangeNS, mesNS)
       const exemplos = lista
         ? `<details><summary style="cursor:pointer">Ver ${(s.exemplos || []).length} negócio${(s.exemplos || []).length > 1 ? 's' : ''}</summary><div style="margin-top:4px;font-size:12px;line-height:1.6">${lista}</div></details>`
         : '<span class="muted">—</span>';
-      html += `<tr><td class="l">${s.nome}${s.lideranca ? ' <span class="cargo-lider">' + s.lideranca + '</span>' : ''}</td><td class="l muted">${s.time||''}</td>
+      const escSem = (s.escala_semana || []).length
+        ? `<details style="font-size:11px;font-weight:400"><summary style="cursor:pointer" class="muted">escala da semana</summary>${s.escala_semana.join('<br>')}</details>` : '';
+      html += `<tr><td class="l">${s.nome}${s.lideranca ? ' <span class="cargo-lider">' + s.lideranca + '</span>' : ''}${escSem}</td><td class="l muted">${s.time||''}</td>
         <td class="l muted">${s.entrada || '—'}</td>
         <td class="l muted">${s.saida || '—'}</td>
         <td class="qtd">${s.total_mes}</td>

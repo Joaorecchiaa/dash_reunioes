@@ -801,7 +801,7 @@ def _criador_id(a):
 def reunioes_fora_da_escala(ano, mes, date_de=None, date_ate=None):
     """Por SDR: base = reunioes VALIDADAS pela M6 no periodo (o mesmo numero da aba Reunioes - SDRs).
     Cada uma e classificada: criada por outra pessoa (OP2 avalia quem criou, nao entra na conta do SDR),
-    lead com ultima aplicacao fora do mes, sem escala para o funil/dia, ou AVALIADA (dentro ou fora do turno, OP2)."""
+    sem escala para o funil/dia, ou AVALIADA (dentro ou fora do turno, OP2)."""
     ctx = contexto_mes(ano, mes)
     P = dados_periodo(ano, mes)
     escala, erro_escala = _escala()
@@ -832,8 +832,8 @@ def reunioes_fora_da_escala(ano, mes, date_de=None, date_ate=None):
                               "erro": "SDR nao encontrada no Pipedrive"})
             continue
         validadas = val.get(uid, [])
-        motivos = {"criada_por_outro": 0, "aplicacao_fora_do_mes": 0, "sem_escala": 0}
-        detalhe = {"criada_por_outro": [], "aplicacao_fora_do_mes": [], "sem_escala": []}
+        motivos = {"criada_por_outro": 0, "sem_escala": 0}
+        detalhe = {"criada_por_outro": [], "sem_escala": []}
         avaliadas = fora = 0
         exemplos = []
 
@@ -846,10 +846,6 @@ def reunioes_fora_da_escala(ano, mes, date_de=None, date_ate=None):
             criador = _criador_id(a)
             if criador != uid:
                 guarda("criada_por_outro", item(a, deal, "criada por " + str(users.get(criador) or criador)))
-                continue
-            ap, _ = fuso.ultima_aplicacao(cf(deal, campo("ultima_aplicacao")))
-            if not fuso.no_mes(ap, ano, mes):
-                guarda("aplicacao_fora_do_mes", item(a, deal, "última aplicação " + (ap.strftime("%d/%m/%Y") if ap else "vazia")))
                 continue
             funil = pipelines.get(deal.get("pipeline_id"), "")
             r = None
@@ -881,7 +877,7 @@ def reunioes_fora_da_escala(ano, mes, date_de=None, date_ate=None):
     ta = sum(r["avaliadas"] for r in resultado)
     fg = sum(r["fora_da_escala"] for r in resultado)
     if date_de and date_ate:
-        periodo_label = f"{date_de.strftime('%d/%m/%Y')} a {date_ate.strftime('%d/%m/%Y')} (leads de {MESES_NOME[mes-1]}/{ano})"
+        periodo_label = f"{date_de.strftime('%d/%m/%Y')} a {date_ate.strftime('%d/%m/%Y')}"
     else:
         periodo_label = f"{MESES_NOME[mes-1]}/{ano}"
     return {
@@ -890,7 +886,7 @@ def reunioes_fora_da_escala(ano, mes, date_de=None, date_ate=None):
         "sdrs": resultado,
         "diagnostico": {"funis_sem_escala": dict(funis_sem_escala), "subareas_da_escala": sorted({sub for (_n, sub, _d) in escala})},
         "total": {"total_mes": tv, "avaliadas": ta, "fora_da_escala": fg, "pct_fora_escala": round(fg / ta * 100, 1) if ta else 0.0},
-        "carimbo": carimbo(extra="Fora da escala (TESTE, não é a OP2 oficial): base = validadas M6; escala pelo time da SDR + dia da semana, sem olhar o funil"),
+        "carimbo": carimbo(extra="Fora da escala (TESTE, não é a OP2 oficial): base = feitas e validadas do período (M6), sem olhar a última aplicação; escala pelo time da SDR + dia da semana, sem olhar o funil"),
     }
 
 

@@ -790,80 +790,80 @@ def _criador_id(a):
 
 
 def reunioes_fora_da_escala(ano, mes, date_de=None, date_ate=None):
-    """Por SDR do mes: reunioes FEITAS e VALIDADAS (Sim/vazio), CRIADAS por ela (creator = responsavel),
-    cujo negocio tem Data da ultima aplicacao no mes, e quantas foram criadas fora do turno (OP2).
-    Escala pela chave da CRN: nome + funil do deal + dia da semana. Sem escala no dia = nao avaliada."""
+    """Por SDR: base = reunioes VALIDADAS pela M6 no periodo (o mesmo numero da aba Reunioes - SDRs).
+    Cada uma e classificada: criada por outra pessoa (OP2 avalia quem criou, nao entra na conta do SDR),
+    lead com ultima aplicacao fora do mes, sem escala para o funil/dia, ou AVALIADA (dentro ou fora do turno, OP2)."""
     ctx = contexto_mes(ano, mes)
     P = dados_periodo(ano, mes)
     escala, erro_escala = _escala()
     pipelines = funis_pipedrive()
     di, df = (date_de, date_ate) if (date_de and date_ate) else (P["ini"], P["fim"])
-    reu = tipo_atividade("reuniao")
-    por_criador = defaultdict(list)
-    diag = defaultdict(int)          # onde as reunioes ficam pelo caminho (para achar porque a tabela zera)
-    funis_sem_escala = defaultdict(int)
-    subareas = sorted({sub for (_n, sub, _d) in escala})
-    for a in deduplicar([x for x in P["acts"] if x.get("type") == reu and _feita(x) and x.get("deal_id")]):
-        diag["feitas_com_deal"] += 1
-        c = _criador_id(a)
-        if c is None or criada_pela_ia(a):
-            diag["sem_criador_ou_ia"] += 1
-            continue
-        dia = fuso.atividade_dia(a)
-        if dia and di <= dia <= df:
-            por_criador[c].append(a)
-        else:
-            diag["fora_do_periodo"] += 1
-
+    val = m6.reunioes_validadas(P["acts"], di, df, deals_validados=P["deals_validados"],
+                                dono_do_deal=P["dono_do_deal"], sdr_ids=ctx["sdr_ids"],
+                                lideranca_ids=ctx["lideranca_ids"], lideranca_que_agenda_ids=ctx["lq_ids"])
+    users = ctx["users"]
     lideres = ctx["lideres"]
-    resultado = []
     hoje = fuso.hoje_brasil()
+    resultado = []
+    funis_sem_escala = defaultdict(int)
+
+    def item(a, deal, extra=""):
+        criada = fuso.para_brasil(a.get("add_time"))
+        return {"deal_id": a.get("deal_id"),
+                "titulo": deal.get("title") or ("Negocio " + str(a.get("deal_id"))),
+                "data_hora_criacao": criada.strftime("%d/%m/%Y %H:%M") if criada else "",
+                "extra": extra, "url": PIPEDRIVE_BASE_URL + "/deal/" + str(a.get("deal_id"))}
+
     for nome, time_sdr in sorted(ctx["sdrs"].items()):
         uid = ctx["id_por_nome"].get(norm(nome))
         if uid is None:
             resultado.append({"nome": nome, "time": time_sdr, "entrada": None, "saida": None,
-                              "lideranca": lideres.get(nome), "total_mes": 0, "fora_da_escala": 0,
-                              "pct_fora_escala": 0.0, "exemplos": [], "erro": "SDR nao encontrada no Pipedrive"})
+                              "lideranca": lideres.get(nome), "total_mes": 0, "avaliadas": 0, "fora_da_escala": 0,
+                              "pct_fora_escala": 0.0, "exemplos": [], "motivos": {}, "detalhe": {},
+                              "erro": "SDR nao encontrada no Pipedrive"})
             continue
-        total = fora = sem_escala = 0
+        validadas = val.get(uid, [])
+        motivos = {"criada_por_outro": 0, "aplicacao_fora_do_mes": 0, "sem_escala": 0}
+        detalhe = {"criada_por_outro": [], "aplicacao_fora_do_mes": [], "sem_escala": []}
+        avaliadas = fora = 0
         exemplos = []
-        for a in por_criador.get(uid, []):
+
+        def guarda(chave, it):
+            motivos[chave] += 1
+            if len(detalhe[chave]) < 40:
+                detalhe[chave].append(it)
+        for a in validadas:
             deal = P["deals"].get(a.get("deal_id")) or {}
+            criador = _criador_id(a)
+            if criador != uid:
+                guarda("criada_por_outro", item(a, deal, "criada por " + str(users.get(criador) or criador)))
+                continue
             ap, _ = fuso.ultima_aplicacao(cf(deal, campo("ultima_aplicacao")))
-            diag["criadas_por_sdr"] += 1
             if not fuso.no_mes(ap, ano, mes):
-                diag["aplicacao_fora_do_mes"] += 1
-                continue                                  # nao e "lead do mes" pela ultima aplicacao
-            if P["status_do_deal"].get(a.get("deal_id")) == "nao":
-                diag["nao_validada"] += 1
-                continue                                  # so validadas (Sim ou vazio)
+                guarda("aplicacao_fora_do_mes", item(a, deal, "última aplicação " + (ap.strftime("%d/%m/%Y") if ap else "vazia")))
+                continue
             funil = pipelines.get(deal.get("pipeline_id"), "")
             r = op2.fora_da_escala(a, escala, nome, funil) if not erro_escala else None
             if r is None:
-                sem_escala += 1
-                diag["sem_escala"] += 1
                 funis_sem_escala[funil or "(funil vazio)"] += 1
+                guarda("sem_escala", item(a, deal, "funil " + (funil or "vazio")))
                 continue
-            diag["avaliadas"] += 1
-            total += 1
+            avaliadas += 1
             if r:
                 fora += 1
                 if len(exemplos) < 15:
-                    criada = fuso.para_brasil(a.get("add_time"))
-                    exemplos.append({"deal_id": a.get("deal_id"),
-                                     "titulo": deal.get("title") or ("Negocio " + str(a.get("deal_id"))),
-                                     "data_hora_criacao": criada.strftime("%d/%m/%Y %H:%M") if criada else "",
-                                     "url": PIPEDRIVE_BASE_URL + "/deal/" + str(a.get("deal_id"))})
+                    exemplos.append(item(a, deal))
         entrada = saida = None
-        for (nn, _sub, dia_sem), (e, s) in escala.items():
+        for (nn, _sub, dia_sem), (e, s_) in escala.items():
             if nn == norm(nome) and dia_sem == fontes.DIAS[hoje.weekday()]:
-                entrada, saida = e.strftime("%H:%M:%S"), s.strftime("%H:%M:%S")
+                entrada, saida = e.strftime("%H:%M:%S"), s_.strftime("%H:%M:%S")
                 break
         resultado.append({"nome": nome, "time": time_sdr, "lideranca": lideres.get(nome),
-                          "entrada": entrada, "saida": saida, "total_mes": total, "fora_da_escala": fora,
-                          "sem_escala": sem_escala,
-                          "pct_fora_escala": round(fora / total * 100, 1) if total else 0.0, "exemplos": exemplos})
-    tg = sum(r["total_mes"] for r in resultado)
+                          "entrada": entrada, "saida": saida, "total_mes": len(validadas), "avaliadas": avaliadas,
+                          "fora_da_escala": fora, "motivos": motivos, "detalhe": detalhe,
+                          "pct_fora_escala": round(fora / avaliadas * 100, 1) if avaliadas else 0.0, "exemplos": exemplos})
+    tv = sum(r["total_mes"] for r in resultado)
+    ta = sum(r["avaliadas"] for r in resultado)
     fg = sum(r["fora_da_escala"] for r in resultado)
     if date_de and date_ate:
         periodo_label = f"{date_de.strftime('%d/%m/%Y')} a {date_ate.strftime('%d/%m/%Y')} (leads de {MESES_NOME[mes-1]}/{ano})"
@@ -873,9 +873,9 @@ def reunioes_fora_da_escala(ano, mes, date_de=None, date_ate=None):
         "ano": ano, "mes": mes, "month_label": periodo_label,
         "escala_configurada": erro_escala is None and bool(escala), "erro_escala": erro_escala,
         "sdrs": resultado,
-        "diagnostico": {"etapas": dict(diag), "funis_sem_escala": dict(funis_sem_escala), "subareas_da_escala": subareas},
-        "total": {"total_mes": tg, "fora_da_escala": fg, "pct_fora_escala": round(fg / tg * 100, 1) if tg else 0.0},
-        "carimbo": carimbo(extra="Fora da escala: OP2 (nome + funil + dia da semana); sem escala no dia não entra na base"),
+        "diagnostico": {"funis_sem_escala": dict(funis_sem_escala), "subareas_da_escala": sorted({sub for (_n, sub, _d) in escala})},
+        "total": {"total_mes": tv, "avaliadas": ta, "fora_da_escala": fg, "pct_fora_escala": round(fg / ta * 100, 1) if ta else 0.0},
+        "carimbo": carimbo(extra="Fora da escala: base = validadas M6; OP2 avalia quem criou (nome + funil + dia da semana)"),
     }
 
 

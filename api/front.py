@@ -1659,28 +1659,30 @@ async function buscaEscalaPeriodo(mes, de, ate) {
       if (!a) { porNome[s.nome] = JSON.parse(JSON.stringify(s)); continue; }
       if (s.erro) continue;
       a.total_mes = (a.total_mes || 0) + (s.total_mes || 0);
+      a.avaliadas = (a.avaliadas || 0) + (s.avaliadas || 0);
       a.fora_da_escala = (a.fora_da_escala || 0) + (s.fora_da_escala || 0);
+      a.motivos = a.motivos || {}; a.detalhe = a.detalhe || {};
+      for (const k in (s.motivos || {})) { a.motivos[k] = (a.motivos[k] || 0) + s.motivos[k]; a.detalhe[k] = (a.detalhe[k] || []).concat((s.detalhe || {})[k] || []); }
       a.exemplos = (a.exemplos || []).concat(s.exemplos || []);
       a.entrada = a.entrada || s.entrada; a.saida = a.saida || s.saida;
     }
   }
   const sdrs = Object.values(porNome);
-  let tm = 0, tf = 0;
+  let tm = 0, tf = 0, ta = 0;
   for (const s of sdrs) {
     if (s.erro) continue;
-    s.pct_fora_escala = s.total_mes ? Math.round(s.fora_da_escala / s.total_mes * 1000) / 10 : 0;
-    tm += s.total_mes || 0; tf += s.fora_da_escala || 0;
+    s.pct_fora_escala = s.avaliadas ? Math.round(s.fora_da_escala / s.avaliadas * 1000) / 10 : 0;
+    tm += s.total_mes || 0; tf += s.fora_da_escala || 0; ta += s.avaliadas || 0;
   }
   const f = v => v.slice(8, 10) + '/' + v.slice(5, 7) + '/' + v.slice(0, 4);
   return {
     sdrs, escala_configurada: res.every(r => r.escala_configurada),
     diagnostico: (() => { const d = { etapas: {}, funis_sem_escala: {}, subareas_da_escala: [] };
       for (const r of res) { const x = r.diagnostico || {};
-        for (const k in (x.etapas || {})) d.etapas[k] = (d.etapas[k] || 0) + x.etapas[k];
         for (const k in (x.funis_sem_escala || {})) d.funis_sem_escala[k] = (d.funis_sem_escala[k] || 0) + x.funis_sem_escala[k];
         d.subareas_da_escala = x.subareas_da_escala || d.subareas_da_escala; }
       return d; })(),
-    total: { total_mes: tm, fora_da_escala: tf, pct_fora_escala: tm ? Math.round(tf / tm * 1000) / 10 : 0 },
+    total: { total_mes: tm, avaliadas: ta, fora_da_escala: tf, pct_fora_escala: ta ? Math.round(tf / ta * 1000) / 10 : 0 },
     month_label: f(de) + ' a ' + f(ate),
   };
 }
@@ -1729,13 +1731,24 @@ function renderTaxasAba(resEscala, resDash, resEvolucoes, resNS, rangeNS, mesNS)
       html += `<div class="warn" style="margin-bottom:8px">A escala comercial ainda não está configurada (ESCALA_COMERCIAL_CSV_URL) — o total de reuniões do mês aparece, mas "fora da escala" fica zerado até isso ser configurado.</div>`;
     }
     html += `<div class="muted" style="margin-bottom:8px">Conta, por SDR, quantas reuniões AGENDADAS, REALIZADAS neste mês e VALIDADAS (de leads/reaplicações também deste mês, pela "Data da última aplicação") ela mesma agendou FORA do horário de trabalho dela na escala comercial (antes da entrada ou depois da saída). Preenchendo "De" e "Até" no cabeçalho, restringe pelo dia em que a reunião foi realizada (mantendo a condição de leads do mês selecionado).</div>`;
+    const ROT_MOT = { criada_por_outro: 'Criada por outra pessoa', aplicacao_fora_do_mes: 'Última aplicação fora do mês', sem_escala: 'Sem escala para o funil/dia' };
+    const motivosHtml = s => {
+      const m = s.motivos || {}, d = s.detalhe || {};
+      const resumo = Object.keys(ROT_MOT).filter(k => m[k]).map(k => `${ROT_MOT[k]}: <b>${m[k]}</b>`).join(' · ');
+      if (!resumo) return '<span class="muted">—</span>';
+      const lista = Object.keys(ROT_MOT).filter(k => m[k]).map(k =>
+        `<div style="margin-top:4px"><b>${ROT_MOT[k]} (${m[k]})</b>: ` + (d[k] || []).map(e =>
+          `<a href="${e.url}" target="_blank" rel="noopener" title="${e.titulo} — criada ${e.data_hora_criacao}">#${e.deal_id}</a>${e.extra ? ' <span class="muted">(' + e.extra + ')</span>' : ''}`).join(', ')
+          + (m[k] > (d[k] || []).length ? ' …' : '') + '</div>').join('');
+      return `<details><summary style="cursor:pointer">${resumo}</summary>${lista}</details>`;
+    };
     html += `<table class="aud-tbl"><tr><th class="l">SDR</th><th class="l">Time</th><th class="l">Entrada</th><th class="l">Saída</th>
-      <th>Validadas do mês</th><th>Fora da escala</th><th class="barcell"></th></tr>`;
-    const sdrsEscala = (resEscala.sdrs || []).slice().sort((a,b) => (!!a.lideranca - !!b.lideranca) || ((b.fora_da_escala||0) - (a.fora_da_escala||0)));
+      <th>Validadas (M6)</th><th>Avaliadas</th><th>Fora da escala</th><th class="l">Não avaliadas — por quê</th><th class="barcell"></th></tr>`;
+    const sdrsEscala = (resEscala.sdrs || []).slice().sort((a,b) => (!!a.lideranca - !!b.lideranca) || ((b.total_mes||0) - (a.total_mes||0)));
     for (const s of sdrsEscala) {
       if (s.erro) {
         html += `<tr><td class="l">${s.nome}</td><td class="l muted">${s.time||''}</td>
-          <td class="l muted" colspan="5">${s.erro}</td></tr>`;
+          <td class="l muted" colspan="7">${s.erro}</td></tr>`;
         continue;
       }
       const exemplos = (s.exemplos || []).map(e =>
@@ -1745,23 +1758,25 @@ function renderTaxasAba(resEscala, resDash, resEvolucoes, resNS, rangeNS, mesNS)
         <td class="l muted">${s.entrada || '—'}</td>
         <td class="l muted">${s.saida || '—'}</td>
         <td class="qtd">${s.total_mes}</td>
+        <td class="qtd">${s.avaliadas || 0}</td>
         <td class="qtd">${s.fora_da_escala}<div class="muted" style="font-size:11px">${s.pct_fora_escala}%</div></td>
+        <td class="l" style="font-size:12px">${motivosHtml(s)}</td>
         <td class="aud-negs">${exemplos}</td></tr>`;
     }
     if (!sdrsEscala.length) {
-      html += `<tr><td colspan="7" class="aud-empty">Nenhum SDR encontrado no mês.</td></tr>`;
+      html += `<tr><td colspan="9" class="aud-empty">Nenhum SDR encontrado no mês.</td></tr>`;
     }
     const t = resEscala.total || {};
     html += `<tr class="total"><td class="l">TOTAL</td><td></td><td></td><td></td>
       <td class="qtd">${t.total_mes||0}</td>
+      <td class="qtd">${t.avaliadas||0}</td>
       <td class="qtd">${t.fora_da_escala||0}<div class="muted" style="font-size:11px">${t.pct_fora_escala||0}%</div></td>
-      <td></td></tr>`;
+      <td></td><td></td></tr>`;
     html += `</table>`;
+    html += `<div class="muted" style="margin-top:8px;font-size:12px">Validadas (M6) = o mesmo número da aba Reuniões - SDRs. Só entram na conta de fora da escala as <b>avaliadas</b>: criadas pelo próprio SDR, de lead com última aplicação no mês e com escala para o funil do negócio. A % é fora ÷ avaliadas. Clique em "Não avaliadas — por quê" para ver os negócios de cada motivo.</div>`;
     const dg = resEscala.diagnostico;
-    if (dg && (!t.total_mes) && dg.etapas && Object.keys(dg.etapas).length) {
-      const rot = { feitas_com_deal: 'reuniões feitas com negócio', sem_criador_ou_ia: 'sem criador ou criadas pela IA', fora_do_periodo: 'fora do período', criadas_por_sdr: 'criadas por um SDR da lista', aplicacao_fora_do_mes: 'última aplicação fora do mês', nao_validada: 'negócio "Não validada"', sem_escala: 'sem escala para o funil/dia', avaliadas: 'avaliadas' };
-      html += `<div class="muted" style="margin-top:8px;font-size:12px"><b>Diagnóstico (total zerado):</b> ${Object.entries(dg.etapas).map(([k, v]) => (rot[k] || k) + ': ' + v).join(' · ')}`
-        + (Object.keys(dg.funis_sem_escala || {}).length ? `<br>Funis sem escala: ${Object.entries(dg.funis_sem_escala).map(([k, v]) => k + ' (' + v + ')').join(', ')}<br>Subáreas na planilha de escala: ${(dg.subareas_da_escala || []).join(', ') || '—'}` : '') + `</div>`;
+    if (dg && Object.keys(dg.funis_sem_escala || {}).length) {
+      html += `<div class="muted" style="margin-top:4px;font-size:12px">Funis sem escala: ${Object.entries(dg.funis_sem_escala).map(([k, v]) => k + ' (' + v + ')').join(', ')} · Subáreas na planilha de escala: ${(dg.subareas_da_escala || []).join(', ') || '—'}</div>`;
     }
   }
 

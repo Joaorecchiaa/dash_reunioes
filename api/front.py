@@ -1673,6 +1673,12 @@ async function buscaEscalaPeriodo(mes, de, ate) {
   const f = v => v.slice(8, 10) + '/' + v.slice(5, 7) + '/' + v.slice(0, 4);
   return {
     sdrs, escala_configurada: res.every(r => r.escala_configurada),
+    diagnostico: (() => { const d = { etapas: {}, funis_sem_escala: {}, subareas_da_escala: [] };
+      for (const r of res) { const x = r.diagnostico || {};
+        for (const k in (x.etapas || {})) d.etapas[k] = (d.etapas[k] || 0) + x.etapas[k];
+        for (const k in (x.funis_sem_escala || {})) d.funis_sem_escala[k] = (d.funis_sem_escala[k] || 0) + x.funis_sem_escala[k];
+        d.subareas_da_escala = x.subareas_da_escala || d.subareas_da_escala; }
+      return d; })(),
     total: { total_mes: tm, fora_da_escala: tf, pct_fora_escala: tm ? Math.round(tf / tm * 1000) / 10 : 0 },
     month_label: f(de) + ' a ' + f(ate),
   };
@@ -1750,6 +1756,12 @@ function renderTaxasAba(resEscala, resDash, resEvolucoes, resNS, rangeNS, mesNS)
       <td class="qtd">${t.fora_da_escala||0}<div class="muted" style="font-size:11px">${t.pct_fora_escala||0}%</div></td>
       <td></td></tr>`;
     html += `</table>`;
+    const dg = resEscala.diagnostico;
+    if (dg && (!t.total_mes) && dg.etapas && Object.keys(dg.etapas).length) {
+      const rot = { feitas_com_deal: 'reuniões feitas com negócio', sem_criador_ou_ia: 'sem criador ou criadas pela IA', fora_do_periodo: 'fora do período', criadas_por_sdr: 'criadas por um SDR da lista', aplicacao_fora_do_mes: 'última aplicação fora do mês', nao_validada: 'negócio "Não validada"', sem_escala: 'sem escala para o funil/dia', avaliadas: 'avaliadas' };
+      html += `<div class="muted" style="margin-top:8px;font-size:12px"><b>Diagnóstico (total zerado):</b> ${Object.entries(dg.etapas).map(([k, v]) => (rot[k] || k) + ': ' + v).join(' · ')}`
+        + (Object.keys(dg.funis_sem_escala || {}).length ? `<br>Funis sem escala: ${Object.entries(dg.funis_sem_escala).map(([k, v]) => k + ' (' + v + ')').join(', ')}<br>Subáreas na planilha de escala: ${(dg.subareas_da_escala || []).join(', ') || '—'}` : '') + `</div>`;
+    }
   }
 
   // ---- 2) taxa de conversao por closer (mesma conta da aba Reuniões - Closers) ----

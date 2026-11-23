@@ -155,6 +155,7 @@ HTML = r"""<!DOCTYPE html>
   .modal-bg { position:fixed; inset:0; background:rgba(0,0,0,.7); display:none; align-items:center;
               justify-content:center; z-index:100; }
   .modal-bg.show { display:flex; }
+  .modal-bg.obrig { background:#0b0b0b; }
   .modal { background:#0d0d0d; color:#f2f2f2; border:1px solid #2a2a2a; border-top:3px solid var(--gold);
            border-radius:14px; padding:24px; width:320px; max-width:90vw; box-shadow:0 10px 40px rgba(0,0,0,.5); }
   .modal h3 { margin:0 0 16px; font-size:15px; color:var(--gold); text-transform:uppercase; letter-spacing:.5px; }
@@ -266,7 +267,7 @@ HTML = r"""<!DOCTYPE html>
 <body>
   <div class="modal-bg" id="loginModal">
     <div class="modal">
-      <h3>Acesso restrito</h3>
+      <h3 id="loginTitulo">Acesso ao dashboard</h3>
       <label>Usuário</label>
       <input id="in-user" autocomplete="username" />
       <label>Senha</label>
@@ -322,6 +323,17 @@ const $ = id => document.getElementById(id);
 const hoje = new Date();
 let TOKEN = sessionStorage.getItem('dash_token') || null;
 let USUARIO = sessionStorage.getItem('dash_user') || null;
+let PAPEL = sessionStorage.getItem('dash_papel') || null;
+
+// toda chamada a /api/ leva o token; se o servidor responder "login obrigatorio" (token vencido, usuario
+// desativado), limpa a sessao e volta pra tela de login
+const _fetchOrig = window.fetch.bind(window);
+window.fetch = (u, o) => {
+  const url = String(u);
+  const api = url.startsWith('/api/') && !url.startsWith('/api/login');
+  if (api && TOKEN) o = Object.assign({}, o, { headers: Object.assign({}, (o && o.headers) || {}, { 'Authorization': 'Bearer ' + TOKEN }) });
+  return _fetchOrig(u, o).then(r => { if (api && r.status === 401 && TOKEN) exigeLogin(true); return r; });
+};
 
 function authHeaders() {
   return TOKEN ? { 'Authorization': 'Bearer ' + TOKEN } : {};
@@ -395,16 +407,14 @@ function diaSelecionado() {
 }
 
 async function init() {
-  // valida token salvo (pode ter expirado)
-  if (TOKEN) {
-    try {
-      const me = await (await fetch('/api/me', { headers: authHeaders() })).json();
-      if (!me.privilegiado) { TOKEN = null; USUARIO = null;
-        sessionStorage.removeItem('dash_token'); sessionStorage.removeItem('dash_user'); }
-      else { USUARIO = me.usuario; }
-    } catch (e) {}
-    atualizaAuthUI();
-  }
+  // login obrigatorio: sem token valido so aparece a tela de login
+  if (!TOKEN) { exigeLogin(false); return; }
+  try {
+    const me = await (await fetch('/api/me', { headers: authHeaders() })).json();
+    if (!me.privilegiado) { exigeLogin(true); return; }
+    USUARIO = me.usuario; PAPEL = me.papel; sessionStorage.setItem('dash_papel', PAPEL || '');
+  } catch (e) {}
+  atualizaAuthUI();
   const d = await (await fetch('/api/init')).json();
   CURRENT_MONTH = d.current;
   REFRESH_MS = (d.refresh_seconds || 1200) * 1000;
@@ -1244,66 +1254,59 @@ function ligaDiaADia() {
   });
 }
 
-// ---- login ----
-function abreLogin() {
-  $('loginErro').textContent = '';
+// ---- login (obrigatorio) ----
+function limpaSessao() {
+  TOKEN = null; USUARIO = null; PAPEL = null;
+  ['dash_token', 'dash_user', 'dash_papel'].forEach(k => sessionStorage.removeItem(k));
+}
+function exigeLogin(expirou) {
+  limpaSessao();
+  $('loginErro').textContent = expirou ? 'Sessão encerrada. Entre novamente.' : '';
   $('in-user').value = ''; $('in-pass').value = '';
-  $('loginModal').classList.add('show');
+  $('loginCancel').style.display = 'none';
+  $('loginModal').classList.add('show', 'obrig');
   $('in-user').focus();
 }
-function fechaLogin() { $('loginModal').classList.remove('show'); }
+function abreLogin() { exigeLogin(false); }
 
 async function fazLogin() {
   const usuario = $('in-user').value.trim();
   const senha = $('in-pass').value;
   $('loginErro').textContent = '';
   try {
-    const res = await fetch('/api/login', {
+    const res = await _fetchOrig('/api/login', {
       method: 'POST', headers: {'Content-Type':'application/json'},
       body: JSON.stringify({usuario, senha}),
     });
     const d = await res.json();
     if (!res.ok) { $('loginErro').textContent = d.error || 'Falha no login'; return; }
-    TOKEN = d.token; USUARIO = d.usuario;
-    sessionStorage.setItem('dash_token', TOKEN);
-    sessionStorage.setItem('dash_user', USUARIO);
-    fechaLogin();
-    atualizaAuthUI();
-    buscar(false);  // recarrega ja com os negocios
+    sessionStorage.setItem('dash_token', d.token);
+    sessionStorage.setItem('dash_user', d.usuario);
+    sessionStorage.setItem('dash_papel', d.papel || '');
+    location.reload();   // recarrega ja logado, com o time certo do papel
   } catch (e) {
     $('loginErro').textContent = 'Erro de conexão';
   }
 }
 
 function logout() {
-  TOKEN = null; USUARIO = null;
-  sessionStorage.removeItem('dash_token');
-  sessionStorage.removeItem('dash_user');
-  atualizaAuthUI();
-  buscar(false);
+  limpaSessao();
+  location.reload();
 }
 
 function atualizaAuthUI() {
-  if (ehPriv()) {
-    $('authWho').textContent = USUARIO ? ('● ' + USUARIO) : '● conectado';
-    $('btnAuth').textContent = 'Sair';
-    $('tab-auditoria').style.display = '';
-    $('tab-taxas').style.display = '';
-  } else {
-    $('authWho').textContent = '';
-    $('btnAuth').textContent = 'Entrar';
-    $('tab-auditoria').style.display = 'none';
-    $('tab-taxas').style.display = 'none';
-    // se estava numa aba privilegiada e deslogou, volta pra reunioes
-    if (ABA === 'auditoria' || ABA === 'taxas') trocaAba('reunioes');
-  }
+  const rot = {admin: 'admin', sniper: 'Sniper', olympus: 'Olympus'}[PAPEL] || '';
+  $('authWho').textContent = TOKEN ? ('● ' + (USUARIO || 'conectado') + (rot ? ' · ' + rot : '')) : '';
+  $('btnAuth').textContent = 'Sair';
+  $('tab-auditoria').style.display = TOKEN ? '' : 'none';
+  $('tab-taxas').style.display = TOKEN ? '' : 'none';
+  // Distribuicao e so do admin (o servidor tambem bloqueia)
+  $('tab-distribuicao').style.display = (TOKEN && PAPEL === 'admin') ? '' : 'none';
 }
 
-$('btnAuth').addEventListener('click', () => { ehPriv() ? logout() : abreLogin(); });
-$('loginCancel').addEventListener('click', fechaLogin);
+$('btnAuth').addEventListener('click', () => { TOKEN ? logout() : abreLogin(); });
 $('loginOk').addEventListener('click', fazLogin);
 $('in-pass').addEventListener('keydown', e => { if (e.key === 'Enter') fazLogin(); });
-$('loginModal').addEventListener('click', e => { if (e.target.id === 'loginModal') fechaLogin(); });
 
 // ---- abas ----
 let ABA = 'reunioes';

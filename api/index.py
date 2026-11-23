@@ -134,11 +134,19 @@ os.environ.setdefault("URL_COLAB", _url_aba(CSV_URL, GID_COLAB))
 os.environ.setdefault("URL_METAS", _url_aba(CSV_URL, GID_METAS))
 
 
-# ---- autenticacao do acesso privilegiado ----
-# USUARIOS_PRIVILEGIADOS = "usuario1:hash_sha256,usuario2:hash_sha256"
-#   (hash da senha em sha256 hex; gere com gerar_hash.py)
+# ---- autenticacao (login obrigatorio, usuarios na aba de acessos da planilha) ----
+# Aba com as colunas USUARIO, SENHA, PAPEL (admin, sniper ou olympus) e ATIVO (sim/nao).
+#   URL_ACESSOS  = link CSV publicado da aba; OU
+#   GID_ACESSOS  = gid da aba na mesma planilha do Colab (usa COLABORADORES_CSV_URL com esse gid).
+# Sem nenhuma das duas, vale o formato antigo USUARIOS_PRIVILEGIADOS ("usuario:hash_sha256,...") como admin.
 # AUTH_SECRET = string aleatoria longa para assinar o token
-def _carrega_usuarios():
+GID_ACESSOS = (os.environ.get("GID_ACESSOS", "") or "").strip().strip('"').strip("'")
+URL_ACESSOS = env("URL_ACESSOS", "") or (_url_aba(CSV_URL, GID_ACESSOS) if GID_ACESSOS else "")
+PAPEIS_VALIDOS = ("admin", "sniper", "olympus")
+PAPEL_TIME = {"sniper": "SNIPER", "olympus": "OLYMPUS"}   # papel de time ve so o proprio time; admin ve tudo
+
+
+def _carrega_usuarios_antigo():
     raw = os.environ.get("USUARIOS_PRIVILEGIADOS", "") or ""
     raw = raw.strip().strip('"').strip("'").strip()
     users = {}
@@ -150,47 +158,117 @@ def _carrega_usuarios():
         users[u.strip().lower()] = h.strip().lower()
     return users
 
-USUARIOS_PRIV = _carrega_usuarios()
+USUARIOS_PRIV = _carrega_usuarios_antigo()
 AUTH_SECRET = (os.environ.get("AUTH_SECRET", "") or "troque-este-segredo").encode()
 TOKEN_HORAS = 12  # validade do login
+ACESSOS_TTL = 60  # a aba de acessos e relida a cada minuto: desativar alguem vale quase na hora
+_acessos_cache = {"t": 0.0, "d": None}
+
+
+def _acessos():
+    """{usuario_norm: {"senha", "papel"}} so dos ATIVOS, lido da aba de acessos.
+    None = aba nao configurada (vale o formato antigo). Erro de leitura sem cache levanta excecao."""
+    if not URL_ACESSOS:
+        return None
+    agora = time.time()
+    if _acessos_cache["d"] is not None and agora - _acessos_cache["t"] < ACESSOS_TTL:
+        return _acessos_cache["d"]
+    try:
+        resp = requests.get(URL_ACESSOS, timeout=15)
+        resp.raise_for_status()
+        resp.encoding = "utf-8"
+        out = {}
+        for l in csv.DictReader(io.StringIO(resp.text)):
+            h = {norm(k or ""): (v or "").strip() for k, v in l.items()}
+            u = norm(h.get("usuario", ""))
+            papel = norm(h.get("papel", ""))
+            if not u or papel not in PAPEIS_VALIDOS or norm(h.get("ativo", "")) not in ("sim", "s", "true", "1", "x"):
+                continue
+            out[u] = {"senha": h.get("senha", ""), "papel": papel}
+        _acessos_cache.update(t=agora, d=out)
+        return out
+    except Exception:
+        if _acessos_cache["d"] is not None:      # planilha fora do ar: segue com a ultima leitura
+            return _acessos_cache["d"]
+        raise
 
 
 def _sha256(txt):
     return hashlib.sha256(txt.encode("utf-8")).hexdigest()
 
 
-def gera_token(usuario):
+def confere_login(usuario, senha):
+    """Papel da pessoa se usuario/senha estiverem certos e ativos; senao None."""
+    u = norm(usuario)
+    senha = str(senha or "").strip()
+    ac = _acessos()
+    if ac is None:                                 # formato antigo: hash sha256, tudo admin
+        h = USUARIOS_PRIV.get(u)
+        return "admin" if h and hmac.compare_digest(h, _sha256(senha)) else None
+    reg = ac.get(u)
+    if reg and reg["senha"] and hmac.compare_digest(reg["senha"].encode(), senha.encode()):
+        return reg["papel"]
+    return None
+
+
+def gera_token(usuario, papel):
     exp = int(time.time()) + TOKEN_HORAS * 3600
-    corpo = f"{usuario}|{exp}"
+    corpo = f"{usuario}|{papel}|{exp}"
     assinatura = hmac.new(AUTH_SECRET, corpo.encode(), hashlib.sha256).hexdigest()
-    bruto = f"{corpo}|{assinatura}"
-    return base64.urlsafe_b64encode(bruto.encode()).decode()
+    return base64.urlsafe_b64encode(f"{corpo}|{assinatura}".encode()).decode()
 
 
 def valida_token(token):
-    """Retorna o usuario se o token for valido e nao expirado; senao None."""
+    """(usuario, papel) se o token for valido e nao expirado; senao None."""
     if not token:
         return None
     try:
         bruto = base64.urlsafe_b64decode(token.encode()).decode()
-        usuario, exp, assinatura = bruto.rsplit("|", 2)
-        corpo = f"{usuario}|{exp}"
-        esperado = hmac.new(AUTH_SECRET, corpo.encode(), hashlib.sha256).hexdigest()
+        usuario, papel, exp, assinatura = bruto.rsplit("|", 3)
+        esperado = hmac.new(AUTH_SECRET, f"{usuario}|{papel}|{exp}".encode(), hashlib.sha256).hexdigest()
         if not hmac.compare_digest(esperado, assinatura):
             return None
         if int(exp) < int(time.time()):
             return None
-        return usuario
+        return usuario, papel
     except Exception:
         return None
 
 
-def eh_privilegiado(req):
-    """Le o token do header Authorization: Bearer <token>."""
+def sessao(req):
+    """{'usuario', 'papel'} do header Authorization: Bearer <token>, ou None. Confere a aba de acessos:
+    quem foi desativado (ATIVO=nao) ou removido perde o acesso mesmo com token valido; papel vale o da aba."""
     auth = req.headers.get("Authorization", "")
-    if auth.startswith("Bearer "):
-        return valida_token(auth[7:]) is not None
-    return False
+    if not auth.startswith("Bearer "):
+        return None
+    t = valida_token(auth[7:])
+    if not t:
+        return None
+    usuario, papel = t
+    try:
+        ac = _acessos()
+    except Exception:
+        ac = False                                  # nao consegui ler a aba: confio no token por ora
+    if ac is None:
+        if norm(usuario) not in USUARIOS_PRIV:
+            return None
+    elif ac is not False:
+        reg = ac.get(norm(usuario))
+        if not reg:
+            return None
+        papel = reg["papel"]
+    return {"usuario": usuario, "papel": papel}
+
+
+def eh_privilegiado(req):
+    return sessao(req) is not None
+
+
+def time_forcado(req):
+    """Time a que a pessoa fica restrita (papel sniper/olympus); None = admin ou sem login."""
+    s = sessao(req)
+    return PAPEL_TIME.get(s["papel"]) if s else None
+
 
 client = PipedriveClient(PIPEDRIVE_DOMAIN, PIPEDRIVE_API_TOKEN)
 
@@ -659,10 +737,11 @@ def _ranking_por_criador(auditados, ano, mes):
     return saida
 
 
-def build_auditoria_sdr(ano, mes):
+def build_auditoria_sdr(ano, mes, time_filtro=None):
     ctx = contexto_mes(ano, mes)
-    lideres = ctx["lideres"]
-    sdrs = {n: t for n, t in ctx["sdrs"].items() if n not in lideres}
+    do_time = lambda n: (not time_filtro) or norm(ctx["sdrs"].get(n, "")) == norm(time_filtro)
+    lideres = {n: c for n, c in ctx["lideres"].items() if do_time(n)}
+    sdrs = {n: t for n, t in ctx["sdrs"].items() if n not in ctx["lideres"] and do_time(n)}
     return {
         "year": ano, "month": mes, "month_label": f"{MESES_NOME[mes-1]}/{ano}",
         "carimbo": carimbo(),
@@ -800,7 +879,7 @@ def _criador_id(a):
     return c.get("id", c.get("value")) if isinstance(c, dict) else c
 
 
-def reunioes_fora_da_escala(ano, mes, date_de=None, date_ate=None, liberados=None):
+def reunioes_fora_da_escala(ano, mes, date_de=None, date_ate=None, liberados=None, time_filtro=None):
     """Por SDR: base = reunioes VALIDADAS pela M6 no periodo (o mesmo numero da aba Reunioes - SDRs).
     Cada uma e classificada: criada por outra pessoa (OP2 avalia quem criou, nao entra na conta do SDR),
     sem escala para o funil/dia, ou AVALIADA (dentro ou fora do turno, OP2)."""
@@ -827,6 +906,8 @@ def reunioes_fora_da_escala(ano, mes, date_de=None, date_ate=None, liberados=Non
                 "extra": extra, "url": PIPEDRIVE_BASE_URL + "/deal/" + str(a.get("deal_id"))}
 
     for nome, time_sdr in sorted(ctx["sdrs"].items()):
+        if time_filtro and norm(time_sdr) != norm(time_filtro):
+            continue
         uid = ctx["id_por_nome"].get(norm(nome))
         if uid is None:
             resultado.append({"nome": nome, "time": time_sdr, "entrada": None, "saida": None,
@@ -1243,6 +1324,7 @@ def crn_versao():
 
 @app.route("/api/init")
 def api_init():
+    forcado = time_forcado(request)
     hoje = fuso.hoje_brasil()
     teams, aviso = [], None
     try:
@@ -1254,7 +1336,7 @@ def api_init():
     out = {
         "months": meses_disponiveis(),
         "current": f"{hoje.year}-{hoje.month:02d}",
-        "teams": ["Todos"] + teams,
+        "teams": [forcado] if forcado else ["Todos"] + teams,
         "refresh_seconds": REFRESH_SECONDS,
         "crn": crn.versao(),
     }
@@ -1267,7 +1349,8 @@ def api_init():
 def api_closers():
     ano, mes = parse_ym(request.args.get("month", ""))
     try:
-        return jsonify({"closers": ["Todos"] + sorted(contexto_mes(ano, mes)["closers"].keys())})
+        ctx = contexto_mes(ano, mes)
+        return jsonify({"closers": ["Todos"] + sorted(_filtra(ctx["closers"], time_forcado(request), None))})
     except Exception as e:
         return _erro(e)
 
@@ -1276,7 +1359,7 @@ def api_closers():
 def api_dashboard():
     ano, mes = parse_ym(request.args.get("month", ""))
     try:
-        return jsonify(build_dashboard(ano, mes, request.args.get("team"), request.args.get("closer"),
+        return jsonify(build_dashboard(ano, mes, time_forcado(request) or request.args.get("team"), request.args.get("closer"),
                                        privilegiado=eh_privilegiado(request)))
     except Exception as e:
         return _erro(e)
@@ -1286,7 +1369,8 @@ def api_dashboard():
 def api_sdrs():
     ano, mes = parse_ym(request.args.get("month", ""))
     try:
-        return jsonify({"sdrs": ["Todos"] + sorted(contexto_mes(ano, mes)["sdrs"].keys())})
+        ctx = contexto_mes(ano, mes)
+        return jsonify({"sdrs": ["Todos"] + sorted(_filtra(ctx["sdrs"], time_forcado(request), None))})
     except Exception as e:
         return _erro(e)
 
@@ -1295,7 +1379,7 @@ def api_sdrs():
 def api_dashboard_sdr():
     ano, mes = parse_ym(request.args.get("month", ""))
     try:
-        return jsonify(build_dashboard_sdr(ano, mes, request.args.get("team"), request.args.get("sdr"),
+        return jsonify(build_dashboard_sdr(ano, mes, time_forcado(request) or request.args.get("team"), request.args.get("sdr"),
                                            privilegiado=eh_privilegiado(request)))
     except Exception as e:
         return _erro(e)
@@ -1303,7 +1387,7 @@ def api_dashboard_sdr():
 
 @app.route("/api/ligacoes_hoje")
 def api_ligacoes_hoje():
-    team = request.args.get("team") or "SNIPER"
+    team = time_forcado(request) or request.args.get("team") or "SNIPER"
     try:
         return jsonify(ligacoes_do_dia(team, request.args.get("tipo") or "todas"))
     except Exception as e:
@@ -1314,7 +1398,7 @@ def api_ligacoes_hoje():
 def api_ligacoes_sdr():
     ano, mes = parse_ym(request.args.get("month", ""))
     try:
-        return jsonify(ligacoes_sdr_mes(ano, mes, request.args.get("team") or None, request.args.get("sdr") or None))
+        return jsonify(ligacoes_sdr_mes(ano, mes, time_forcado(request) or request.args.get("team") or None, request.args.get("sdr") or None))
     except Exception as e:
         return _erro(e)
 
@@ -1326,7 +1410,7 @@ def api_auditoria_sdr():
         return jsonify({"error": "acesso restrito", "sdrs": []}), 401
     ano, mes = parse_ym(request.args.get("month", ""))
     try:
-        return jsonify(build_auditoria_sdr(ano, mes))
+        return jsonify(build_auditoria_sdr(ano, mes, time_forcado(request)))
     except Exception as e:
         return _erro(e)
 
@@ -1396,6 +1480,8 @@ def api_taxas_escala():
             date_de = date_ate = None
     try:
         if request.args.get("deal"):
+            if time_forcado(request):
+                return jsonify({"error": "acesso restrito ao admin"}), 403
             return jsonify(_rastro_deal(ano, mes, date_de, date_ate, request.args.get("deal").strip()))
         lib = set()
         for x in (request.args.get("liberados", "") or "").split(","):
@@ -1403,7 +1489,7 @@ def api_taxas_escala():
                 lib.add(datetime.strptime(x.strip(), "%Y-%m-%d").date())
             except Exception:
                 pass
-        return jsonify(reunioes_fora_da_escala(ano, mes, date_de, date_ate, lib))
+        return jsonify(reunioes_fora_da_escala(ano, mes, date_de, date_ate, lib, time_forcado(request)))
     except Exception as e:
         return _erro(e)
 
@@ -1738,20 +1824,44 @@ def api_debug_deal_compare():
 @app.route("/api/login", methods=["POST"])
 def api_login():
     dados = request.get_json(silent=True) or {}
-    usuario = str(dados.get("usuario", "")).strip().lower()
+    usuario = str(dados.get("usuario", "")).strip()
     senha = str(dados.get("senha", ""))
-    hash_ok = USUARIOS_PRIV.get(usuario)
-    if hash_ok and hmac.compare_digest(hash_ok, _sha256(senha)):
-        return jsonify({"token": gera_token(usuario), "usuario": usuario})
+    try:
+        papel = confere_login(usuario, senha)
+    except Exception as e:
+        print("[login] nao consegui ler a aba de acessos:", e)
+        return jsonify({"error": "nao consegui ler a planilha de acessos, tente de novo em instantes"}), 503
+    if papel:
+        return jsonify({"token": gera_token(norm(usuario), papel), "usuario": norm(usuario), "papel": papel})
     return jsonify({"error": "usuario ou senha invalidos"}), 401
 
 
 @app.route("/api/me")
 def api_me():
-    auth = request.headers.get("Authorization", "")
-    tok = auth[7:] if auth.startswith("Bearer ") else ""
-    u = valida_token(tok)
-    return jsonify({"privilegiado": bool(u), "usuario": u})
+    s = sessao(request)
+    return jsonify({"privilegiado": bool(s), "usuario": s and s["usuario"], "papel": s and s["papel"]})
+
+
+# Login obrigatorio em toda a API. Ficam abertos so: a tela (HTML), login, me, versao da CRN, a lista de
+# meses (/api/init, sem dado de negocio) e a LEITURA do SNIPER que o wallpaper da TV usa (placar e ligacoes).
+_ABERTAS = {"/", "/api/index", "/api/login", "/api/me", "/crn-versao", "/api/init"}
+_SO_ADMIN = ("/api/debug", "/api/distribuicao", "/api/evolucao_sdr")
+
+
+@app.before_request
+def exige_login():
+    p = request.path
+    if request.method == "OPTIONS" or p in _ABERTAS or not p.startswith("/api/"):
+        return None
+    if (request.method == "GET" and p in ("/api/dashboard_sdr", "/api/ligacoes_hoje")
+            and (request.args.get("team") or "").strip().upper() == "SNIPER" and not request.args.get("sdr")):
+        return None                                   # wallpaper do SNIPER
+    s = sessao(request)
+    if not s:
+        return jsonify({"error": "login obrigatorio"}), 401
+    if s["papel"] != "admin" and p.startswith(_SO_ADMIN):
+        return jsonify({"error": "acesso restrito ao admin"}), 403
+    return None
 
 
 # CORS so de LEITURA nos dois endpoints publicos de reunioes -- permite que o

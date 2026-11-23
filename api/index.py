@@ -317,6 +317,7 @@ def contexto_mes(ano, mes):
             "nomes_exibidos": {p["nome_norm"] for p in colab if p["squad"].upper() in TIMES_EXIBIDOS},
             "sdrs": sdrs, "closers": closers, "lideres": lideres,
             "sdr_ids": sdr_ids, "lideranca_ids": lid_ids, "lq_ids": set(lq_ids),
+            "meta_reunioes": {m["nome_norm"]: m["meta_reunioes"] for m in metas},
         }
     return _cache_seguro(("ctx", ano, mes), 600, montar)
 
@@ -571,6 +572,7 @@ def _build_dashboard_generico(pessoas, ano, mes, privilegiado=False, com_validad
         por_closer.append({
             "name": nome, "time": time_c,
             "lideranca": (lideres or {}).get(nome),
+            "meta_reunioes": ((ctx.get("meta_reunioes") if isinstance(ctx, dict) else None) or {}).get(norm(nome)),
             "total": c_total,
             "days": [{"dia": d, "counter": c_days[d]} for d in range(1, ultimo + 1)],
             "by_pipeline": dict(c_pipes),

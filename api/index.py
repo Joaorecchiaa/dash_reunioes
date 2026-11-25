@@ -460,6 +460,31 @@ def dados_periodo(ano, mes):
     return _cache_seguro(("periodo", ano, mes), TTL, buscar, tamanho=lambda v: len(v["acts"]))
 
 
+def dados_periodo_leve(ano, mes):
+    """So o que a aba Taxas % precisa: as reunioes FEITAS do mes (busca padrao da M6) e os deals delas.
+    Nao busca no-show, reagendamento nem reuniao nao feita (a M6 so valida reuniao feita), entao e bem mais rapida.
+    Se o periodo completo do mes ja estiver em cache (outra aba abriu antes), usa ele."""
+    with _lock:
+        c = _cache["dados"].get(("periodo", ano, mes))
+    if c and time.time() - c["ts"] < TTL:
+        return c["v"]
+    ini = date(ano, mes, 1)
+    fim = date(ano, mes, calendar.monthrange(ano, mes)[1])
+
+    def buscar():
+        base = m6.carregar_periodo(ini, fim)
+        acts = list(base["atividades"])
+        deals = {d["id"]: d for d in base["deals"]}
+        faltam = [a.get("deal_id") for a in acts if a.get("deal_id") and a.get("deal_id") not in deals]
+        if faltam:
+            for d in pipedrive.deals_por_ids(faltam):
+                deals[d["id"]] = d
+        validados, donos = m6.mapas_dos_deals(list(deals.values()))
+        return {"ini": ini, "fim": fim, "acts": acts, "deals": deals,
+                "deals_validados": validados, "dono_do_deal": donos}
+    return _cache_seguro(("periodo_leve", ano, mes), TTL, buscar, tamanho=lambda v: len(v["acts"]))
+
+
 def carimbo(ano=None, mes=None, extra=""):
     agora = fuso.agora_brasil()
     partes = [f"CRN {crn.versao()}",
@@ -885,7 +910,7 @@ def reunioes_fora_da_escala(ano, mes, date_de=None, date_ate=None, liberados=Non
     sem escala para o funil/dia, ou AVALIADA (dentro ou fora do turno, OP2)."""
     liberados = set(liberados or [])      # dias (data de criacao, Brasilia) tratados como trabalhados normais: nunca contam como fora
     ctx = contexto_mes(ano, mes)
-    P = dados_periodo(ano, mes)
+    P = dados_periodo_leve(ano, mes)
     escala, erro_escala = _escala()
     pipelines = funis_pipedrive()
     di, df = (date_de, date_ate) if (date_de and date_ate) else (P["ini"], P["fim"])

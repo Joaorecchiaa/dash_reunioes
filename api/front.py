@@ -2052,7 +2052,7 @@ function renderAuditoria(data) {
   const sdrs = []
     .concat((data.sdrs || []).slice().sort((a, b) => b.total - a.total).map(s => ({ nome: s.nome, cargo: '', total: s.total, closers: s.closers })))
     .concat((data.liderancas || []).slice().sort((a, b) => b.total - a.total).map(s => ({ nome: s.nome, cargo: s.label, total: s.total, closers: s.closers })))
-    .concat((data.outros || []).map(s => ({ nome: s.nome, cargo: '', total: s.total, closers: s.closers })));
+    .concat((data.outros || []).map(s => ({ nome: s.nome, cargo: s.label || '', total: s.total, closers: s.closers })));
   const totCloser = {};
   sdrs.forEach(l => l.closers.forEach(c => { totCloser[c.closer] = (totCloser[c.closer] || 0) + c.qtd; }));
   const closers = Object.keys(totCloser).sort((a, b) => totCloser[b] - totCloser[a] || a.localeCompare(b));

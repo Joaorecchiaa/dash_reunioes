@@ -785,6 +785,16 @@ def build_auditoria_sdr(ano, mes, time_filtro=None):
         return {"nome": nome, "label": label, "encontrado": True, "total": sum(len(v) for v in por_closer.values()),
                 "closers": [{"closer": k, "qtd": len(v), "negocios": sorted(v, key=lambda x: x["id"])} for k, v in lista]}
 
+    # Validacao por closer (mesma conta da aba Closers): reunioes feitas, campo "Reuniao Validada?" do negocio
+    vcont = defaultdict(lambda: {"vol": 0, "sim": 0, "vazio": 0, "nao": 0})
+    for a in base:
+        c = users.get(responsavel_id(a)) or f"user {responsavel_id(a)}"
+        vcont[c]["vol"] += 1
+        st = P["status_do_deal"].get(a.get("deal_id"))
+        if st in ("sim", "vazio", "nao"):
+            vcont[c][st] += 1
+    validacao = [{"closer": c, **v} for c, v in sorted(vcont.items(), key=lambda x: (-x[1]["vol"], x[0]))]
+
     outros = []
     if "__proprio" in agrup:
         outros.append(pessoa("Próprio closer", "", "__proprio"))
@@ -796,6 +806,7 @@ def build_auditoria_sdr(ano, mes, time_filtro=None):
         "sdrs": [pessoa(n, t, n) for n, t in sorted(sdrs.items())],
         "liderancas": [pessoa(n, c, n) for n, c in sorted(lideres.items())],
         "outros": outros,
+        "validacao": validacao,
     }
 
 

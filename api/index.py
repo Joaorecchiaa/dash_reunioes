@@ -732,75 +732,64 @@ def build_dashboard_sdr(ano, mes, time_filtro=None, sdr_filtro=None, privilegiad
 
 # ---------- auditoria: para quais closers cada SDR marca ----------
 
-def _ranking_por_criador(auditados, ano, mes):
-    """auditados = {nome: label}. Reunioes validadas (M6) de cada pessoa, agrupadas pelo dono do negocio."""
+def build_auditoria_sdr(ano, mes, time_filtro=None):
+    """Closer x quem agendou, na mesma visao da aba Closers: reunioes FEITAS do closer (RC1: atividade no nome do
+    closer, com negocio, sem IA) agrupadas por QUEM CRIOU a atividade (PR1). Valida ou nao: o campo vai em cada
+    negocio (validada) e o front filtra. Criador que nao e SDR/lideranca cai em "Outros"; o proprio closer, em
+    "Proprio closer"."""
     ctx = contexto_mes(ano, mes)
     P = dados_periodo(ano, mes)
     users = ctx["users"]
-    # Universo da M6 ANTES da validacao: todas as reunioes feitas do SDR, com o status do deal (sim/vazio/nao)
-    uni = m6.reunioes_com_status(P["acts"], P["ini"], P["fim"], status_do_deal=P["status_do_deal"],
-                                 dono_do_deal=P["dono_do_deal"], sdr_ids=ctx["sdr_ids"],
-                                 lideranca_ids=ctx["lideranca_ids"], lideranca_que_agenda_ids=ctx["lq_ids"])
-    val = defaultdict(list)
-    for it in uni:
-        val[it["responsavel"]].append(it)
-    saida = []
-    for nome, label in sorted(auditados.items()):
-        uid = ctx["id_por_nome"].get(norm(nome))
-        contadores, negocios = defaultdict(int), defaultdict(list)
-        total = 0
-        for it in val.get(uid, []):
-            did = it["deal_id"]
-            dono = P["dono_do_deal"].get(did)
-            closer = users.get(dono) or f"user {dono}"
-            contadores[closer] += 1
-            total += 1
-            t = (P["deals"].get(did) or {}).get("title") or ("Negocio " + str(did))
-            negocios[closer].append({"id": did, "title": t + ("" if it["validada"] else " · não validada"),
-                                     "url": PIPEDRIVE_BASE_URL + "/deal/" + str(did),
-                                     "validada": it["validada"]})
-        # Quem agendou = quem CRIOU a reuniao: soma as reunioes feitas que este SDR criou para um closer
-        # (atividade de outro responsavel) em negocios que ele ainda nao tem pela M6.
-        # Painel/auditoria apenas (nao e a M6 oficial: nao entra em meta nem em validadas).
-        if uid is not None:
-            ja = {it["deal_id"] for it in val.get(uid, [])}
-            for a in P["acts"]:
-                did = a.get("deal_id")
-                if (not did or did in ja or a.get("type") != tipo_atividade("reuniao") or not _feita(a)
-                        or _criador_id(a) != uid or responsavel_id(a) == uid or criada_pela_ia(a)):
-                    continue
-                dia = fuso.atividade_dia(a)
-                if not dia or dia < P["ini"] or dia > P["fim"]:
-                    continue
-                dono = P["dono_do_deal"].get(did)
-                if dono in ctx["sdr_ids"] or dono is None:
-                    dono = responsavel_id(a)
-                closer = users.get(dono) or f"user {dono}"
-                ja.add(did)
-                contadores[closer] += 1
-                total += 1
-                negocios[closer].append({"id": did, "title": ((P["deals"].get(did) or {}).get("title") or ("Negocio " + str(did))) + " · criada por este SDR, atividade de outro responsavel",
-                                         "url": PIPEDRIVE_BASE_URL + "/deal/" + str(did), "extra": True,
-                                         "validada": P["status_do_deal"].get(did) != "nao"})
-        ranking = sorted(contadores.items(), key=lambda x: (-x[1], x[0]))
-        saida.append({
-            "nome": nome, "label": label, "encontrado": uid is not None, "total": total,
-            "closers": [{"closer": k, "qtd": v, "negocios": sorted(negocios[k], key=lambda x: x["id"])}
-                        for k, v in ranking],
-        })
-    return saida
-
-
-def build_auditoria_sdr(ano, mes, time_filtro=None):
-    ctx = contexto_mes(ano, mes)
     do_time = lambda n: (not time_filtro) or norm(ctx["sdrs"].get(n, "")) == norm(time_filtro)
     lideres = {n: c for n, c in ctx["lideres"].items() if do_time(n)}
     sdrs = {n: t for n, t in ctx["sdrs"].items() if n not in ctx["lideres"] and do_time(n)}
+
+    closer_ids = {ctx["id_por_nome"][norm(n)] for n in ctx["closers"] if norm(n) in ctx["id_por_nome"]}
+    base = do_tipo(P["acts"], ["reuniao"], P["ini"], P["fim"], so_feitas=True, responsaveis=closer_ids, sem_ia=True)
+
+    uid_pessoa = {}
+    for n in list(sdrs) + list(lideres):
+        u = ctx["id_por_nome"].get(norm(n))
+        if u is not None:
+            uid_pessoa[u] = n
+    agrup = defaultdict(lambda: defaultdict(list))      # chave (nome | "__proprio" | "__outros") -> closer -> negocios
+    for a in base:
+        did = a.get("deal_id")
+        closer = users.get(responsavel_id(a)) or f"user {responsavel_id(a)}"
+        criador = _criador_id(a)
+        if pr1.marcada_pelo_proprio(a):
+            chave = "__proprio"
+        elif criador in uid_pessoa:
+            chave = uid_pessoa[criador]
+        else:
+            chave = "__outros"
+        if time_filtro and chave in ("__proprio", "__outros"):
+            continue
+        t = (P["deals"].get(did) or {}).get("title") or ("Negocio " + str(did))
+        if chave == "__outros":
+            t += " · criada por " + str(users.get(criador) or criador)
+        dia = fuso.atividade_dia(a)
+        agrup[chave][closer].append({"id": did, "title": t, "url": PIPEDRIVE_BASE_URL + "/deal/" + str(did),
+                                     "validada": P["status_do_deal"].get(did) != "nao",
+                                     "data": str(dia) if dia else ""})
+
+    def pessoa(nome, label, chave):
+        por_closer = agrup.get(chave, {})
+        lista = sorted(por_closer.items(), key=lambda x: (-len(x[1]), x[0]))
+        return {"nome": nome, "label": label, "encontrado": True, "total": sum(len(v) for v in por_closer.values()),
+                "closers": [{"closer": k, "qtd": len(v), "negocios": sorted(v, key=lambda x: x["id"])} for k, v in lista]}
+
+    outros = []
+    if "__proprio" in agrup:
+        outros.append(pessoa("Próprio closer", "", "__proprio"))
+    if "__outros" in agrup:
+        outros.append(pessoa("Outros (não SDR)", "", "__outros"))
     return {
         "year": ano, "month": mes, "month_label": f"{MESES_NOME[mes-1]}/{ano}",
         "carimbo": carimbo(),
-        "sdrs": _ranking_por_criador(sdrs, ano, mes),
-        "liderancas": _ranking_por_criador(dict(lideres), ano, mes),
+        "sdrs": [pessoa(n, t, n) for n, t in sorted(sdrs.items())],
+        "liderancas": [pessoa(n, c, n) for n, c in sorted(lideres.items())],
+        "outros": outros,
     }
 
 

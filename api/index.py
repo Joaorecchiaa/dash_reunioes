@@ -762,12 +762,10 @@ def build_auditoria_sdr(ano, mes, time_filtro=None):
         elif criador in uid_pessoa:
             chave = uid_pessoa[criador]
         else:
-            chave = "__outros"
-        if time_filtro and chave in ("__proprio", "__outros"):
+            chave = "o:" + str(users.get(criador) or criador or "(sem criador)")
+        if time_filtro and (chave == "__proprio" or chave.startswith("o:")):
             continue
         t = (P["deals"].get(did) or {}).get("title") or ("Negocio " + str(did))
-        if chave == "__outros":
-            t += " · criada por " + str(users.get(criador) or criador)
         dia = fuso.atividade_dia(a)
         agrup[chave][closer].append({"id": did, "title": t, "url": PIPEDRIVE_BASE_URL + "/deal/" + str(did),
                                      "validada": P["status_do_deal"].get(did) != "nao",
@@ -782,8 +780,8 @@ def build_auditoria_sdr(ano, mes, time_filtro=None):
     outros = []
     if "__proprio" in agrup:
         outros.append(pessoa("Próprio closer", "", "__proprio"))
-    if "__outros" in agrup:
-        outros.append(pessoa("Outros (não SDR)", "", "__outros"))
+    for chave in sorted(k for k in agrup if k.startswith("o:")):
+        outros.append(pessoa(chave[2:], "fora da lista de SDRs", chave))
     return {
         "year": ano, "month": mes, "month_label": f"{MESES_NOME[mes-1]}/{ano}",
         "carimbo": carimbo(),

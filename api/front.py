@@ -255,8 +255,11 @@ HTML = r"""<!DOCTYPE html>
   .aud-empty { color:var(--muted); font-size:13px; padding:8px 0; }
   /* Auditoria SDR: matriz SDR x Closer */
   .mx-wrap { overflow-x:auto; border:1px solid var(--border); border-radius:12px; background:var(--card); -webkit-overflow-scrolling:touch; }
-  table.mx { border-collapse:separate; border-spacing:0; font-size:13px; min-width:100%; }
-  table.mx th, table.mx td { padding:8px 10px; text-align:center; border-bottom:1px solid var(--border); white-space:nowrap; }
+  table.mx { border-collapse:separate; border-spacing:0; font-size:13px; width:100%; }
+  table.mx th, table.mx td { padding:8px 5px; text-align:center; border-bottom:1px solid var(--border); }
+  table.mx td { white-space:nowrap; }
+  table.mx th { white-space:normal; word-break:break-word; line-height:1.25; }
+  table.mx th.l, table.mx td.l { width:190px; min-width:150px; white-space:normal; padding-left:10px; }
   table.mx th { font-size:11px; color:var(--text); font-weight:700; background:#f7f8fa; cursor:pointer; vertical-align:bottom; }
   table.mx th:hover { background:#eceff3; }
   table.mx th.l, table.mx td.l { text-align:left; position:sticky; left:0; z-index:1; background:var(--card); }
@@ -264,7 +267,7 @@ HTML = r"""<!DOCTYPE html>
   table.mx td.l { cursor:pointer; font-weight:600; }
   table.mx td.l:hover { background:#f2f4f7; }
   table.mx td.c { cursor:pointer; font-weight:700; }
-  table.mx td.c:hover { outline:2px solid var(--gold); outline-offset:-2px; }
+  table.mx td.c:hover { outline:2px solid #8a6d00; outline-offset:-2px; }
   table.mx td.sel, table.mx td.l.sel, table.mx th.sel { outline:2px solid var(--text); outline-offset:-2px; }
   table.mx td.z { color:#c4c8cf; font-weight:400; cursor:default; }
   table.mx td.t, table.mx th.t { font-weight:800; cursor:pointer; background:#fafbfc; }
@@ -278,7 +281,7 @@ HTML = r"""<!DOCTYPE html>
   .mx-lista td { padding:7px 10px; border-bottom:1px solid var(--border); }
   .mx-lista td a { color:var(--text); font-weight:700; text-decoration:none; }
   .mx-lista td a:hover { text-decoration:underline; color:var(--gold-ink); }
-  @media (max-width:700px) { table.mx { font-size:12px; } table.mx th, table.mx td { padding:6px 7px; } .mx-lista td.hide-m, .mx-lista th.hide-m { display:none; } }
+  @media (max-width:700px) { table.mx th.l, table.mx td.l { width:120px; min-width:100px; } table.mx { font-size:12px; } table.mx th, table.mx td { padding:6px 7px; } .mx-lista td.hide-m, .mx-lista th.hide-m { display:none; } }
 
 
   details.diaria { margin-bottom:20px; border:1px solid var(--border); border-radius:12px; background:var(--card);
@@ -2040,8 +2043,8 @@ function renderAuditoria(data) {
     return;
   }
   const max = Math.max(1, ...linhas.flatMap(l => l.closers.map(c => c.qtd)));
-  const heat = v => `background:rgba(59,130,246,${(0.10 + 0.55 * v / max).toFixed(2)})`;
-  html += `<div class="mx-wrap"><table class="mx" id="aud-mx"><tr><th class="l" data-limpa="1">SDR \\ Closer</th>`;
+  const heat = v => `background:rgba(255,200,0,${(0.14 + 0.72 * v / max).toFixed(2)})`;
+  html += `<div class="mx-wrap"><table class="mx" id="aud-mx"><tr><th class="l" data-limpa="1">SDR ↓ · Closer →</th>`;
   closers.forEach((c, j) => { html += `<th data-c="${j}">${c}</th>`; });
   html += `<th class="t" data-todos="1">Total</th></tr>`;
   linhas.forEach((l, i) => {

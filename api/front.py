@@ -2035,10 +2035,20 @@ function audNomeEmDuas(n) {
   return p.length > 1 ? `${p[0]}<span class="th-sub">${p.slice(1).join(' ')}</span>` : n;
 }
 
+let AUD_MODO = 'todas';   // 'todas' = todas as feitas (validadas ou não) + criadas pelo SDR · 'm6' = só validadas (M6)
+let AUD_DATA = null;
+function audModo(m) { AUD_MODO = m; if (AUD_DATA) renderAuditoria(AUD_DATA); }
+
 function renderAuditoria(data) {
-  const sdrs = []
-    .concat((data.sdrs || []).slice().sort((a, b) => b.total - a.total).map(s => ({ nome: s.nome, cargo: '', total: s.total, closers: s.closers })))
-    .concat((data.liderancas || []).slice().sort((a, b) => b.total - a.total).map(s => ({ nome: s.nome, cargo: s.label, total: s.total, closers: s.closers })));
+  AUD_DATA = data;
+  const filtra = l => {
+    const closers = (l.closers || []).map(c => {
+      const negocios = (c.negocios || []).filter(n => AUD_MODO === 'todas' || (!n.extra && n.validada !== false));
+      return { closer: c.closer, qtd: negocios.length, negocios };
+    }).filter(c => c.qtd > 0);
+    return { ...l, closers, total: closers.reduce((a, c) => a + c.qtd, 0) };
+  };
+  data = { ...data, sdrs: (data.sdrs || []).map(filtra), liderancas: (data.liderancas || []).map(filtra) };
   const totCloser = {};
   sdrs.forEach(l => l.closers.forEach(c => { totCloser[c.closer] = (totCloser[c.closer] || 0) + c.qtd; }));
   const closers = Object.keys(totCloser).sort((a, b) => totCloser[b] - totCloser[a] || a.localeCompare(b));
@@ -2048,7 +2058,8 @@ function renderAuditoria(data) {
   AUD_SEL = { s: null, c: null };
 
   let html = `<div class="kpi-head">Closer × quem agendou · ${data.month_label}</div>`;
-  html += `<div class="muted" style="margin:4px 0 10px;font-size:12px">Reuniões feitas e validadas (M6) no mês · linha = closer dono do negócio · coluna = SDR/liderança que agendou · clique em um número, no nome do closer ou no nome do SDR para ver os negócios (IDs do Pipedrive).</div>`;
+  html += `<div style="margin:6px 0"><button class="tab${AUD_MODO === 'm6' ? ' active' : ''}" onclick="audModo('m6')">Só validadas (M6)</button> <button class="tab${AUD_MODO === 'todas' ? ' active' : ''}" onclick="audModo('todas')">Todas (validadas ou não)</button></div>`;
+  html += `<div class="muted" style="margin:4px 0 10px;font-size:12px">${AUD_MODO === 'm6' ? 'Reuniões feitas e validadas (M6)' : 'Todas as reuniões feitas, validadas ou não: as do SDR (responsável) + as que ele criou para o closer'} no mês · linha = closer dono do negócio · coluna = SDR/liderança que agendou · clique em um número, no nome do closer ou no nome do SDR para ver os negócios (IDs do Pipedrive).</div>`;
   if (!sdrs.length) {
     $('root-aud').innerHTML = html + '<div class="aud-empty">Nenhum SDR encontrado no mês.</div>';
     return;

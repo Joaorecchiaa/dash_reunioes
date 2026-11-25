@@ -272,7 +272,11 @@ HTML = r"""<!DOCTYPE html>
   table.mx td.z { color:#c4c8cf; font-weight:400; cursor:default; }
   table.mx td.t, table.mx th.t { font-weight:800; cursor:pointer; background:#fafbfc; }
   table.mx tr.tot td { font-weight:800; background:#fff8d6; border-top:2px solid var(--border); }
+  table.mx th .th-sub { display:block; font-weight:400; font-size:10px; text-transform:none; color:var(--muted); }
   .mx-lista { margin-top:14px; }
+  .mx-det { border:1px solid var(--border); border-radius:12px; background:var(--card); padding:10px 14px; }
+  .mx-det summary { cursor:pointer; font-size:14px; }
+  .mx-det .cab { margin:10px 0 8px; }
   .mx-lista .cab { display:flex; flex-wrap:wrap; align-items:center; gap:10px; margin-bottom:8px; }
   .mx-lista .cab b { font-size:14px; }
   .mx-lista .rol { max-height:520px; overflow:auto; border:1px solid var(--border); border-radius:10px; background:var(--card); }
@@ -2020,44 +2024,50 @@ function auditoriaBloco(pessoa, idx, prefixo) {
   </div>`;
 }
 
-// ---- Auditoria SDR: matriz SDR x Closer (reunioes validadas do mes, closer = dono do negocio) ----
-let AUD_M = null;      // {linhas, closers, cel}
-let AUD_SEL = { s: null, c: null };   // linha (SDR) e/ou coluna (closer) escolhidas
+// ---- Auditoria SDR: matriz Closer x quem agendou (reunioes validadas do mes, closer = dono do negocio) ----
+// linhas (descendo) = closers; colunas (no topo) = SDRs/lideranca que agendaram
+let AUD_M = null;      // {sdrs, closers, cel}
+let AUD_SEL = { s: null, c: null };   // SDR (coluna) e/ou closer (linha) escolhidos; -1 = todos
+
+function audNomeEmDuas(n) {
+  const p = String(n).trim().split(/\s+/);
+  return p.length > 1 ? `${p[0]}<span class="th-sub">${p.slice(1).join(' ')}</span>` : n;
+}
 
 function renderAuditoria(data) {
-  const linhas = []
+  const sdrs = []
     .concat((data.sdrs || []).slice().sort((a, b) => b.total - a.total).map(s => ({ nome: s.nome, cargo: '', total: s.total, closers: s.closers })))
     .concat((data.liderancas || []).slice().sort((a, b) => b.total - a.total).map(s => ({ nome: s.nome, cargo: s.label, total: s.total, closers: s.closers })));
   const totCloser = {};
-  linhas.forEach(l => l.closers.forEach(c => { totCloser[c.closer] = (totCloser[c.closer] || 0) + c.qtd; }));
+  sdrs.forEach(l => l.closers.forEach(c => { totCloser[c.closer] = (totCloser[c.closer] || 0) + c.qtd; }));
   const closers = Object.keys(totCloser).sort((a, b) => totCloser[b] - totCloser[a] || a.localeCompare(b));
-  const cel = {};   // "i|j" -> negocios
-  linhas.forEach((l, i) => l.closers.forEach(c => { cel[i + '|' + closers.indexOf(c.closer)] = c.negocios || []; }));
-  AUD_M = { linhas, closers, cel, totCloser };
+  const cel = {};   // "i|j" (i = SDR, j = closer) -> negocios
+  sdrs.forEach((l, i) => l.closers.forEach(c => { cel[i + '|' + closers.indexOf(c.closer)] = c.negocios || []; }));
+  AUD_M = { sdrs, closers, cel };
   AUD_SEL = { s: null, c: null };
 
-  let html = `<div class="kpi-head">Auditoria — qual SDR agendou para qual closer · ${data.month_label}</div>`;
-  html += `<div class="muted" style="margin:4px 0 10px;font-size:12px">Reuniões feitas e validadas (M6) no mês · linha = SDR/liderança que agendou · coluna = closer dono do negócio · clique em um número, no nome do SDR ou no nome do closer para ver os negócios (IDs do Pipedrive).</div>`;
-  if (!linhas.length) {
+  let html = `<div class="kpi-head">Closer × quem agendou · ${data.month_label}</div>`;
+  html += `<div class="muted" style="margin:4px 0 10px;font-size:12px">Reuniões feitas e validadas (M6) no mês · linha = closer dono do negócio · coluna = SDR/liderança que agendou · clique em um número, no nome do closer ou no nome do SDR para ver os negócios (IDs do Pipedrive).</div>`;
+  if (!sdrs.length) {
     $('root-aud').innerHTML = html + '<div class="aud-empty">Nenhum SDR encontrado no mês.</div>';
     return;
   }
-  const max = Math.max(1, ...linhas.flatMap(l => l.closers.map(c => c.qtd)));
+  const max = Math.max(1, ...sdrs.flatMap(l => l.closers.map(c => c.qtd)));
   const heat = v => `background:rgba(255,200,0,${(0.14 + 0.72 * v / max).toFixed(2)})`;
-  html += `<div class="mx-wrap"><table class="mx" id="aud-mx"><tr><th class="l" data-limpa="1">SDR ↓ · Closer →</th>`;
-  closers.forEach((c, j) => { html += `<th data-c="${j}">${c}</th>`; });
+  html += `<div class="mx-wrap"><table class="mx" id="aud-mx"><tr><th class="l" data-limpa="1">Closer \\ agendada por</th>`;
+  sdrs.forEach((l, i) => { html += `<th data-s="${i}">${audNomeEmDuas(l.nome)}${l.cargo ? '<span class="th-sub">' + l.cargo + '</span>' : ''}</th>`; });
   html += `<th class="t" data-todos="1">Total</th></tr>`;
-  linhas.forEach((l, i) => {
-    html += `<tr><td class="l" data-s="${i}">${l.nome}${l.cargo ? ' <span class="cargo-lider">' + l.cargo + '</span>' : ''}</td>`;
-    closers.forEach((c, j) => {
+  closers.forEach((cn, j) => {
+    html += `<tr><td class="l" data-c="${j}">${cn}</td>`;
+    sdrs.forEach((l, i) => {
       const n = (cel[i + '|' + j] || []).length;
       html += n ? `<td class="c" data-s="${i}" data-c="${j}" style="${heat(n)}">${n}</td>` : `<td class="z">·</td>`;
     });
-    html += `<td class="t" data-s="${i}">${l.total}</td></tr>`;
+    html += `<td class="t" data-c="${j}">${totCloser[cn]}</td></tr>`;
   });
-  const gt = linhas.reduce((a, l) => a + l.total, 0);
+  const gt = sdrs.reduce((a, l) => a + l.total, 0);
   html += `<tr class="tot"><td class="l" data-todos="1">Total</td>`;
-  closers.forEach((c, j) => { html += `<td data-c="${j}" style="cursor:pointer">${totCloser[c]}</td>`; });
+  sdrs.forEach((l, i) => { html += `<td data-s="${i}" style="cursor:pointer">${l.total}</td>`; });
   html += `<td data-todos="1" style="cursor:pointer">${gt}</td></tr></table></div>`;
   html += `<div class="mx-lista" id="aud-lista"></div>`;
   $('root-aud').innerHTML = html;
@@ -2066,7 +2076,7 @@ function renderAuditoria(data) {
     const el = ev.target.closest('[data-s],[data-c],[data-todos],[data-limpa]');
     if (!el) return;
     if (el.hasAttribute('data-limpa')) { AUD_SEL = { s: null, c: null }; }
-    else if (el.hasAttribute('data-todos')) { AUD_SEL = { s: -1, c: -1 }; }      // todos
+    else if (el.hasAttribute('data-todos')) { AUD_SEL = { s: -1, c: -1 }; }
     else {
       AUD_SEL = { s: el.hasAttribute('data-s') ? Number(el.dataset.s) : null, c: el.hasAttribute('data-c') ? Number(el.dataset.c) : null };
     }
@@ -2080,27 +2090,28 @@ function audMostraLista() {
   const { s, c } = AUD_SEL;
   if (s === null && c === null) { box.innerHTML = ''; return; }
   const M = AUD_M;
-  const linhasSel = (s === null || s === -1) ? M.linhas.map((_, i) => i) : [s];
-  const colsSel = (c === null || c === -1) ? M.closers.map((_, j) => j) : [c];
+  const sdrSel = (s === null || s === -1) ? M.sdrs.map((_, i) => i) : [s];
+  const cloSel = (c === null || c === -1) ? M.closers.map((_, j) => j) : [c];
   const itens = [];
-  for (const i of linhasSel) for (const j of colsSel)
-    for (const n of (M.cel[i + '|' + j] || [])) itens.push({ ...n, sdr: M.linhas[i].nome, closer: M.closers[j] });
-  itens.sort((a, b) => a.sdr.localeCompare(b.sdr) || a.closer.localeCompare(b.closer) || a.id - b.id);
-  // destaque na matriz
+  for (const i of sdrSel) for (const j of cloSel)
+    for (const n of (M.cel[i + '|' + j] || [])) itens.push({ ...n, sdr: M.sdrs[i].nome, closer: M.closers[j] });
+  itens.sort((a, b) => a.closer.localeCompare(b.closer) || a.sdr.localeCompare(b.sdr) || a.id - b.id);
+  // destaque na matriz: a celula escolhida, ou o nome da linha / da coluna
   document.querySelectorAll('#aud-mx [data-s],#aud-mx [data-c]').forEach(e => {
     const es = e.hasAttribute('data-s') ? Number(e.dataset.s) : null, ec = e.hasAttribute('data-c') ? Number(e.dataset.c) : null;
+    const nomeLinha = e.tagName === 'TD' && e.classList.contains('l'), nomeColuna = e.tagName === 'TH';
     if (s !== null && s !== -1 && c !== null && c !== -1) { if (es === s && ec === c) e.classList.add('sel'); }
-    else if (s !== null && s !== -1 && c === null) { if (es === s && ec === null && e.tagName === 'TD' && e.classList.contains('l')) e.classList.add('sel'); }
-    else if (c !== null && c !== -1 && s === null) { if (ec === c && es === null) e.classList.add('sel'); }
+    else if (c !== null && c !== -1 && s === null) { if (nomeLinha && ec === c) e.classList.add('sel'); }
+    else if (s !== null && s !== -1 && c === null) { if (nomeColuna && es === s) e.classList.add('sel'); }
   });
-  const qSdr = (s === null || s === -1) ? 'todos os SDRs' : M.linhas[s].nome;
+  const qSdr = (s === null || s === -1) ? 'todos os SDRs' : M.sdrs[s].nome;
   const qClo = (c === null || c === -1) ? 'todos os closers' : M.closers[c];
   const ids = itens.map(n => n.id).join(', ');
-  box.innerHTML = `<div class="cab"><b>${qSdr} → ${qClo}</b><span class="muted">${itens.length} reunião${itens.length === 1 ? '' : 'ões'} validada${itens.length === 1 ? '' : 's'}</span>
-    <button class="grf-btn" id="aud-copia">Copiar IDs</button></div>
-    <div class="rol"><table><tr><th>ID</th><th class="hide-m">Negócio</th><th>SDR</th><th>Closer</th></tr>${
-      itens.map(n => `<tr><td><a href="${n.url}" target="_blank" rel="noopener">#${n.id}</a></td><td class="hide-m">${n.title || ''}</td><td>${n.sdr}</td><td>${n.closer}</td></tr>`).join('')
-      || '<tr><td colspan="4" class="aud-empty">Nenhum negócio.</td></tr>'}</table></div>`;
+  box.innerHTML = `<details open class="mx-det"><summary><b>${qClo} ← ${qSdr}</b> · ${itens.length} reuniõ${itens.length === 1 ? 'o' : 'es'}${itens.length === 1 ? '' : ''} validada${itens.length === 1 ? '' : 's'} <span class="muted">(clique para recolher / abrir os IDs)</span></summary>
+    <div class="cab"><button class="grf-btn" id="aud-copia">Copiar IDs</button></div>
+    <div class="rol"><table><tr><th>ID</th><th class="hide-m">Negócio</th><th>Closer</th><th>Agendada por</th></tr>${
+      itens.map(n => `<tr><td><a href="${n.url}" target="_blank" rel="noopener">#${n.id}</a></td><td class="hide-m">${n.title || ''}</td><td>${n.closer}</td><td>${n.sdr}</td></tr>`).join('')
+      || '<tr><td colspan="4" class="aud-empty">Nenhum negócio.</td></tr>'}</table></div></details>`;
   $('aud-copia').addEventListener('click', () => {
     const b = $('aud-copia');
     const ok = () => { b.textContent = 'Copiado!'; setTimeout(() => { b.textContent = 'Copiar IDs'; }, 1500); };

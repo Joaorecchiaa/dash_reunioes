@@ -1937,13 +1937,23 @@ function taxaNoShowSemanal(resNS, rangeNS, mes) {
     html += `<tr class="total"><td class="l">TOTAL</td><td></td><td class="qtd">${gf}</td><td class="qtd">${gns}</td><td class="qtd">${gf + gns}</td><td class="qtd">${pct(gns, gf + gns)}</td></tr>`;
   }
   html += `</table>`;
-  // detalhe semana a semana (recolhido)
+  // detalhe semana a semana (recolhido): uma linha por SDR e semana, cada numero na sua coluna
   if (lista.length) {
-    const cel = x => (x.ns + x.f) ? `<td class="qtd">${pct(x.ns, x.ns + x.f)} <span class="muted" style="font-size:11px">(${x.ns}/${x.ns + x.f})</span></td>` : `<td class="qtd muted">—</td>`;
-    html += `<details style="margin-top:8px"><summary style="cursor:pointer" class="muted">Ver semana a semana (no-show / validadas + no-show)</summary>
-      <table class="aud-tbl" style="margin-top:6px"><tr><th class="l">SDR</th>${semanas.map(w => `<th>${rot(w.ini)}–${rot(w.fim)}</th>`).join('')}</tr>`;
-    for (const p of lista) html += `<tr><td class="l">${nome(p)}</td>${p.sem.map(cel).join('')}</tr>`;
-    html += `<tr class="total"><td class="l">TOTAL</td>${tot.map(cel).join('')}</tr></table></details>`;
+    const linha = (x, ini, fim) => `<td>${rot(ini)} a ${rot(fim)}</td><td class="qtd">${x.f}</td><td class="qtd">${x.ns}</td><td class="qtd">${x.f + x.ns}</td><td class="qtd"><b>${pct(x.ns, x.f + x.ns)}</b></td>`;
+    html += `<details style="margin-top:8px"><summary style="cursor:pointer" class="muted">Ver semana a semana</summary>
+      <table class="aud-tbl" style="margin-top:6px"><tr><th class="l">SDR</th><th class="l">Semana</th><th>Validadas</th><th>No-show</th><th>Validadas + No-show</th><th>Taxa de no-show</th></tr>`;
+    for (const p of lista) {
+      const ativas = semanas.map((w, i) => ({ w, x: p.sem[i] })).filter(o => o.x.f + o.x.ns > 0);
+      if (!ativas.length) { html += `<tr><td class="l">${nome(p)}</td><td colspan="5" class="muted">sem reuniões no mês</td></tr>`; continue; }
+      ativas.forEach((o, k) => {
+        html += `<tr>${k === 0 ? `<td class="l" rowspan="${ativas.length}">${nome(p)}</td>` : ''}${linha(o.x, o.w.ini, o.w.fim)}</tr>`;
+      });
+    }
+    semanas.forEach((w, i) => {
+      if (tot[i].f + tot[i].ns > 0)
+        html += `<tr class="total">${i === 0 || !(tot.slice(0, i).some(t => t.f + t.ns > 0)) ? '<td class="l">TOTAL DO TIME</td>' : '<td></td>'}${linha(tot[i], w.ini, w.fim)}</tr>`;
+    });
+    html += `</table></details>`;
   }
   return html;
 }

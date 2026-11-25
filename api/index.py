@@ -882,9 +882,23 @@ def evolucao_horario_sdr(nome_sdr, desde_str, ate_str=None):
 
 # ---------- taxas: reunioes marcadas fora da escala (OP2) ----------
 
+# Subareas da planilha de escala que este painel nao mostra (ex.: Vanguard). Ficam fora da leitura, entao uma linha
+# repetida ou errada delas nao derruba a escala dos squads que o painel olha. Troque por variavel, se precisar.
+ESCALA_SUBAREAS_IGNORADAS = {norm(x) for x in env("ESCALA_SUBAREAS_IGNORADAS", "vanguard").split(",") if x.strip()}
+
+
+def _carrega_escala_do_painel():
+    """Escala pela CRN (fontes.carregar_escala), so com as linhas das subareas que o painel olha."""
+    linhas = fontes.ler_csv("ESCALA_COMERCIAL_CSV_URL")
+    col = next((h for h in (linhas[0].keys() if linhas else []) if norm(h) == "subarea"), None)
+    if col and ESCALA_SUBAREAS_IGNORADAS:
+        linhas = [l for l in linhas if norm(l.get(col, "")) not in ESCALA_SUBAREAS_IGNORADAS]
+    return fontes.carregar_escala(linhas)
+
+
 def _escala():
     try:
-        return _cache_seguro(("escala_crn",), 600, fontes.carregar_escala), None
+        return _cache_seguro(("escala_crn",), 600, _carrega_escala_do_painel), None
     except Exception as e:
         return {}, str(e)
 

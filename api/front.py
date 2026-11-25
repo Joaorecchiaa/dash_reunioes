@@ -1695,7 +1695,7 @@ async function buscaEscalaPeriodo(mes, de, ate) {
   }
   const f = v => v.slice(8, 10) + '/' + v.slice(5, 7) + '/' + v.slice(0, 4);
   return {
-    sdrs, escala_configurada: res.every(r => r.escala_configurada),
+    sdrs, escala_configurada: res.every(r => r.escala_configurada), erro_escala: (res.find(r => r.erro_escala) || {}).erro_escala || null,
     diagnostico: (() => { const d = { etapas: {}, funis_sem_escala: {}, subareas_da_escala: [] };
       for (const r of res) { const x = r.diagnostico || {};
         for (const k in (x.funis_sem_escala || {})) d.funis_sem_escala[k] = (d.funis_sem_escala[k] || 0) + x.funis_sem_escala[k];
@@ -1706,6 +1706,7 @@ async function buscaEscalaPeriodo(mes, de, ate) {
   };
 }
 
+let TAXAS_PEDIDO = 0;
 async function buscaTaxasAba(forcar) {
   // usa o filtro do cabecalho (Mes / De / Ate), o mesmo que as outras abas
   const mes = $('f-mes').value;
@@ -1721,8 +1722,8 @@ async function buscaTaxasAba(forcar) {
   $('taxas-resultado').innerHTML = '<div class="muted">Buscando no Pipedrive… (pode levar alguns segundos)</div>';
   try {
     const mesesNS = usaRange ? mesesDoIntervalo(de, ate) : [mes];
-    const [resEscala, resDash, resNS, ...resEvolucoes] = await Promise.all([
-      buscaEscalaPeriodo(mes, usaRange ? de : '', usaRange ? ate : ''),
+    const pEscala = buscaEscalaPeriodo(mes, usaRange ? de : '', usaRange ? ate : '');
+    const pResto = Promise.all([
       fetch('/api/dashboard?month=' + mes, { headers: authHeaders() }).then(r => r.json()),
       Promise.all(mesesNS.map(m => fetch('/api/dashboard_sdr?month=' + m, { headers: authHeaders() })
         .then(r => r.json()).then(d => ({ mes: m, d })).catch(e => ({ mes: m, d: { error: String(e) } })))),
@@ -1731,6 +1732,14 @@ async function buscaTaxasAba(forcar) {
         return fetch('/api/evolucao_sdr?' + p.toString(), { headers: authHeaders() }).then(r => r.json());
       }),
     ]);
+    const meuPedido = ++TAXAS_PEDIDO;
+    // fase 1: mostra a tabela de fora da escala assim que ela chega, sem esperar o resto
+    const resEscala = await pEscala;
+    if (meuPedido !== TAXAS_PEDIDO) return;
+    renderTaxasAba(resEscala, null, null, null, usaRange ? { de, ate } : null, mes);
+    // fase 2: conversao por closer, taxa de agendamento etc.
+    const [resDash, resNS, ...resEvolucoes] = await pResto;
+    if (meuPedido !== TAXAS_PEDIDO) return;
     TAXAS_CARREGADA_MES = chave;
     renderTaxasAba(resEscala, resDash, resEvolucoes, resNS, usaRange ? { de, ate } : null, mes);
   } catch (e) {
@@ -1747,7 +1756,10 @@ function renderTaxasAba(resEscala, resDash, resEvolucoes, resNS, rangeNS, mesNS)
     html += `<div class="warn">Erro: ${resEscala.error || resEscala.erro}</div>`;
   } else {
     if (!resEscala.escala_configurada) {
-      html += `<div class="warn" style="margin-bottom:8px">A escala comercial ainda não está configurada (ESCALA_COMERCIAL_CSV_URL) — o total de reuniões do mês aparece, mas "fora da escala" fica zerado até isso ser configurado.</div>`;
+      const motivoEsc = resEscala.erro_escala
+        ? `Não consegui carregar a escala comercial: <b>${resEscala.erro_escala}</b>. Confira a aba da escala na planilha (ESCALA_COMERCIAL_CSV_URL).`
+        : 'A escala comercial está vazia ou não configurada (ESCALA_COMERCIAL_CSV_URL).';
+      html += `<div class="warn" style="margin-bottom:8px">${motivoEsc} O total de reuniões aparece, mas "fora da escala" fica zerado até isso ser corrigido.</div>`;
     }
     html += `<div class="panel" style="margin:8px 0 12px;padding:10px 12px">
       <div style="font-size:12px;font-weight:700;margin-bottom:6px">Dias liberados (ex.: sábados trabalhados)</div>
@@ -1810,6 +1822,13 @@ function renderTaxasAba(resEscala, resDash, resEvolucoes, resNS, rangeNS, mesNS)
     if (dg && Object.keys(dg.funis_sem_escala || {}).length) {
       html += `<div class="muted" style="margin-top:4px;font-size:12px">Funis sem escala: ${Object.entries(dg.funis_sem_escala).map(([k, v]) => k + ' (' + v + ')').join(', ')} · Subáreas na planilha de escala: ${(dg.subareas_da_escala || []).join(', ') || '—'}</div>`;
     }
+  }
+
+  // fase 1: so a tabela de fora da escala (rapida); o resto chega depois e re-renderiza
+  if (resDash === null) {
+    html += '<div class="muted" style="margin-top:18px">Carregando conversão por closer e taxa de agendamento…</div>';
+    $('taxas-resultado').innerHTML = html;
+    return;
   }
 
   // ---- 2) taxa de conversao por closer (mesma conta da aba Reuniões - Closers) ----

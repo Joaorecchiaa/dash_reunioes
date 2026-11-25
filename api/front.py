@@ -255,6 +255,7 @@ HTML = r"""<!DOCTYPE html>
   .aud-bar { height:10px; background:var(--gold); border-radius:6px; }
   .aud-empty { color:var(--muted); font-size:13px; padding:8px 0; }
   /* Auditoria SDR: matriz SDR x Closer */
+  table.val-tab td.n{text-align:right} table.val-tab td:first-child{text-align:left;font-weight:600}
   .mx-wrap { overflow-x:auto; border:1px solid var(--border); border-radius:12px; background:var(--card); -webkit-overflow-scrolling:touch; }
   table.mx { border-collapse:separate; border-spacing:0; font-size:13px; width:100%; }
   table.mx th, table.mx td { padding:8px 5px; text-align:center; border-bottom:1px solid var(--border); }
@@ -2039,6 +2040,21 @@ let AUD_MODO = 'todas';   // 'todas' = feitas, validadas ou não · 'm6' = só v
 let AUD_DATA = null;
 function audModo(m) { AUD_MODO = m; if (AUD_DATA) renderAuditoria(AUD_DATA); }
 
+function audTabelaValidacao(lista) {
+  const p = (a, b) => b ? (a / b * 100).toLocaleString('pt-BR', { maximumFractionDigits: 1 }) + '%' : '—';
+  const n = v => (v || 0).toLocaleString('pt-BR');
+  const T = lista.reduce((t, x) => ({ vol: t.vol + x.vol, sim: t.sim + x.sim, vazio: t.vazio + x.vazio, nao: t.nao + x.nao }), { vol: 0, sim: 0, vazio: 0, nao: 0 });
+  const linha = (x, nome, cls) => {
+    const base = x.sim + x.vazio + x.nao;
+    return `<tr class="${cls}"><td>${nome}</td><td class="n">${n(x.vol)}</td><td class="n">${n(x.sim)}</td><td class="n">${n(x.sim + x.vazio)}</td><td class="n">${n(x.nao)}</td><td class="n">${n(x.vazio)}</td><td class="n"><b>${p(x.sim + x.vazio, base)}</b></td><td class="n"><b>${p(x.sim, base)}</b></td></tr>`;
+  };
+  return `<div class="kpi-head" style="margin-top:22px">Validação das reuniões</div>
+    <div class="muted" style="margin:4px 0 10px;font-size:12px">Só reuniões feitas · campo “Reunião Validada?” do negócio, vale para todas as reuniões dele · taxas sobre o volume de reuniões</div>
+    <div class="mx-wrap"><table class="mx val-tab"><tr><th class="l">Closer</th><th>Volume de reuniões</th><th>Validadas (Sim)</th><th>Validadas (Sim + vazio)</th><th>Não validadas (Não)</th><th>Sem informação (vazio)</th><th>Taxa de qualificação (Sim + vazio)</th><th>Taxa de qualificação (Sim)</th></tr>${
+      lista.length ? lista.map(x => linha(x, x.closer, '')).join('') + linha(T, 'Total', 'tot')
+        : '<tr><td colspan="8" class="aud-empty">Nenhuma reunião feita no mês.</td></tr>'}</table></div>`;
+}
+
 function renderAuditoria(data) {
   AUD_DATA = data;
   const filtra = l => {
@@ -2065,7 +2081,7 @@ function renderAuditoria(data) {
   html += `<div style="margin:6px 0"><button class="tab${AUD_MODO === 'm6' ? ' active' : ''}" onclick="audModo('m6')">Só validadas (M6)</button> <button class="tab${AUD_MODO === 'todas' ? ' active' : ''}" onclick="audModo('todas')">Todas (validadas ou não)</button></div>`;
   html += `<div class="muted" style="margin:4px 0 10px;font-size:12px">${AUD_MODO === 'm6' ? 'Reuniões feitas do closer com “Reunião Validada?” Sim ou vazio, agrupadas por quem criou a reunião' : 'Reuniões feitas do closer, validadas ou não, agrupadas por quem criou a reunião'} no mês · linha = closer da reunião · coluna = quem criou a reunião (SDR/liderança) · clique em um número, no nome do closer ou no nome do SDR para ver os negócios (IDs do Pipedrive).</div>`;
   if (!sdrs.length) {
-    $('root-aud').innerHTML = html + '<div class="aud-empty">Nenhum SDR encontrado no mês.</div>';
+    $('root-aud').innerHTML = html + '<div class="aud-empty">Nenhum SDR encontrado no mês.</div>' + audTabelaValidacao(data.validacao || []);
     return;
   }
   const max = Math.max(1, ...sdrs.flatMap(l => l.closers.map(c => c.qtd)));
@@ -2086,6 +2102,7 @@ function renderAuditoria(data) {
   sdrs.forEach((l, i) => { html += `<td data-s="${i}" style="cursor:pointer">${l.total}</td>`; });
   html += `<td data-todos="1" style="cursor:pointer">${gt}</td></tr></table></div>`;
   html += `<div class="mx-lista" id="aud-lista"></div>`;
+  html += audTabelaValidacao(data.validacao || []);
   $('root-aud').innerHTML = html;
 
   $('aud-mx').addEventListener('click', ev => {

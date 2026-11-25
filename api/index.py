@@ -338,6 +338,7 @@ def funis_pipedrive():
 
 
 # Squads exibidos no painel (pedido do painel, nao regra da CRN). So quem esta nesses squads na Colab do mes aparece.
+COLUNAS_NOMEADAS_TIME = os.environ.get("AUDITORIA_COLUNAS_TIME", "SNIPER")
 TIMES_EXIBIDOS = {t.strip().upper() for t in os.environ.get("TIMES_EXIBIDOS", "SNIPER,ELITE,OLYMPUS").split(",") if t.strip()}
 
 
@@ -747,8 +748,13 @@ def build_auditoria_sdr(ano, mes, time_filtro=None):
     closer_ids = {ctx["id_por_nome"][norm(n)] for n in ctx["closers"] if norm(n) in ctx["id_por_nome"]}
     base = do_tipo(P["acts"], ["reuniao"], P["ini"], P["fim"], so_feitas=True, responsaveis=closer_ids, sem_ia=True)
 
+    # colunas por nome: so o time Sniper (ou o time do usuario, se a sessao for de um time); o resto vira "Outros SDRs"
+    time_nome = norm(time_filtro or COLUNAS_NOMEADAS_TIME)
+    nomeados = {n: t for n, t in {**sdrs, **lideres}.items() if norm(ctx["sdrs"].get(n, t)) == time_nome}
+    sdrs = {n: t for n, t in sdrs.items() if n in nomeados}
+    lideres = {n: c for n, c in lideres.items() if n in nomeados}
     uid_pessoa = {}
-    for n in list(sdrs) + list(lideres):
+    for n in nomeados:
         u = ctx["id_por_nome"].get(norm(n))
         if u is not None:
             uid_pessoa[u] = n
@@ -762,10 +768,12 @@ def build_auditoria_sdr(ano, mes, time_filtro=None):
         elif criador in uid_pessoa:
             chave = uid_pessoa[criador]
         else:
-            chave = "o:" + str(users.get(criador) or criador or "(sem criador)")
-        if time_filtro and (chave == "__proprio" or chave.startswith("o:")):
+            chave = "__outros"
+        if time_filtro and chave in ("__proprio", "__outros"):
             continue
         t = (P["deals"].get(did) or {}).get("title") or ("Negocio " + str(did))
+        if chave == "__outros":
+            t += " · criada por " + str(users.get(criador) or criador or "(sem criador)")
         dia = fuso.atividade_dia(a)
         agrup[chave][closer].append({"id": did, "title": t, "url": PIPEDRIVE_BASE_URL + "/deal/" + str(did),
                                      "validada": P["status_do_deal"].get(did) != "nao",
@@ -780,8 +788,8 @@ def build_auditoria_sdr(ano, mes, time_filtro=None):
     outros = []
     if "__proprio" in agrup:
         outros.append(pessoa("Próprio closer", "", "__proprio"))
-    for chave in sorted(k for k in agrup if k.startswith("o:")):
-        outros.append(pessoa(chave[2:], "fora da lista de SDRs", chave))
+    if "__outros" in agrup:
+        outros.append(pessoa("Outros SDRs", "", "__outros"))
     return {
         "year": ano, "month": mes, "month_label": f"{MESES_NOME[mes-1]}/{ano}",
         "carimbo": carimbo(),

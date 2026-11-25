@@ -13,6 +13,7 @@ HTML = r"""<!DOCTYPE html>
 <title>REUNIÕES</title>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.0/chart.umd.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/chartjs-plugin-datalabels/2.2.0/chartjs-plugin-datalabels.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <style>
   :root {
     --bg:#f4f5f7; --card:#ffffff; --card2:#f0f1f3; --border:#dfe1e5;
@@ -2108,7 +2109,7 @@ function audMostraLista() {
   const qClo = (c === null || c === -1) ? 'todos os closers' : M.closers[c];
   const ids = itens.map(n => n.id).join(', ');
   box.innerHTML = `<details open class="mx-det"><summary><b>${qClo} ← ${qSdr}</b> · ${itens.length} reuniõ${itens.length === 1 ? 'o' : 'es'}${itens.length === 1 ? '' : ''} validada${itens.length === 1 ? '' : 's'} <span class="muted">(clique para recolher / abrir os IDs)</span></summary>
-    <div class="cab"><button class="grf-btn" id="aud-copia">Copiar IDs</button></div>
+    <div class="cab"><button class="grf-btn" id="aud-copia">Copiar IDs</button><button class="grf-btn" id="aud-xlsx">Exportar Excel</button></div>
     <div class="rol"><table><tr><th>ID</th><th class="hide-m">Negócio</th><th>Closer</th><th>Agendada por</th></tr>${
       itens.map(n => `<tr><td><a href="${n.url}" target="_blank" rel="noopener">#${n.id}</a></td><td class="hide-m">${n.title || ''}</td><td>${n.closer}</td><td>${n.sdr}</td></tr>`).join('')
       || '<tr><td colspan="4" class="aud-empty">Nenhum negócio.</td></tr>'}</table></div></details>`;
@@ -2117,7 +2118,29 @@ function audMostraLista() {
     const ok = () => { b.textContent = 'Copiado!'; setTimeout(() => { b.textContent = 'Copiar IDs'; }, 1500); };
     if (navigator.clipboard) navigator.clipboard.writeText(ids).then(ok, () => {}); else ok();
   });
+  $('aud-xlsx').addEventListener('click', () => audExportaExcel(itens, qClo, qSdr));
   box.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+}
+
+// exporta a lista que esta na tela (.xlsx; se a biblioteca nao carregou, cai para CSV que o Excel abre)
+function audExportaExcel(itens, qClo, qSdr) {
+  const slug = t => String(t).normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-zA-Z0-9]+/g, '_').replace(/^_|_$/g, '').toLowerCase();
+  const nome = `auditoria_${$('f-mes').value}_${slug(qClo)}_${slug(qSdr)}`;
+  const linhas = [['ID', 'Negócio', 'Closer', 'Agendada por', 'Link Pipedrive']]
+    .concat(itens.map(n => [n.id, n.title || '', n.closer, n.sdr, n.url]));
+  if (window.XLSX) {
+    const ws = XLSX.utils.aoa_to_sheet(linhas);
+    ws['!cols'] = [{ wch: 10 }, { wch: 45 }, { wch: 22 }, { wch: 22 }, { wch: 48 }];
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'Reuniões validadas');
+    XLSX.writeFile(wb, nome + '.xlsx');
+    return;
+  }
+  const csv = '\ufeff' + linhas.map(l => l.map(v => '"' + String(v).replace(/"/g, '""') + '"').join(';')).join('\r\n');
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8' }));
+  a.download = nome + '.csv';
+  document.body.appendChild(a); a.click(); a.remove();
 }
 
 // quando muda o mes, invalida a auditoria carregada

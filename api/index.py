@@ -737,27 +737,33 @@ def _ranking_por_criador(auditados, ano, mes):
     ctx = contexto_mes(ano, mes)
     P = dados_periodo(ano, mes)
     users = ctx["users"]
-    val = m6.reunioes_validadas(P["acts"], P["ini"], P["fim"], deals_validados=P["deals_validados"],
-                                dono_do_deal=P["dono_do_deal"], sdr_ids=ctx["sdr_ids"],
-                                lideranca_ids=ctx["lideranca_ids"], lideranca_que_agenda_ids=ctx["lq_ids"])
+    # Universo da M6 ANTES da validacao: todas as reunioes feitas do SDR, com o status do deal (sim/vazio/nao)
+    uni = m6.reunioes_com_status(P["acts"], P["ini"], P["fim"], status_do_deal=P["status_do_deal"],
+                                 dono_do_deal=P["dono_do_deal"], sdr_ids=ctx["sdr_ids"],
+                                 lideranca_ids=ctx["lideranca_ids"], lideranca_que_agenda_ids=ctx["lq_ids"])
+    val = defaultdict(list)
+    for it in uni:
+        val[it["responsavel"]].append(it)
     saida = []
     for nome, label in sorted(auditados.items()):
         uid = ctx["id_por_nome"].get(norm(nome))
         contadores, negocios = defaultdict(int), defaultdict(list)
         total = 0
-        for a in val.get(uid, []):
-            did = a.get("deal_id")
+        for it in val.get(uid, []):
+            did = it["deal_id"]
             dono = P["dono_do_deal"].get(did)
             closer = users.get(dono) or f"user {dono}"
             contadores[closer] += 1
             total += 1
-            negocios[closer].append({"id": did, "title": (P["deals"].get(did) or {}).get("title") or ("Negocio " + str(did)),
-                                     "url": PIPEDRIVE_BASE_URL + "/deal/" + str(did)})
+            t = (P["deals"].get(did) or {}).get("title") or ("Negocio " + str(did))
+            negocios[closer].append({"id": did, "title": t + ("" if it["validada"] else " · não validada"),
+                                     "url": PIPEDRIVE_BASE_URL + "/deal/" + str(did),
+                                     "validada": it["validada"]})
         # Quem agendou = quem CRIOU a reuniao: soma as reunioes feitas que este SDR criou para um closer
         # (atividade de outro responsavel) em negocios que ele ainda nao tem pela M6.
         # Painel/auditoria apenas (nao e a M6 oficial: nao entra em meta nem em validadas).
         if uid is not None:
-            ja = {a.get("deal_id") for a in val.get(uid, [])}
+            ja = {it["deal_id"] for it in val.get(uid, [])}
             for a in P["acts"]:
                 did = a.get("deal_id")
                 if (not did or did in ja or a.get("type") != tipo_atividade("reuniao") or not _feita(a)
@@ -774,7 +780,8 @@ def _ranking_por_criador(auditados, ano, mes):
                 contadores[closer] += 1
                 total += 1
                 negocios[closer].append({"id": did, "title": ((P["deals"].get(did) or {}).get("title") or ("Negocio " + str(did))) + " · criada por este SDR, atividade de outro responsavel",
-                                         "url": PIPEDRIVE_BASE_URL + "/deal/" + str(did)})
+                                         "url": PIPEDRIVE_BASE_URL + "/deal/" + str(did), "extra": True,
+                                         "validada": P["status_do_deal"].get(did) != "nao"})
         ranking = sorted(contadores.items(), key=lambda x: (-x[1], x[0]))
         saida.append({
             "nome": nome, "label": label, "encontrado": uid is not None, "total": total,

@@ -342,7 +342,7 @@ HTML = r"""<!DOCTYPE html>
     <div class="tabs" id="tabs">
       <button class="tab active" id="tab-reunioes" data-tab="reunioes">Reuniões - Closers</button>
       <button class="tab" id="tab-sdrs" data-tab="sdrs">Reuniões - SDRs</button>
-      <button class="tab" id="tab-auditoria" data-tab="auditoria">Auditoria SDR</button>
+      <button class="tab" id="tab-auditoria" data-tab="auditoria">Auditoria</button>
       <button class="tab" id="tab-distribuicao" data-tab="distribuicao">Distribuição</button>
       <button class="tab" id="tab-taxas" data-tab="taxas">Taxas %</button>
     </div>

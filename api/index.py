@@ -787,13 +787,20 @@ def build_auditoria_sdr(ano, mes, time_filtro=None):
 
     # Validacao por closer (mesma conta da aba Closers): reunioes feitas, campo "Reuniao Validada?" do negocio
     vcont = defaultdict(lambda: {"vol": 0, "sim": 0, "vazio": 0, "nao": 0})
+    vitens = defaultdict(list)
     for a in base:
         c = users.get(responsavel_id(a)) or f"user {responsavel_id(a)}"
+        did = a.get("deal_id")
         vcont[c]["vol"] += 1
-        st = P["status_do_deal"].get(a.get("deal_id"))
+        st = P["status_do_deal"].get(did)
         if st in ("sim", "vazio", "nao"):
             vcont[c][st] += 1
-    validacao = [{"closer": c, **v} for c, v in sorted(vcont.items(), key=lambda x: (-x[1]["vol"], x[0]))]
+        dia = fuso.atividade_dia(a)
+        vitens[c].append({"id": did, "title": (P["deals"].get(did) or {}).get("title") or ("Negocio " + str(did)),
+                          "url": PIPEDRIVE_BASE_URL + "/deal/" + str(did), "st": st or "",
+                          "data": str(dia) if dia else "", "hora": _hora(a)})
+    validacao = [{"closer": c, **v, "itens": sorted(vitens[c], key=lambda x: (x["data"], x["hora"], x["id"]))}
+                 for c, v in sorted(vcont.items(), key=lambda x: (-x[1]["vol"], x[0]))]
 
     outros = []
     if "__proprio" in agrup:

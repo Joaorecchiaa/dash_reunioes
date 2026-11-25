@@ -753,6 +753,28 @@ def _ranking_por_criador(auditados, ano, mes):
             total += 1
             negocios[closer].append({"id": did, "title": (P["deals"].get(did) or {}).get("title") or ("Negocio " + str(did)),
                                      "url": PIPEDRIVE_BASE_URL + "/deal/" + str(did)})
+        # Quem agendou = quem CRIOU a reuniao: soma as reunioes feitas que este SDR criou para um closer
+        # (atividade de outro responsavel) em negocios que ele ainda nao tem pela M6.
+        # Painel/auditoria apenas (nao e a M6 oficial: nao entra em meta nem em validadas).
+        if uid is not None:
+            ja = {a.get("deal_id") for a in val.get(uid, [])}
+            for a in P["acts"]:
+                did = a.get("deal_id")
+                if (not did or did in ja or a.get("type") != tipo_atividade("reuniao") or not _feita(a)
+                        or _criador_id(a) != uid or responsavel_id(a) == uid or criada_pela_ia(a)):
+                    continue
+                dia = fuso.atividade_dia(a)
+                if not dia or dia < P["ini"] or dia > P["fim"]:
+                    continue
+                dono = P["dono_do_deal"].get(did)
+                if dono in ctx["sdr_ids"] or dono is None:
+                    dono = responsavel_id(a)
+                closer = users.get(dono) or f"user {dono}"
+                ja.add(did)
+                contadores[closer] += 1
+                total += 1
+                negocios[closer].append({"id": did, "title": ((P["deals"].get(did) or {}).get("title") or ("Negocio " + str(did))) + " · criada por este SDR, atividade de outro responsavel",
+                                         "url": PIPEDRIVE_BASE_URL + "/deal/" + str(did)})
         ranking = sorted(contadores.items(), key=lambda x: (-x[1], x[0]))
         saida.append({
             "nome": nome, "label": label, "encontrado": uid is not None, "total": total,

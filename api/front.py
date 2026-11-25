@@ -2035,7 +2035,7 @@ function audNomeEmDuas(n) {
   return p.length > 1 ? `${p[0]}<span class="th-sub">${p.slice(1).join(' ')}</span>` : n;
 }
 
-let AUD_MODO = 'todas';   // 'todas' = todas as feitas (validadas ou não) + criadas pelo SDR · 'm6' = só validadas (M6)
+let AUD_MODO = 'todas';   // 'todas' = feitas, validadas ou não · 'm6' = só validadas (Sim ou vazio)
 let AUD_DATA = null;
 function audModo(m) { AUD_MODO = m; if (AUD_DATA) renderAuditoria(AUD_DATA); }
 
@@ -2043,15 +2043,16 @@ function renderAuditoria(data) {
   AUD_DATA = data;
   const filtra = l => {
     const closers = (l.closers || []).map(c => {
-      const negocios = (c.negocios || []).filter(n => AUD_MODO === 'todas' || (!n.extra && n.validada !== false));
+      const negocios = (c.negocios || []).filter(n => AUD_MODO === 'todas' || n.validada !== false);
       return { closer: c.closer, qtd: negocios.length, negocios };
     }).filter(c => c.qtd > 0);
     return { ...l, closers, total: closers.reduce((a, c) => a + c.qtd, 0) };
   };
-  data = { ...data, sdrs: (data.sdrs || []).map(filtra), liderancas: (data.liderancas || []).map(filtra) };
+  data = { ...data, sdrs: (data.sdrs || []).map(filtra), liderancas: (data.liderancas || []).map(filtra), outros: (data.outros || []).map(filtra) };
   const sdrs = []
     .concat((data.sdrs || []).slice().sort((a, b) => b.total - a.total).map(s => ({ nome: s.nome, cargo: '', total: s.total, closers: s.closers })))
-    .concat((data.liderancas || []).slice().sort((a, b) => b.total - a.total).map(s => ({ nome: s.nome, cargo: s.label, total: s.total, closers: s.closers })));
+    .concat((data.liderancas || []).slice().sort((a, b) => b.total - a.total).map(s => ({ nome: s.nome, cargo: s.label, total: s.total, closers: s.closers })))
+    .concat((data.outros || []).map(s => ({ nome: s.nome, cargo: '', total: s.total, closers: s.closers })));
   const totCloser = {};
   sdrs.forEach(l => l.closers.forEach(c => { totCloser[c.closer] = (totCloser[c.closer] || 0) + c.qtd; }));
   const closers = Object.keys(totCloser).sort((a, b) => totCloser[b] - totCloser[a] || a.localeCompare(b));
@@ -2062,7 +2063,7 @@ function renderAuditoria(data) {
 
   let html = `<div class="kpi-head">Closer × quem agendou · ${data.month_label}</div>`;
   html += `<div style="margin:6px 0"><button class="tab${AUD_MODO === 'm6' ? ' active' : ''}" onclick="audModo('m6')">Só validadas (M6)</button> <button class="tab${AUD_MODO === 'todas' ? ' active' : ''}" onclick="audModo('todas')">Todas (validadas ou não)</button></div>`;
-  html += `<div class="muted" style="margin:4px 0 10px;font-size:12px">${AUD_MODO === 'm6' ? 'Reuniões feitas e validadas (M6)' : 'Todas as reuniões feitas, validadas ou não: as do SDR (responsável) + as que ele criou para o closer'} no mês · linha = closer dono do negócio · coluna = SDR/liderança que agendou · clique em um número, no nome do closer ou no nome do SDR para ver os negócios (IDs do Pipedrive).</div>`;
+  html += `<div class="muted" style="margin:4px 0 10px;font-size:12px">${AUD_MODO === 'm6' ? 'Reuniões feitas do closer com “Reunião Validada?” Sim ou vazio, agrupadas por quem criou a reunião' : 'Reuniões feitas do closer, validadas ou não, agrupadas por quem criou a reunião'} no mês · linha = closer da reunião · coluna = quem criou a reunião (SDR/liderança) · clique em um número, no nome do closer ou no nome do SDR para ver os negócios (IDs do Pipedrive).</div>`;
   if (!sdrs.length) {
     $('root-aud').innerHTML = html + '<div class="aud-empty">Nenhum SDR encontrado no mês.</div>';
     return;
@@ -2122,7 +2123,7 @@ function audMostraLista() {
   const qSdr = (s === null || s === -1) ? 'todos os SDRs' : M.sdrs[s].nome;
   const qClo = (c === null || c === -1) ? 'todos os closers' : M.closers[c];
   const ids = itens.map(n => n.id).join(', ');
-  box.innerHTML = `<details open class="mx-det"><summary><b>${qClo} ← ${qSdr}</b> · ${itens.length} reuniõ${itens.length === 1 ? 'o' : 'es'}${itens.length === 1 ? '' : ''} validada${itens.length === 1 ? '' : 's'} <span class="muted">(clique para recolher / abrir os IDs)</span></summary>
+  box.innerHTML = `<details open class="mx-det"><summary><b>${qClo} ← ${qSdr}</b> · ${itens.length} reuniõ${itens.length === 1 ? 'o' : 'es'} <span class="muted">(clique para recolher / abrir os IDs)</span></summary>
     <div class="cab"><button class="grf-btn" id="aud-copia">Copiar IDs</button><button class="grf-btn" id="aud-xlsx">Exportar Excel</button></div>
     <div class="rol"><table><tr><th>ID</th><th class="hide-m">Negócio</th><th>Closer</th><th>Agendada por</th></tr>${
       itens.map(n => `<tr><td><a href="${n.url}" target="_blank" rel="noopener">#${n.id}</a></td><td class="hide-m">${n.title || ''}</td><td>${n.closer}</td><td>${n.sdr}</td></tr>`).join('')

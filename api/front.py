@@ -2040,20 +2040,76 @@ let AUD_MODO = 'todas';   // 'todas' = feitas, validadas ou não · 'm6' = só v
 let AUD_DATA = null;
 function audModo(m) { AUD_MODO = m; if (AUD_DATA) renderAuditoria(AUD_DATA); }
 
+let AUD_V = { lista: [], sel: null };   // sel = {c: índice do closer (-1 = todos), k: 'vol'|'sim'|'val'|'nao'|'vazio'}
+const AUD_V_NOME = { vol: 'todas as reuniões feitas', sim: 'validadas (Sim)', val: 'validadas (Sim + vazio)', nao: 'não validadas (Não)', vazio: 'sem informação (vazio)' };
+const audVPassa = (it, k) => k === 'vol' || (k === 'val' ? (it.st === 'sim' || it.st === 'vazio') : it.st === k);
+const audVRot = st => ({ sim: 'Sim', vazio: '(vazio)', nao: 'Não' }[st] || '—');
+
 function audTabelaValidacao(lista) {
+  AUD_V = { lista, sel: null };
   const p = (a, b) => b ? (a / b * 100).toLocaleString('pt-BR', { maximumFractionDigits: 1 }) + '%' : '—';
   const n = v => (v || 0).toLocaleString('pt-BR');
   const T = lista.reduce((t, x) => ({ vol: t.vol + x.vol, sim: t.sim + x.sim, vazio: t.vazio + x.vazio, nao: t.nao + x.nao }), { vol: 0, sim: 0, vazio: 0, nao: 0 });
-  const linha = (x, nome, cls) => {
+  const celula = (txt, c, k, bold) => `<td class="n vk" data-vc="${c}" data-vk="${k}" style="cursor:pointer">${bold ? '<b>' + txt + '</b>' : txt}</td>`;
+  const linha = (x, nome, c, cls) => {
     const base = x.sim + x.vazio + x.nao;
-    return `<tr class="${cls}"><td>${nome}</td><td class="n">${n(x.vol)}</td><td class="n">${n(x.sim)}</td><td class="n">${n(x.sim + x.vazio)}</td><td class="n">${n(x.nao)}</td><td class="n">${n(x.vazio)}</td><td class="n"><b>${p(x.sim + x.vazio, base)}</b></td><td class="n"><b>${p(x.sim, base)}</b></td></tr>`;
+    return `<tr class="${cls}"><td class="vk" data-vc="${c}" data-vk="vol" style="cursor:pointer">${nome}</td>${celula(n(x.vol), c, 'vol')}${celula(n(x.sim), c, 'sim')}${celula(n(x.sim + x.vazio), c, 'val')}${celula(n(x.nao), c, 'nao')}${celula(n(x.vazio), c, 'vazio')}${celula(p(x.sim + x.vazio, base), c, 'val', true)}${celula(p(x.sim, base), c, 'sim', true)}</tr>`;
   };
   return `<div class="kpi-head" style="margin-top:22px">Validação das reuniões</div>
-    <div class="muted" style="margin:4px 0 10px;font-size:12px">Só reuniões feitas · campo “Reunião Validada?” do negócio, vale para todas as reuniões dele · taxas sobre o volume de reuniões</div>
-    <div class="mx-wrap"><table class="mx val-tab"><tr><th class="l">Closer</th><th>Volume de reuniões</th><th>Validadas (Sim)</th><th>Validadas (Sim + vazio)</th><th>Não validadas (Não)</th><th>Sem informação (vazio)</th><th>Taxa de qualificação (Sim + vazio)</th><th>Taxa de qualificação (Sim)</th></tr>${
-      lista.length ? lista.map(x => linha(x, x.closer, '')).join('') + linha(T, 'Total', 'tot')
-        : '<tr><td colspan="8" class="aud-empty">Nenhuma reunião feita no mês.</td></tr>'}</table></div>`;
+    <div class="muted" style="margin:4px 0 10px;font-size:12px">Só reuniões feitas · campo “Reunião Validada?” do negócio, vale para todas as reuniões dele · taxas sobre o volume de reuniões · clique em um número ou no nome do closer para ver os negócios (IDs e link do Pipedrive) e exportar.</div>
+    <div class="mx-wrap"><table class="mx val-tab" id="aud-val"><tr><th class="l">Closer</th><th>Volume de reuniões</th><th>Validadas (Sim)</th><th>Validadas (Sim + vazio)</th><th>Não validadas (Não)</th><th>Sem informação (vazio)</th><th>Taxa de qualificação (Sim + vazio)</th><th>Taxa de qualificação (Sim)</th></tr>${
+      lista.length ? lista.map((x, i) => linha(x, x.closer, i, '')).join('') + linha(T, 'Total', -1, 'tot')
+        : '<tr><td colspan="8" class="aud-empty">Nenhuma reunião feita no mês.</td></tr>'}</table></div>
+    <div class="mx-lista" id="aud-val-lista"></div>`;
 }
+
+function audValMostra() {
+  const box = $('aud-val-lista'); if (!box || !AUD_V.sel) return;
+  const { c, k } = AUD_V.sel;
+  const itens = [];
+  AUD_V.lista.forEach((x, i) => { if (c === -1 || c === i) x.itens.forEach(it => { if (audVPassa(it, k)) itens.push({ ...it, closer: x.closer }); }); });
+  const qClo = c === -1 ? 'Todos os closers' : AUD_V.lista[c].closer;
+  const rot = AUD_V_NOME[k];
+  const ids = itens.map(n => n.id).join(', ');
+  box.innerHTML = `<details open class="mx-det"><summary><b>${qClo} · ${rot}</b> · ${itens.length} ${itens.length === 1 ? 'reunião' : 'reuniões'} <span class="muted">(clique para recolher / abrir os IDs)</span></summary>
+    <div class="cab"><button class="grf-btn" id="aud-val-copia">Copiar IDs</button><button class="grf-btn" id="aud-val-xlsx">Exportar Excel</button></div>
+    <div class="rol"><table><tr><th>ID</th><th class="hide-m">Negócio</th><th>Closer</th><th>Data</th><th>Reunião Validada?</th></tr>${
+      itens.map(n => `<tr><td><a href="${n.url}" target="_blank" rel="noopener">#${n.id}</a></td><td class="hide-m">${n.title || ''}</td><td>${n.closer}</td><td>${n.data ? n.data.slice(8, 10) + '/' + n.data.slice(5, 7) + (n.hora ? ' ' + n.hora : '') : ''}</td><td>${audVRot(n.st)}</td></tr>`).join('')
+      || '<tr><td colspan="5" class="aud-empty">Nenhum negócio.</td></tr>'}</table></div></details>`;
+  $('aud-val-copia').addEventListener('click', () => {
+    const b = $('aud-val-copia');
+    const ok = () => { b.textContent = 'Copiado!'; setTimeout(() => { b.textContent = 'Copiar IDs'; }, 1500); };
+    if (navigator.clipboard) navigator.clipboard.writeText(ids).then(ok, () => {}); else ok();
+  });
+  $('aud-val-xlsx').addEventListener('click', () => audExportaValidacao(itens, qClo, rot));
+}
+
+function audExportaValidacao(itens, qClo, rot) {
+  const slug = t => String(t).normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-zA-Z0-9]+/g, '_').replace(/^_|_$/g, '').toLowerCase();
+  const nome = `validacao_${$('f-mes').value}_${slug(qClo)}_${slug(rot)}`;
+  const linhas = [['ID', 'Negócio', 'Closer', 'Data da reunião', 'Hora', 'Reunião Validada?', 'Link Pipedrive']]
+    .concat(itens.map(n => [n.id, n.title || '', n.closer, n.data || '', n.hora || '', audVRot(n.st), n.url]));
+  if (window.XLSX) {
+    const ws = XLSX.utils.aoa_to_sheet(linhas);
+    ws['!cols'] = [{ wch: 10 }, { wch: 45 }, { wch: 22 }, { wch: 14 }, { wch: 8 }, { wch: 18 }, { wch: 48 }];
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'Validação');
+    XLSX.writeFile(wb, nome + '.xlsx');
+    return;
+  }
+  const csv = '\ufeff' + linhas.map(l => l.map(v => '"' + String(v).replace(/"/g, '""') + '"').join(';')).join('\r\n');
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8' }));
+  a.download = nome + '.csv';
+  document.body.appendChild(a); a.click(); a.remove();
+}
+
+$('root-aud').addEventListener('click', ev => {
+  const el = ev.target.closest('#aud-val [data-vk]');
+  if (!el) return;
+  AUD_V.sel = { c: Number(el.dataset.vc), k: el.dataset.vk };
+  audValMostra();
+});
 
 function renderAuditoria(data) {
   AUD_DATA = data;
@@ -2140,7 +2196,7 @@ function audMostraLista() {
   const qSdr = (s === null || s === -1) ? 'todos os SDRs' : M.sdrs[s].nome;
   const qClo = (c === null || c === -1) ? 'todos os closers' : M.closers[c];
   const ids = itens.map(n => n.id).join(', ');
-  box.innerHTML = `<details open class="mx-det"><summary><b>${qClo} ← ${qSdr}</b> · ${itens.length} reuniõ${itens.length === 1 ? 'o' : 'es'} <span class="muted">(clique para recolher / abrir os IDs)</span></summary>
+  box.innerHTML = `<details open class="mx-det"><summary><b>${qClo} ← ${qSdr}</b> · ${itens.length} ${itens.length === 1 ? 'reunião' : 'reuniões'} <span class="muted">(clique para recolher / abrir os IDs)</span></summary>
     <div class="cab"><button class="grf-btn" id="aud-copia">Copiar IDs</button><button class="grf-btn" id="aud-xlsx">Exportar Excel</button></div>
     <div class="rol"><table><tr><th>ID</th><th class="hide-m">Negócio</th><th>Closer</th><th>Agendada por</th></tr>${
       itens.map(n => `<tr><td><a href="${n.url}" target="_blank" rel="noopener">#${n.id}</a></td><td class="hide-m">${n.title || ''}</td><td>${n.closer}</td><td>${n.sdr}</td></tr>`).join('')

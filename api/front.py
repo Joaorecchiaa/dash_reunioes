@@ -1721,7 +1721,7 @@ async function buscaTaxasAba(forcar) {
   if (!forcar && TAXAS_CARREGADA_MES === chave) return;
   $('taxas-resultado').innerHTML = '<div class="muted">Buscando no Pipedrive… (pode levar alguns segundos)</div>';
   try {
-    const mesesNS = usaRange ? mesesDoIntervalo(de, ate) : [mes];
+    const mesesNS = [mes];   // no-show: sempre o MES todo do filtro Mes (De/Ate nao se aplica)
     const pEscala = buscaEscalaPeriodo(mes, usaRange ? de : '', usaRange ? ate : '');
     const pResto = Promise.all([
       fetch('/api/dashboard?month=' + mes, { headers: authHeaders() }).then(r => r.json()),
@@ -1736,12 +1736,12 @@ async function buscaTaxasAba(forcar) {
     // fase 1: mostra a tabela de fora da escala assim que ela chega, sem esperar o resto
     const resEscala = await pEscala;
     if (meuPedido !== TAXAS_PEDIDO) return;
-    renderTaxasAba(resEscala, null, null, null, usaRange ? { de, ate } : null, mes);
+    renderTaxasAba(resEscala, null, null, null, null, mes);
     // fase 2: conversao por closer, taxa de agendamento etc.
     const [resDash, resNS, ...resEvolucoes] = await pResto;
     if (meuPedido !== TAXAS_PEDIDO) return;
     TAXAS_CARREGADA_MES = chave;
-    renderTaxasAba(resEscala, resDash, resEvolucoes, resNS, usaRange ? { de, ate } : null, mes);
+    renderTaxasAba(resEscala, resDash, resEvolucoes, resNS, null, mes);
   } catch (e) {
     $('taxas-resultado').innerHTML = '<div class="warn">Falha na requisição: ' + e + '</div>';
   }
@@ -1878,16 +1878,17 @@ function renderTaxasAba(resEscala, resDash, resEvolucoes, resNS, rangeNS, mesNS)
 // taxa = no-show / (feitas + no-show): das reunioes que deveriam acontecer, quantas o lead faltou.
 // Reagendadas ficam fora (nao tiveram desfecho). Respeita Mes ou De/Ate do cabecalho.
 function taxaNoShowSemanal(resNS, rangeNS, mes) {
-  let html = `<div class="nb-title" style="margin-top:22px">Taxa de No-show por SDR — por semana</div>`;
+  const [my, mm] = mes.split('-').map(Number);
+  let html = `<div class="nb-title" style="margin-top:22px">Taxa de No-show por SDR — mês todo (${String(mm).padStart(2, '0')}/${my})</div>`;
   const erro = (resNS || []).find(r => !r.d || r.d.error || r.d.erro);
   if (!resNS || !resNS.length || erro) {
     return html + `<div class="warn">Erro ao buscar os no-shows${erro && erro.d ? ': ' + (erro.d.error || erro.d.erro) : ''}</div>`;
   }
   const iso = (y, m, d) => y + '-' + String(m).padStart(2, '0') + '-' + String(d).padStart(2, '0');
-  const [my, mm] = mes.split('-').map(Number);
-  const de = rangeNS ? rangeNS.de : iso(my, mm, 1);
-  const ate = rangeNS ? rangeNS.ate : iso(my, mm, new Date(my, mm, 0).getDate());
-  // semanas (segunda a domingo) recortadas no periodo
+  // sempre o MES inteiro (nao depende de De/Ate): do dia 1 ao ultimo dia
+  const de = iso(my, mm, 1);
+  const ate = iso(my, mm, new Date(my, mm, 0).getDate());
+  // semanas (segunda a domingo) recortadas no mes
   const semanas = [];
   const dd = s => new Date(s + 'T12:00:00');
   const fmtD = dt => dt.toISOString().slice(0, 10);
@@ -1901,7 +1902,7 @@ function taxaNoShowSemanal(resNS, rangeNS, mes) {
     cur = new Date(fim.getTime() + 864e5);
   }
   const rot = s => s.slice(8, 10) + '/' + s.slice(5, 7);
-  // pessoa -> semana -> {ns, feitas}
+  // pessoa -> semana -> {ns, validadas}
   const pessoas = {};
   for (const { mes: m, d } of resNS) {
     for (const p of (d.por_closer || [])) {
@@ -1916,28 +1917,35 @@ function taxaNoShowSemanal(resNS, rangeNS, mes) {
     }
   }
   const lista = Object.values(pessoas).sort((a, b) => (!!a.lider - !!b.lider) || a.name.localeCompare(b.name));
-  const cel = x => {
-    const base = x.ns + x.f;
-    if (!base) return `<td class="qtd muted">—</td>`;
-    return `<td class="qtd">${(x.ns / base * 100).toFixed(1)}%<div class="muted" style="font-size:11px">${x.ns} NS / ${base}</div></td>`;
-  };
-  html += `<div class="muted" style="margin-bottom:8px">No-show ÷ (validadas + no-show) de cada SDR (NS1), semana a semana (segunda a domingo), dentro do período selecionado.</div>`;
-  html += `<table class="aud-tbl"><tr><th class="l">SDR</th><th class="l">Time</th>${semanas.map(w => `<th>${rot(w.ini)}–${rot(w.fim)}</th>`).join('')}<th>Total</th></tr>`;
+  const pct = (ns, base) => base ? (ns / base * 100).toFixed(1).replace('.', ',') + '%' : '—';
+  const nome = p => `${p.name}${p.lider ? ' <span class="cargo-lider">' + p.lider + '</span>' : ''}`;
+  html += `<div class="muted" style="margin-bottom:8px">No-show ÷ (validadas + no-show) de cada SDR (NS1), no mês todo. Reagendadas ficam fora (não tiveram desfecho).</div>`;
+  // tabela principal: mes todo, uma coluna por numero
+  html += `<table class="aud-tbl"><tr><th class="l">SDR</th><th class="l">Time</th><th>Validadas</th><th>No-show</th><th>Validadas + No-show</th><th>Taxa de no-show</th></tr>`;
   const tot = semanas.map(() => ({ ns: 0, f: 0 }));
-  let marcouLider = false;
+  let gns = 0, gf = 0;
   for (const p of lista) {
-    if (p.lider && !marcouLider) { marcouLider = true; }
-    const t = { ns: 0, f: 0 };
-    p.sem.forEach((x, i) => { t.ns += x.ns; t.f += x.f; tot[i].ns += x.ns; tot[i].f += x.f; });
-    html += `<tr><td class="l">${p.name}${p.lider ? ' <span class="cargo-lider">' + p.lider + '</span>' : ''}</td><td class="l muted">${p.time || ''}</td>${p.sem.map(cel).join('')}${cel(t)}</tr>`;
+    let ns = 0, f = 0;
+    p.sem.forEach((x, i) => { ns += x.ns; f += x.f; tot[i].ns += x.ns; tot[i].f += x.f; });
+    gns += ns; gf += f;
+    html += `<tr><td class="l">${nome(p)}</td><td class="l muted">${p.time || ''}</td>
+      <td class="qtd">${f}</td><td class="qtd">${ns}</td><td class="qtd">${f + ns}</td><td class="qtd"><b>${pct(ns, f + ns)}</b></td></tr>`;
   }
   if (!lista.length) {
-    html += `<tr><td colspan="${semanas.length + 3}" class="aud-empty">Nenhum SDR no período.</td></tr>`;
+    html += `<tr><td colspan="6" class="aud-empty">Nenhum SDR no período.</td></tr>`;
   } else {
-    const gt = tot.reduce((a, x) => ({ ns: a.ns + x.ns, f: a.f + x.f }), { ns: 0, f: 0 });
-    html += `<tr class="total"><td class="l">TOTAL</td><td></td>${tot.map(cel).join('')}${cel(gt)}</tr>`;
+    html += `<tr class="total"><td class="l">TOTAL</td><td></td><td class="qtd">${gf}</td><td class="qtd">${gns}</td><td class="qtd">${gf + gns}</td><td class="qtd">${pct(gns, gf + gns)}</td></tr>`;
   }
-  return html + `</table>`;
+  html += `</table>`;
+  // detalhe semana a semana (recolhido)
+  if (lista.length) {
+    const cel = x => (x.ns + x.f) ? `<td class="qtd">${pct(x.ns, x.ns + x.f)} <span class="muted" style="font-size:11px">(${x.ns}/${x.ns + x.f})</span></td>` : `<td class="qtd muted">—</td>`;
+    html += `<details style="margin-top:8px"><summary style="cursor:pointer" class="muted">Ver semana a semana (no-show / validadas + no-show)</summary>
+      <table class="aud-tbl" style="margin-top:6px"><tr><th class="l">SDR</th>${semanas.map(w => `<th>${rot(w.ini)}–${rot(w.fim)}</th>`).join('')}</tr>`;
+    for (const p of lista) html += `<tr><td class="l">${nome(p)}</td>${p.sem.map(cel).join('')}</tr>`;
+    html += `<tr class="total"><td class="l">TOTAL</td>${tot.map(cel).join('')}</tr></table></details>`;
+  }
+  return html;
 }
 
 function auditoriaBloco(pessoa, idx, prefixo) {

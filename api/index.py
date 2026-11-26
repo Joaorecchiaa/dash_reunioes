@@ -653,7 +653,8 @@ def _build_dashboard_generico(pessoas, ano, mes, privilegiado=False, com_validad
                     c_negocios_mes[did] = {"id": did, "title": titulo, "url": url, "status": status,
                                            "status_negocio": status_negocio, "_rec": chave_rec}
                 item = {"id": did, "title": titulo, "url": url, "hora": _hora(a), "tipo": a.get("type"),
-                        "done": bool(feita), "status": status, "status_negocio": status_negocio}
+                        "done": bool(feita), "status": status, "status_negocio": status_negocio,
+                        "validacao": P["status_do_deal"].get(did) or ""}
                 c_negocios_dia[d].append(item)
                 geral_dia[d].append({**item, "closer": nome, "time": time_c})
 
@@ -778,6 +779,7 @@ def build_auditoria_sdr(ano, mes, time_filtro=None):
         dia = fuso.atividade_dia(a)
         agrup[chave][closer].append({"id": did, "title": t, "url": PIPEDRIVE_BASE_URL + "/deal/" + str(did),
                                      "validada": P["status_do_deal"].get(did) != "nao",
+                                     "st": P["status_do_deal"].get(did) or "",
                                      "data": str(dia) if dia else "", "hora": _hora(a)})
 
     def pessoa(nome, label, chave):
@@ -823,7 +825,7 @@ def build_auditoria_sdr(ano, mes, time_filtro=None):
             "id": did, "title": d.get("title") or ("Negocio " + str(did)),
             "url": PIPEDRIVE_BASE_URL + "/deal/" + str(did),
             "closer": users.get(responsavel_id(a)) or f"user {responsavel_id(a)}", "sdr": sdr_nome,
-            "data": str(dia) if dia else "", "hora": _hora(a),
+            "data": str(dia) if dia else "", "hora": _hora(a), "st": P["status_do_deal"].get(did) or "",
             "perdido_em": perdido.isoformat() if perdido else ""})
     motivos = [{"motivo": m, "qtd": len(v), "itens": sorted(v, key=lambda x: (x["data"], x["hora"], x["id"]))}
                for m, v in sorted(mot.items(), key=lambda x: (-len(x[1]), x[0]))]

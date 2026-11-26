@@ -777,7 +777,7 @@ def build_auditoria_sdr(ano, mes, time_filtro=None):
         dia = fuso.atividade_dia(a)
         agrup[chave][closer].append({"id": did, "title": t, "url": PIPEDRIVE_BASE_URL + "/deal/" + str(did),
                                      "validada": P["status_do_deal"].get(did) != "nao",
-                                     "data": str(dia) if dia else ""})
+                                     "data": str(dia) if dia else "", "hora": _hora(a)})
 
     def pessoa(nome, label, chave):
         por_closer = agrup.get(chave, {})

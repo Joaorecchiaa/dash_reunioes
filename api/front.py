@@ -255,6 +255,7 @@ HTML = r"""<!DOCTYPE html>
   .aud-bar { height:10px; background:var(--gold); border-radius:6px; }
   .aud-empty { color:var(--muted); font-size:13px; padding:8px 0; }
   /* Auditoria SDR: matriz SDR x Closer */
+  table.val-tab tr.mk:hover td{background:rgba(255,200,0,.12)}
   table.val-tab td.n{text-align:right} table.val-tab td:first-child{text-align:left;font-weight:600}
   .mx-wrap { overflow-x:auto; border:1px solid var(--border); border-radius:12px; background:var(--card); -webkit-overflow-scrolling:touch; }
   table.mx { border-collapse:separate; border-spacing:0; font-size:13px; width:100%; }
@@ -1942,7 +1943,15 @@ function taxaNoShowSemanal(resNS, rangeNS, mes) {
   const pessoas = {};
   for (const { mes: m, d } of resNS) {
     for (const p of (d.por_closer || [])) {
-      const o = pessoas[p.name] || (pessoas[p.name] = { name: p.name, time: p.time, lider: p.lideranca, sem: semanas.map(() => ({ ns: 0, f: 0 })) });
+      const o = pessoas[p.name] || (pessoas[p.name] = { name: p.name, time: p.time, lider: p.lideranca, sem: semanas.map(() => ({ ns: 0, f: 0 })), itens: [] });
+      for (const nd of (p.negocios_dia || [])) {
+        const data = iso(Number(m.slice(0, 4)), Number(m.slice(5, 7)), nd.dia);
+        const i = semanas.findIndex(w => data >= w.ini && data <= w.fim);
+        for (const it of (nd.itens || [])) {
+          const st = it.status === 'Validada' ? 'val' : (it.status === 'No Show' ? 'ns' : '');
+          if (st) o.itens.push({ id: it.id, title: it.title, url: it.url, hora: it.hora, data, st, sem: i });
+        }
+      }
       for (const it of (p.days || [])) {
         const data = iso(Number(m.slice(0, 4)), Number(m.slice(5, 7)), it.dia);
         const i = semanas.findIndex(w => data >= w.ini && data <= w.fim);
@@ -1955,44 +1964,113 @@ function taxaNoShowSemanal(resNS, rangeNS, mes) {
   const lista = Object.values(pessoas).sort((a, b) => (!!a.lider - !!b.lider) || a.name.localeCompare(b.name));
   const pct = (ns, base) => base ? (ns / base * 100).toFixed(1).replace('.', ',') + '%' : '—';
   const nome = p => `${p.name}${p.lider ? ' <span class="cargo-lider">' + p.lider + '</span>' : ''}`;
-  html += `<div class="muted" style="margin-bottom:8px">No-show ÷ (validadas + no-show) de cada SDR (NS1), no mês todo. Reagendadas ficam fora (não tiveram desfecho).</div>`;
+  NS_D = { lista, semanas, mes };
+  // celula clicavel: p = indice da pessoa (-1 = time todo), k = val | ns | tot, w = indice da semana (-1 = mes todo)
+  const cl = (txt, pi, k, w, bold) => `<td class="qtd nsk" data-np="${pi}" data-nk="${k}" data-nw="${w}" style="cursor:pointer">${bold ? '<b>' + txt + '</b>' : txt}</td>`;
+  html += `<div class="muted" style="margin-bottom:8px">No-show ÷ (validadas + no-show) de cada SDR (NS1), no mês todo. Reagendadas ficam fora (não tiveram desfecho). Clique em um número ou no nome do SDR para ver os negócios (IDs e link do Pipedrive) e exportar.</div>`;
   // tabela principal: mes todo, uma coluna por numero
   html += `<table class="aud-tbl"><tr><th class="l">SDR</th><th class="l">Time</th><th>Validadas</th><th>No-show</th><th>Validadas + No-show</th><th>Taxa de no-show</th></tr>`;
   const tot = semanas.map(() => ({ ns: 0, f: 0 }));
   let gns = 0, gf = 0;
-  for (const p of lista) {
+  lista.forEach((p, pi) => {
     let ns = 0, f = 0;
     p.sem.forEach((x, i) => { ns += x.ns; f += x.f; tot[i].ns += x.ns; tot[i].f += x.f; });
     gns += ns; gf += f;
-    html += `<tr><td class="l">${nome(p)}</td><td class="l muted">${p.time || ''}</td>
-      <td class="qtd">${f}</td><td class="qtd">${ns}</td><td class="qtd">${f + ns}</td><td class="qtd"><b>${pct(ns, f + ns)}</b></td></tr>`;
-  }
+    html += `<tr><td class="l nsk" data-np="${pi}" data-nk="tot" data-nw="-1" style="cursor:pointer">${nome(p)}</td><td class="l muted">${p.time || ''}</td>
+      ${cl(f, pi, 'val', -1)}${cl(ns, pi, 'ns', -1)}${cl(f + ns, pi, 'tot', -1)}${cl(pct(ns, f + ns), pi, 'tot', -1, true)}</tr>`;
+  });
   if (!lista.length) {
     html += `<tr><td colspan="6" class="aud-empty">Nenhum SDR no período.</td></tr>`;
   } else {
-    html += `<tr class="total"><td class="l">TOTAL</td><td></td><td class="qtd">${gf}</td><td class="qtd">${gns}</td><td class="qtd">${gf + gns}</td><td class="qtd">${pct(gns, gf + gns)}</td></tr>`;
+    html += `<tr class="total"><td class="l nsk" data-np="-1" data-nk="tot" data-nw="-1" style="cursor:pointer">TOTAL</td><td></td>${cl(gf, -1, 'val', -1)}${cl(gns, -1, 'ns', -1)}${cl(gf + gns, -1, 'tot', -1)}${cl(pct(gns, gf + gns), -1, 'tot', -1, true)}</tr>`;
   }
   html += `</table>`;
+  html += `<div class="mx-lista" id="ns-lista"></div>`;
   // detalhe semana a semana (recolhido): uma linha por SDR e semana, cada numero na sua coluna
   if (lista.length) {
-    const linha = (x, ini, fim) => `<td>${rot(ini)} a ${rot(fim)}</td><td class="qtd">${x.f}</td><td class="qtd">${x.ns}</td><td class="qtd">${x.f + x.ns}</td><td class="qtd"><b>${pct(x.ns, x.f + x.ns)}</b></td>`;
+    const linha = (x, ini, fim, pi, wi) => `<td>${rot(ini)} a ${rot(fim)}</td>${cl(x.f, pi, 'val', wi)}${cl(x.ns, pi, 'ns', wi)}${cl(x.f + x.ns, pi, 'tot', wi)}${cl(pct(x.ns, x.f + x.ns), pi, 'tot', wi, true)}`;
     html += `<details style="margin-top:8px"><summary style="cursor:pointer" class="muted">Ver semana a semana</summary>
       <table class="aud-tbl" style="margin-top:6px"><tr><th class="l">SDR</th><th class="l">Semana</th><th>Validadas</th><th>No-show</th><th>Validadas + No-show</th><th>Taxa de no-show</th></tr>`;
-    for (const p of lista) {
-      const ativas = semanas.map((w, i) => ({ w, x: p.sem[i] })).filter(o => o.x.f + o.x.ns > 0);
-      if (!ativas.length) { html += `<tr><td class="l">${nome(p)}</td><td colspan="5" class="muted">sem reuniões no mês</td></tr>`; continue; }
+    lista.forEach((p, pi) => {
+      const ativas = semanas.map((w, i) => ({ w, wi: i, x: p.sem[i] })).filter(o => o.x.f + o.x.ns > 0);
+      if (!ativas.length) { html += `<tr><td class="l">${nome(p)}</td><td colspan="5" class="muted">sem reuniões no mês</td></tr>`; return; }
       ativas.forEach((o, k) => {
-        html += `<tr>${k === 0 ? `<td class="l" rowspan="${ativas.length}">${nome(p)}</td>` : ''}${linha(o.x, o.w.ini, o.w.fim)}</tr>`;
+        html += `<tr>${k === 0 ? `<td class="l" rowspan="${ativas.length}">${nome(p)}</td>` : ''}${linha(o.x, o.w.ini, o.w.fim, pi, o.wi)}</tr>`;
       });
-    }
+    });
     semanas.forEach((w, i) => {
       if (tot[i].f + tot[i].ns > 0)
-        html += `<tr class="total">${i === 0 || !(tot.slice(0, i).some(t => t.f + t.ns > 0)) ? '<td class="l">TOTAL DO TIME</td>' : '<td></td>'}${linha(tot[i], w.ini, w.fim)}</tr>`;
+        html += `<tr class="total">${i === 0 || !(tot.slice(0, i).some(t => t.f + t.ns > 0)) ? '<td class="l">TOTAL DO TIME</td>' : '<td></td>'}${linha(tot[i], w.ini, w.fim, -1, i)}</tr>`;
     });
     html += `</table></details>`;
   }
   return html;
 }
+
+let NS_D = { lista: [], semanas: [], mes: '' };
+let NS_SEL = null;   // {p, k, w}
+const NS_K = { val: 'validadas', ns: 'no-show', tot: 'validadas + no-show' };
+const nsDH = n => n.data.slice(8, 10) + '/' + n.data.slice(5, 7) + (n.hora ? ' ' + n.hora : '');
+
+function nsItens(sel) {
+  const out = [];
+  NS_D.lista.forEach((p, i) => {
+    if (sel.p !== -1 && sel.p !== i) return;
+    p.itens.forEach(it => {
+      if (sel.w !== -1 && it.sem !== sel.w) return;
+      if (sel.k !== 'tot' && it.st !== sel.k) return;
+      out.push({ ...it, sdr: p.name });
+    });
+  });
+  return out.sort((a, b) => (a.data + a.hora).localeCompare(b.data + b.hora) || a.id - b.id);
+}
+
+function nsMostra() {
+  const box = $('ns-lista'); if (!box || !NS_SEL) return;
+  const itens = nsItens(NS_SEL);
+  const qSdr = NS_SEL.p === -1 ? 'Todos os SDRs' : NS_D.lista[NS_SEL.p].name;
+  const w = NS_SEL.w === -1 ? 'mês todo' : (s => s.ini.slice(8, 10) + '/' + s.ini.slice(5, 7) + ' a ' + s.fim.slice(8, 10) + '/' + s.fim.slice(5, 7))(NS_D.semanas[NS_SEL.w]);
+  const rot = NS_K[NS_SEL.k] + ' · ' + w;
+  const ids = itens.map(n => n.id).join(', ');
+  box.innerHTML = `<details open class="mx-det"><summary><b>${qSdr} · ${rot}</b> · ${itens.length} ${itens.length === 1 ? 'reunião' : 'reuniões'} <span class="muted">(clique para recolher / abrir os IDs)</span></summary>
+    <div class="cab"><button class="grf-btn" id="ns-copia">Copiar IDs</button><button class="grf-btn" id="ns-xlsx">Exportar Excel</button></div>
+    <div class="rol"><table><tr><th>ID</th><th class="hide-m">Negócio</th><th>Data / hora</th><th>SDR</th><th>Status</th></tr>${
+      itens.map(n => `<tr><td><a href="${n.url}" target="_blank" rel="noopener">#${n.id}</a></td><td class="hide-m">${n.title || ''}</td><td>${nsDH(n)}</td><td>${n.sdr}</td><td>${n.st === 'ns' ? 'No-show' : 'Validada'}</td></tr>`).join('')
+      || '<tr><td colspan="5" class="aud-empty">Nenhum negócio.</td></tr>'}</table></div></details>`;
+  $('ns-copia').addEventListener('click', () => {
+    const b = $('ns-copia');
+    const ok = () => { b.textContent = 'Copiado!'; setTimeout(() => { b.textContent = 'Copiar IDs'; }, 1500); };
+    if (navigator.clipboard) navigator.clipboard.writeText(ids).then(ok, () => {}); else ok();
+  });
+  $('ns-xlsx').addEventListener('click', () => nsExporta(itens, qSdr, rot));
+}
+
+function nsExporta(itens, qSdr, rot) {
+  const slug = t => String(t).normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-zA-Z0-9]+/g, '_').replace(/^_|_$/g, '').toLowerCase();
+  const nome = `noshow_${NS_D.mes}_${slug(qSdr)}_${slug(rot)}`;
+  const linhas = [['ID', 'Negócio', 'Data da reunião', 'Hora', 'SDR', 'Status', 'Link Pipedrive']]
+    .concat(itens.map(n => [n.id, n.title || '', n.data, n.hora || '', n.sdr, n.st === 'ns' ? 'No-show' : 'Validada', n.url]));
+  if (window.XLSX) {
+    const ws = XLSX.utils.aoa_to_sheet(linhas);
+    ws['!cols'] = [{ wch: 10 }, { wch: 45 }, { wch: 14 }, { wch: 8 }, { wch: 22 }, { wch: 12 }, { wch: 48 }];
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'No-show');
+    XLSX.writeFile(wb, nome + '.xlsx');
+    return;
+  }
+  const csv = '\ufeff' + linhas.map(l => l.map(v => '"' + String(v).replace(/"/g, '""') + '"').join(';')).join('\r\n');
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8' }));
+  a.download = nome + '.csv';
+  document.body.appendChild(a); a.click(); a.remove();
+}
+
+$('taxas-resultado').addEventListener('click', ev => {
+  const el = ev.target.closest('[data-nk]');
+  if (!el) return;
+  NS_SEL = { p: Number(el.dataset.np), k: el.dataset.nk, w: Number(el.dataset.nw) };
+  nsMostra();
+});
 
 function auditoriaBloco(pessoa, idx, prefixo) {
   const aid = prefixo + '-' + idx;
@@ -2112,6 +2190,70 @@ $('root-aud').addEventListener('click', ev => {
   audValMostra();
 });
 
+let AUD_M2 = { lista: [], sel: null };   // motivos de perda; sel = {m: índice do motivo, -1 = todos}
+const audDMes = s => s ? s.slice(8, 10) + '/' + s.slice(5, 7) : '';
+
+function audTabelaMotivos(lista) {
+  AUD_M2 = { lista, sel: null };
+  const tot = lista.reduce((a, x) => a + x.qtd, 0);
+  const max = lista.length ? lista[0].qtd : 1;
+  const p = v => tot ? (v / tot * 100).toLocaleString('pt-BR', { maximumFractionDigits: 1 }) + '%' : '—';
+  const linha = (x, i) => `<tr class="mk" data-mk="${i}" style="cursor:pointer"><td class="l">${x.motivo}</td><td>${x.qtd.toLocaleString('pt-BR')}</td><td>${p(x.qtd)}</td><td class="l" style="width:34%"><div style="height:7px;border-radius:4px;background:#2f4b6e;width:${(x.qtd / max * 100).toFixed(0)}%"></div></td></tr>`;
+  return `<div class="kpi-head" style="margin-top:22px">Motivos de perda</div>
+    <div class="muted" style="margin:4px 0 10px;font-size:12px">Negócios <b>perdidos</b> com reunião feita no mês (P1: motivo como está no Pipedrive) · cada negócio conta uma vez · clique em um motivo para ver os negócios (IDs e link do Pipedrive) e exportar.</div>
+    <div class="mx-wrap"><table class="mx val-tab" id="aud-mot"><tr><th class="l">Motivo</th><th>Negócios</th><th>%</th><th></th></tr>${
+      lista.length ? lista.map(linha).join('') + `<tr class="tot mk" data-mk="-1" style="cursor:pointer"><td class="l">Total</td><td>${tot.toLocaleString('pt-BR')}</td><td>100%</td><td></td></tr>`
+        : '<tr><td colspan="4" class="aud-empty">Nenhum negócio perdido com reunião feita no mês.</td></tr>'}</table></div>
+    <div class="mx-lista" id="aud-mot-lista"></div>`;
+}
+
+function audMotivoMostra() {
+  const box = $('aud-mot-lista'); if (!box || !AUD_M2.sel) return;
+  const m = AUD_M2.sel.m;
+  const itens = [];
+  AUD_M2.lista.forEach((x, i) => { if (m === -1 || m === i) x.itens.forEach(it => itens.push({ ...it, motivo: x.motivo })); });
+  const rot = m === -1 ? 'Todos os motivos' : AUD_M2.lista[m].motivo;
+  const ids = itens.map(n => n.id).join(', ');
+  box.innerHTML = `<details open class="mx-det"><summary><b>${rot}</b> · ${itens.length} ${itens.length === 1 ? 'negócio' : 'negócios'} <span class="muted">(clique para recolher / abrir os IDs)</span></summary>
+    <div class="cab"><button class="grf-btn" id="aud-mot-copia">Copiar IDs</button><button class="grf-btn" id="aud-mot-xlsx">Exportar Excel</button></div>
+    <div class="rol"><table><tr><th>ID</th><th class="hide-m">Negócio</th><th>Motivo</th><th>Closer</th><th>Agendada por</th><th>Reunião</th><th>Perdido em</th></tr>${
+      itens.map(n => `<tr><td><a href="${n.url}" target="_blank" rel="noopener">#${n.id}</a></td><td class="hide-m">${n.title || ''}</td><td>${n.motivo}</td><td>${n.closer}</td><td>${n.sdr}</td><td>${audDMes(n.data)}${n.hora ? ' ' + n.hora : ''}</td><td>${audDMes(n.perdido_em)}</td></tr>`).join('')
+      || '<tr><td colspan="7" class="aud-empty">Nenhum negócio.</td></tr>'}</table></div></details>`;
+  $('aud-mot-copia').addEventListener('click', () => {
+    const b = $('aud-mot-copia');
+    const ok = () => { b.textContent = 'Copiado!'; setTimeout(() => { b.textContent = 'Copiar IDs'; }, 1500); };
+    if (navigator.clipboard) navigator.clipboard.writeText(ids).then(ok, () => {}); else ok();
+  });
+  $('aud-mot-xlsx').addEventListener('click', () => audExportaMotivos(itens, rot));
+}
+
+function audExportaMotivos(itens, rot) {
+  const slug = t => String(t).normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-zA-Z0-9]+/g, '_').replace(/^_|_$/g, '').toLowerCase();
+  const nome = `motivos_perda_${$('f-mes').value}_${slug(rot)}`;
+  const linhas = [['ID', 'Negócio', 'Motivo de perda', 'Closer', 'Agendada por', 'Data da reunião', 'Hora', 'Perdido em', 'Link Pipedrive']]
+    .concat(itens.map(n => [n.id, n.title || '', n.motivo, n.closer, n.sdr, n.data || '', n.hora || '', n.perdido_em || '', n.url]));
+  if (window.XLSX) {
+    const ws = XLSX.utils.aoa_to_sheet(linhas);
+    ws['!cols'] = [{ wch: 10 }, { wch: 45 }, { wch: 34 }, { wch: 22 }, { wch: 22 }, { wch: 14 }, { wch: 8 }, { wch: 12 }, { wch: 48 }];
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'Motivos de perda');
+    XLSX.writeFile(wb, nome + '.xlsx');
+    return;
+  }
+  const csv = '\ufeff' + linhas.map(l => l.map(v => '"' + String(v).replace(/"/g, '""') + '"').join(';')).join('\r\n');
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8' }));
+  a.download = nome + '.csv';
+  document.body.appendChild(a); a.click(); a.remove();
+}
+
+$('root-aud').addEventListener('click', ev => {
+  const el = ev.target.closest('#aud-mot [data-mk]');
+  if (!el) return;
+  AUD_M2.sel = { m: Number(el.dataset.mk) };
+  audMotivoMostra();
+});
+
 function renderAuditoria(data) {
   AUD_DATA = data;
   const filtra = l => {
@@ -2138,7 +2280,7 @@ function renderAuditoria(data) {
   html += `<div style="margin:6px 0"><button class="tab${AUD_MODO === 'm6' ? ' active' : ''}" onclick="audModo('m6')">Só validadas (M6)</button> <button class="tab${AUD_MODO === 'todas' ? ' active' : ''}" onclick="audModo('todas')">Todas (validadas ou não)</button></div>`;
   html += `<div class="muted" style="margin:4px 0 10px;font-size:12px">${AUD_MODO === 'm6' ? 'Reuniões feitas do closer com “Reunião Validada?” Sim ou vazio, agrupadas por quem criou a reunião' : 'Reuniões feitas do closer, validadas ou não, agrupadas por quem criou a reunião'} no mês · linha = closer da reunião · coluna = quem criou a reunião (SDR/liderança) · clique em um número, no nome do closer ou no nome do SDR para ver os negócios (IDs do Pipedrive).</div>`;
   if (!sdrs.length) {
-    $('root-aud').innerHTML = html + '<div class="aud-empty">Nenhum SDR encontrado no mês.</div>' + audTabelaValidacao(data.validacao || []);
+    $('root-aud').innerHTML = html + '<div class="aud-empty">Nenhum SDR encontrado no mês.</div>' + audTabelaValidacao(data.validacao || []) + audTabelaMotivos(data.motivos || []);
     return;
   }
   const max = Math.max(1, ...sdrs.flatMap(l => l.closers.map(c => c.qtd)));
@@ -2159,7 +2301,7 @@ function renderAuditoria(data) {
   sdrs.forEach((l, i) => { html += `<td data-s="${i}" style="cursor:pointer">${l.total}</td>`; });
   html += `<td data-todos="1" style="cursor:pointer">${gt}</td></tr></table></div>`;
   html += `<div class="mx-lista" id="aud-lista"></div>`;
-  html += audTabelaValidacao(data.validacao || []);
+  html += audTabelaValidacao(data.validacao || []) + audTabelaMotivos(data.motivos || []);
   $('root-aud').innerHTML = html;
 
   $('aud-mx').addEventListener('click', ev => {

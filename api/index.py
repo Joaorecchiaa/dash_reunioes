@@ -79,6 +79,7 @@ from crn.regras import (m6_reunioes_sdr as m6, rc1_reunioes_closer as rc1, st1_s
                         pr1_marcada_pelo_proprio as pr1, cv2_conversao_reuniao as cv2,
                         h1_hierarquia as h1, l3_lead_time_agendamento as l3,
                         lp1_leads_sdr as lp1, at1_ligacoes as at1, op2_fora_da_escala as op2)
+from crn.regras import p1_motivo_perda as p1
 from crn.regras._atividades import do_tipo, por_responsavel
 try:                                    # AT3 (Validar): só existe na CRN depois que o Rodrigo subir para a main
     from crn.regras import at3_ligacoes_microsip as at3
@@ -802,6 +803,31 @@ def build_auditoria_sdr(ano, mes, time_filtro=None):
     validacao = [{"closer": c, **v, "itens": sorted(vitens[c], key=lambda x: (x["data"], x["hora"], x["id"]))}
                  for c, v in sorted(vcont.items(), key=lambda x: (-x[1]["vol"], x[0]))]
 
+    # Motivos de perda (P1): negocios PERDIDOS que tiveram reuniao feita no mes, 1 vez por negocio
+    por_deal = {}
+    for a in base:
+        did = a.get("deal_id")
+        d = P["deals"].get(did) or {}
+        if d.get("status") != "lost":
+            continue
+        chave_rec = (str(a.get("due_date")), str(a.get("due_time") or ""), a.get("id") or 0)
+        if did not in por_deal or chave_rec > por_deal[did][0]:
+            por_deal[did] = (chave_rec, a, d)
+    mot = defaultdict(list)
+    for did, (_, a, d) in por_deal.items():
+        crit = _criador_id(a)
+        sdr_nome = "Próprio closer" if pr1.marcada_pelo_proprio(a) else (users.get(crit) or str(crit or "(sem criador)"))
+        dia = fuso.atividade_dia(a)
+        perdido = fuso.data_brasil(d.get("lost_time"))
+        mot[p1.motivo(d)].append({
+            "id": did, "title": d.get("title") or ("Negocio " + str(did)),
+            "url": PIPEDRIVE_BASE_URL + "/deal/" + str(did),
+            "closer": users.get(responsavel_id(a)) or f"user {responsavel_id(a)}", "sdr": sdr_nome,
+            "data": str(dia) if dia else "", "hora": _hora(a),
+            "perdido_em": perdido.isoformat() if perdido else ""})
+    motivos = [{"motivo": m, "qtd": len(v), "itens": sorted(v, key=lambda x: (x["data"], x["hora"], x["id"]))}
+               for m, v in sorted(mot.items(), key=lambda x: (-len(x[1]), x[0]))]
+
     outros = []
     if "__proprio" in agrup:
         outros.append(pessoa("Próprio closer", "", "__proprio"))
@@ -814,6 +840,7 @@ def build_auditoria_sdr(ano, mes, time_filtro=None):
         "liderancas": [pessoa(n, c, n) for n, c in sorted(lideres.items())],
         "outros": outros,
         "validacao": validacao,
+        "motivos": motivos,
     }
 
 

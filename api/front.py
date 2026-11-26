@@ -2065,8 +2065,8 @@ function nsExporta(itens, qSdr, rot) {
   document.body.appendChild(a); a.click(); a.remove();
 }
 
-$('taxas-resultado').addEventListener('click', ev => {
-  const el = ev.target.closest('[data-nk]');
+document.addEventListener('click', ev => {
+  const el = ev.target.closest('#taxas-resultado [data-nk]');
   if (!el) return;
   NS_SEL = { p: Number(el.dataset.np), k: el.dataset.nk, w: Number(el.dataset.nw) };
   nsMostra();

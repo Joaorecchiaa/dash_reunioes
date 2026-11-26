@@ -2043,6 +2043,7 @@ function audModo(m) { AUD_MODO = m; if (AUD_DATA) renderAuditoria(AUD_DATA); }
 let AUD_V = { lista: [], sel: null };   // sel = {c: índice do closer (-1 = todos), k: 'vol'|'sim'|'val'|'nao'|'vazio'}
 const AUD_V_NOME = { vol: 'todas as reuniões feitas', sim: 'validadas (Sim)', val: 'validadas (Sim + vazio)', nao: 'não validadas (Não)', vazio: 'sem informação (vazio)' };
 const audVPassa = (it, k) => k === 'vol' || (k === 'val' ? (it.st === 'sim' || it.st === 'vazio') : it.st === k);
+const audDH = n => n.data ? n.data.slice(8, 10) + '/' + n.data.slice(5, 7) + (n.hora ? ' ' + n.hora : '') : '';
 const audVRot = st => ({ sim: 'Sim', vazio: '(vazio)', nao: 'Não' }[st] || '—');
 
 function audTabelaValidacao(lista) {
@@ -2074,7 +2075,7 @@ function audValMostra() {
   box.innerHTML = `<details open class="mx-det"><summary><b>${qClo} · ${rot}</b> · ${itens.length} ${itens.length === 1 ? 'reunião' : 'reuniões'} <span class="muted">(clique para recolher / abrir os IDs)</span></summary>
     <div class="cab"><button class="grf-btn" id="aud-val-copia">Copiar IDs</button><button class="grf-btn" id="aud-val-xlsx">Exportar Excel</button></div>
     <div class="rol"><table><tr><th>ID</th><th class="hide-m">Negócio</th><th>Closer</th><th>Data</th><th>Reunião Validada?</th></tr>${
-      itens.map(n => `<tr><td><a href="${n.url}" target="_blank" rel="noopener">#${n.id}</a></td><td class="hide-m">${n.title || ''}</td><td>${n.closer}</td><td>${n.data ? n.data.slice(8, 10) + '/' + n.data.slice(5, 7) + (n.hora ? ' ' + n.hora : '') : ''}</td><td>${audVRot(n.st)}</td></tr>`).join('')
+      itens.map(n => `<tr><td><a href="${n.url}" target="_blank" rel="noopener">#${n.id}</a></td><td class="hide-m">${n.title || ''}</td><td>${n.closer}</td><td>${audDH(n)}</td><td>${audVRot(n.st)}</td></tr>`).join('')
       || '<tr><td colspan="5" class="aud-empty">Nenhum negócio.</td></tr>'}</table></div></details>`;
   $('aud-val-copia').addEventListener('click', () => {
     const b = $('aud-val-copia');
@@ -2198,9 +2199,9 @@ function audMostraLista() {
   const ids = itens.map(n => n.id).join(', ');
   box.innerHTML = `<details open class="mx-det"><summary><b>${qClo} ← ${qSdr}</b> · ${itens.length} ${itens.length === 1 ? 'reunião' : 'reuniões'} <span class="muted">(clique para recolher / abrir os IDs)</span></summary>
     <div class="cab"><button class="grf-btn" id="aud-copia">Copiar IDs</button><button class="grf-btn" id="aud-xlsx">Exportar Excel</button></div>
-    <div class="rol"><table><tr><th>ID</th><th class="hide-m">Negócio</th><th>Closer</th><th>Agendada por</th></tr>${
-      itens.map(n => `<tr><td><a href="${n.url}" target="_blank" rel="noopener">#${n.id}</a></td><td class="hide-m">${n.title || ''}</td><td>${n.closer}</td><td>${n.sdr}</td></tr>`).join('')
-      || '<tr><td colspan="4" class="aud-empty">Nenhum negócio.</td></tr>'}</table></div></details>`;
+    <div class="rol"><table><tr><th>ID</th><th class="hide-m">Negócio</th><th>Data / hora</th><th>Closer</th><th>Agendada por</th><th>Validada?</th></tr>${
+      itens.map(n => `<tr><td><a href="${n.url}" target="_blank" rel="noopener">#${n.id}</a></td><td class="hide-m">${n.title || ''}</td><td>${audDH(n)}</td><td>${n.closer}</td><td>${n.sdr}</td><td>${n.validada === false ? 'Não' : 'Sim / vazio'}</td></tr>`).join('')
+      || '<tr><td colspan="6" class="aud-empty">Nenhum negócio.</td></tr>'}</table></div></details>`;
   $('aud-copia').addEventListener('click', () => {
     const b = $('aud-copia');
     const ok = () => { b.textContent = 'Copiado!'; setTimeout(() => { b.textContent = 'Copiar IDs'; }, 1500); };
@@ -2214,11 +2215,11 @@ function audMostraLista() {
 function audExportaExcel(itens, qClo, qSdr) {
   const slug = t => String(t).normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-zA-Z0-9]+/g, '_').replace(/^_|_$/g, '').toLowerCase();
   const nome = `auditoria_${$('f-mes').value}_${slug(qClo)}_${slug(qSdr)}`;
-  const linhas = [['ID', 'Negócio', 'Closer', 'Agendada por', 'Link Pipedrive']]
-    .concat(itens.map(n => [n.id, n.title || '', n.closer, n.sdr, n.url]));
+  const linhas = [['ID', 'Negócio', 'Data da reunião', 'Hora', 'Closer', 'Agendada por', 'Reunião Validada?', 'Link Pipedrive']]
+    .concat(itens.map(n => [n.id, n.title || '', n.data || '', n.hora || '', n.closer, n.sdr, n.validada === false ? 'Não' : 'Sim / vazio', n.url]));
   if (window.XLSX) {
     const ws = XLSX.utils.aoa_to_sheet(linhas);
-    ws['!cols'] = [{ wch: 10 }, { wch: 45 }, { wch: 22 }, { wch: 22 }, { wch: 48 }];
+    ws['!cols'] = [{ wch: 10 }, { wch: 45 }, { wch: 14 }, { wch: 8 }, { wch: 22 }, { wch: 22 }, { wch: 16 }, { wch: 48 }];
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, 'Reuniões validadas');
     XLSX.writeFile(wb, nome + '.xlsx');

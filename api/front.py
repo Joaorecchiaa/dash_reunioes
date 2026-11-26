@@ -2114,25 +2114,20 @@ function audNomeEmDuas(n) {
   return p.length > 1 ? `${p[0]}<span class="th-sub">${p.slice(1).join(' ')}</span>` : n;
 }
 
-let AUD_MODO = 'todas';   // filtro da página inteira: todas | sim | vazio | nao | validadas (Sim + vazio)
+let AUD_MODO = 'todas';   // 'todas' = feitas, validadas ou não · 'm6' = só validadas (Sim ou vazio)
 let AUD_DATA = null;
-function audModo(m) { AUD_MODO = (AUD_MODO === m && m !== 'todas') ? 'todas' : m; if (AUD_DATA) renderAuditoria(AUD_DATA); }
-const audPassaF = st => AUD_MODO === 'todas' || (AUD_MODO === 'validadas' ? (st === 'sim' || st === 'vazio') : st === AUD_MODO);
-function audFiltraValidacao(lista) {
-  return (lista || []).map(x => {
-    const itens = (x.itens || []).filter(it => audPassaF(it.st));
-    const c = { vol: itens.length, sim: 0, vazio: 0, nao: 0 };
-    itens.forEach(it => { if (c[it.st] !== undefined) c[it.st]++; });
-    return { closer: x.closer, ...c, itens };
-  }).filter(x => x.vol > 0).sort((a, b) => b.vol - a.vol || a.closer.localeCompare(b.closer));
-}
-function audFiltraMotivos(lista) {
-  return (lista || []).map(m => {
-    const itens = (m.itens || []).filter(it => audPassaF(it.st));
-    return { motivo: m.motivo, qtd: itens.length, itens };
-  }).filter(m => m.qtd > 0).sort((a, b) => b.qtd - a.qtd || a.motivo.localeCompare(b.motivo));
-}
+function audModo(m) { AUD_MODO = m; if (AUD_DATA) renderAuditoria(AUD_DATA); }
 
+let AUD_X = { closer: null, k: null };   // filtro da página vindo da tabela de validação (closer e/ou coluna)
+const AUD_X_NOME = { vol: 'todas as reuniões feitas', sim: 'validadas (Sim)', val: 'validadas (Sim + vazio)', nao: 'não validadas (Não)', vazio: 'sem informação (vazio)' };
+const audXSt = st => !AUD_X.k || AUD_X.k === 'vol' || (AUD_X.k === 'val' ? (st === 'sim' || st === 'vazio') : st === AUD_X.k);
+function audRerender() {
+  const y = window.scrollY, sel = AUD_V.sel;
+  renderAuditoria(AUD_DATA);
+  AUD_V.sel = sel; audValMostra();
+  window.scrollTo(0, y);
+}
+function audLimpaX() { AUD_X = { closer: null, k: null }; AUD_V.sel = null; audRerender(); }
 let AUD_V = { lista: [], sel: null };   // sel = {c: índice do closer (-1 = todos), k: 'vol'|'sim'|'val'|'nao'|'vazio'}
 const AUD_V_NOME = { vol: 'todas as reuniões feitas', sim: 'validadas (Sim)', val: 'validadas (Sim + vazio)', nao: 'não validadas (Não)', vazio: 'sem informação (vazio)' };
 const audVPassa = (it, k) => k === 'vol' || (k === 'val' ? (it.st === 'sim' || it.st === 'vazio') : it.st === k);
@@ -2140,19 +2135,21 @@ const audDH = n => n.data ? n.data.slice(8, 10) + '/' + n.data.slice(5, 7) + (n.
 const audVRot = st => ({ sim: 'Sim', vazio: 'Vazio', nao: 'Não' }[st] || '—');
 
 function audTabelaValidacao(lista) {
-  lista = audFiltraValidacao(lista);
   AUD_V = { lista, sel: null };
   const p = (a, b) => b ? (a / b * 100).toLocaleString('pt-BR', { maximumFractionDigits: 1 }) + '%' : '—';
   const n = v => (v || 0).toLocaleString('pt-BR');
   const T = lista.reduce((t, x) => ({ vol: t.vol + x.vol, sim: t.sim + x.sim, vazio: t.vazio + x.vazio, nao: t.nao + x.nao }), { vol: 0, sim: 0, vazio: 0, nao: 0 });
-  const celula = (txt, c, k, bold) => `<td class="n vk" data-vc="${c}" data-vk="${k}" style="cursor:pointer">${bold ? '<b>' + txt + '</b>' : txt}</td>`;
+  const ligada = (c, k) => AUD_X.k === k && (AUD_X.closer || null) === (c === -1 ? null : (lista[c] || {}).closer);
+  const ON = ' background:rgba(255,200,0,.45);box-shadow:inset 0 0 0 2px #d9a400;';
+  const celula = (txt, c, k, bold) => `<td class="n vk" data-vc="${c}" data-vk="${k}" style="cursor:pointer;${ligada(c, k) ? ON : ''}">${bold ? '<b>' + txt + '</b>' : txt}</td>`;
+  const th = (txt, k) => `<th class="vk" data-vc="-1" data-vk="${k}" style="cursor:pointer;${ligada(-1, k) ? ON : ''}" title="Filtrar a página inteira">${txt}</th>`;
   const linha = (x, nome, c, cls) => {
     const base = x.sim + x.vazio + x.nao;
-    return `<tr class="${cls}"><td class="vk" data-vc="${c}" data-vk="vol" style="cursor:pointer">${nome}</td>${celula(n(x.vol), c, 'vol')}${celula(n(x.sim), c, 'sim')}${celula(n(x.sim + x.vazio), c, 'val')}${celula(n(x.nao), c, 'nao')}${celula(n(x.vazio), c, 'vazio')}${celula(p(x.sim + x.vazio, base), c, 'val', true)}${celula(p(x.sim, base), c, 'sim', true)}</tr>`;
+    return `<tr class="${cls}"><td class="vk" data-vc="${c}" data-vk="vol" style="cursor:pointer;${ligada(c, 'vol') ? ON : ''}">${nome}</td>${celula(n(x.vol), c, 'vol')}${celula(n(x.sim), c, 'sim')}${celula(n(x.sim + x.vazio), c, 'val')}${celula(n(x.nao), c, 'nao')}${celula(n(x.vazio), c, 'vazio')}${celula(p(x.sim + x.vazio, base), c, 'val', true)}${celula(p(x.sim, base), c, 'sim', true)}</tr>`;
   };
   return `<div class="kpi-head" style="margin-top:22px">Validação das reuniões</div>
-    <div class="muted" style="margin:4px 0 10px;font-size:12px">Só reuniões feitas · campo “Reunião Validada?” do negócio, vale para todas as reuniões dele · taxas sobre o volume de reuniões · clique em um número ou no nome do closer para ver os negócios (IDs e link do Pipedrive) e exportar.</div>
-    <div class="mx-wrap"><table class="mx val-tab" id="aud-val"><tr><th class="l">Closer</th><th>Volume de reuniões</th><th>Validadas (Sim)</th><th>Validadas (Sim + vazio)</th><th>Não validadas (Não)</th><th>Sem informação (vazio)</th><th>Taxa de qualificação (Sim + vazio)</th><th>Taxa de qualificação (Sim)</th></tr>${
+    <div class="muted" style="margin:4px 0 10px;font-size:12px">Só reuniões feitas · campo “Reunião Validada?” do negócio, vale para todas as reuniões dele · taxas sobre o volume de reuniões · clique em um número, em um cabeçalho (ex.: “Validadas (Sim)”) ou no nome do closer: <b>a página inteira</b> (matriz e motivos de perda) passa a mostrar só aquilo, e a lista de negócios abre abaixo. Clique de novo para desfazer.</div>
+    <div class="mx-wrap"><table class="mx val-tab" id="aud-val"><tr><th class="l">Closer</th>${th('Volume de reuniões', 'vol')}${th('Validadas (Sim)', 'sim')}${th('Validadas (Sim + vazio)', 'val')}${th('Não validadas (Não)', 'nao')}${th('Sem informação (vazio)', 'vazio')}${th('Taxa de qualificação (Sim + vazio)', 'val')}${th('Taxa de qualificação (Sim)', 'sim')}</tr>${
       lista.length ? lista.map((x, i) => linha(x, x.closer, i, '')).join('') + linha(T, 'Total', -1, 'tot')
         : '<tr><td colspan="8" class="aud-empty">Nenhuma reunião feita no mês.</td></tr>'}</table></div>
     <div class="mx-lista" id="aud-val-lista"></div>`;
@@ -2202,15 +2199,21 @@ function audExportaValidacao(itens, qClo, rot) {
 $('root-aud').addEventListener('click', ev => {
   const el = ev.target.closest('#aud-val [data-vk]');
   if (!el) return;
-  AUD_V.sel = { c: Number(el.dataset.vc), k: el.dataset.vk };
-  audValMostra();
+  const c = Number(el.dataset.vc), k = el.dataset.vk;
+  const closer = c === -1 ? null : (AUD_V.lista[c] || {}).closer || null;
+  if (AUD_X.k === k && (AUD_X.closer || null) === closer) { AUD_X = { closer: null, k: null }; AUD_V.sel = null; }
+  else { AUD_X = { closer, k }; AUD_V.sel = { c, k }; }
+  audRerender();
 });
 
 let AUD_M2 = { lista: [], sel: null };   // motivos de perda; sel = {m: índice do motivo, -1 = todos}
 const audDMes = s => s ? s.slice(8, 10) + '/' + s.slice(5, 7) : '';
 
 function audTabelaMotivos(lista) {
-  lista = audFiltraMotivos(lista);
+  lista = (lista || []).map(m => {
+    const itens = (m.itens || []).filter(it => audXSt(it.st) && (!AUD_X.closer || it.closer === AUD_X.closer));
+    return { motivo: m.motivo, qtd: itens.length, itens };
+  }).filter(m => m.qtd > 0).sort((a, b) => b.qtd - a.qtd || a.motivo.localeCompare(b.motivo));
   AUD_M2 = { lista, sel: null };
   const tot = lista.reduce((a, x) => a + x.qtd, 0);
   const max = lista.length ? lista[0].qtd : 1;
@@ -2274,8 +2277,8 @@ $('root-aud').addEventListener('click', ev => {
 function renderAuditoria(data) {
   AUD_DATA = data;
   const filtra = l => {
-    const closers = (l.closers || []).map(c => {
-      const negocios = (c.negocios || []).filter(n => audPassaF(n.st));
+    const closers = (l.closers || []).filter(c => !AUD_X.closer || c.closer === AUD_X.closer).map(c => {
+      const negocios = (c.negocios || []).filter(n => (AUD_MODO === 'todas' || n.validada !== false) && audXSt(n.st));
       return { closer: c.closer, qtd: negocios.length, negocios };
     }).filter(c => c.qtd > 0);
     return { ...l, closers, total: closers.reduce((a, c) => a + c.qtd, 0) };
@@ -2293,13 +2296,13 @@ function renderAuditoria(data) {
   AUD_M = { sdrs, closers, cel };
   AUD_SEL = { s: null, c: null };
 
-  let html = `<div class="kpi-head">Closer × quem agendou · ${data.month_label}</div>`;
-  const VT = (AUD_DATA.validacao || []).reduce((t, x) => ({ vol: t.vol + x.vol, sim: t.sim + x.sim, vazio: t.vazio + x.vazio, nao: t.nao + x.nao }), { vol: 0, sim: 0, vazio: 0, nao: 0 });
-  const chip = (k, nome, n) => `<button class="tab${AUD_MODO === k ? ' active' : ''}" onclick="audModo('${k}')">${nome} <b>${n.toLocaleString('pt-BR')}</b></button>`;
-  html += `<div class="muted" style="margin:6px 0 4px;font-size:12px">Filtro da página inteira · <b>Reunião Validada?</b> (clique de novo para desfazer)</div>
-    <div style="margin:0 0 10px;display:flex;flex-wrap:wrap;gap:6px">${chip('todas', 'Todas', VT.vol)}${chip('sim', 'Sim', VT.sim)}${chip('vazio', 'Vazio', VT.vazio)}${chip('nao', 'Não', VT.nao)}${chip('validadas', 'Validadas (Sim + vazio)', VT.sim + VT.vazio)}</div>`;
-  const NOME_F = { todas: 'todas as reuniões feitas', sim: 'só “Reunião Validada?” = Sim', vazio: 'só “Reunião Validada?” vazio', nao: 'só “Reunião Validada?” = Não', validadas: 'só validadas (Sim + vazio)' }[AUD_MODO];
-  html += `<div class="muted" style="margin:4px 0 10px;font-size:12px">Reuniões feitas do closer, agrupadas por quem criou a reunião · <b>${NOME_F}</b> no mês · linha = closer da reunião · coluna = quem criou a reunião (SDR/liderança) · clique em um número, no nome do closer ou no nome do SDR para ver os negócios (IDs do Pipedrive). A tabela de validação e os motivos de perda abaixo seguem o mesmo filtro.</div>`;
+  let html = '';
+  if (AUD_X.k || AUD_X.closer) {
+    html += `<div style="margin:0 0 10px;padding:8px 12px;border:1px solid #d9a400;background:rgba(255,200,0,.18);border-radius:10px;font-size:13px">Filtro ativo (tabela de validação): <b>${AUD_X.closer || 'todos os closers'} · ${AUD_X_NOME[AUD_X.k || 'vol']}</b> — matriz e motivos de perda abaixo seguem este filtro. <button class="grf-btn" onclick="audLimpaX()">× limpar filtro</button></div>`;
+  }
+  html += `<div class="kpi-head">Closer × quem agendou · ${data.month_label}</div>`;
+  html += `<div style="margin:6px 0"><button class="tab${AUD_MODO === 'm6' ? ' active' : ''}" onclick="audModo('m6')">Só validadas (M6)</button> <button class="tab${AUD_MODO === 'todas' ? ' active' : ''}" onclick="audModo('todas')">Todas (validadas ou não)</button></div>`;
+  html += `<div class="muted" style="margin:4px 0 10px;font-size:12px">${AUD_MODO === 'm6' ? 'Reuniões feitas do closer com “Reunião Validada?” Sim ou vazio, agrupadas por quem criou a reunião' : 'Reuniões feitas do closer, validadas ou não, agrupadas por quem criou a reunião'} no mês · linha = closer da reunião · coluna = quem criou a reunião (SDR/liderança) · clique em um número, no nome do closer ou no nome do SDR para ver os negócios (IDs do Pipedrive).</div>`;
   if (!sdrs.length) {
     $('root-aud').innerHTML = html + '<div class="aud-empty">Nenhum SDR encontrado no mês.</div>' + audTabelaValidacao(data.validacao || []) + audTabelaMotivos(data.motivos || []);
     return;

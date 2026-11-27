@@ -239,7 +239,6 @@ HTML = r"""<!DOCTYPE html>
   .aud-total b { color:var(--text); font-size:16px; }
   .aud-body { display:none; padding:0 18px 14px; }
   .aud-body.open { display:block; }
-  #root-aud .kpi-head, #root-taxas .kpi-head, #root-taxas .nb-title { font-weight:800; color:var(--text); }
   table.aud-tbl th, table.mx th { color:var(--text); font-weight:800; }
   table.aud-tbl th .th-sub, table.mx th .th-sub { font-weight:600; color:var(--muted); }
   td.nm, #taxas-resultado table td.l:first-child { cursor:pointer; }

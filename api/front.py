@@ -239,6 +239,7 @@ HTML = r"""<!DOCTYPE html>
   .aud-total b { color:var(--text); font-size:16px; }
   .aud-body { display:none; padding:0 18px 14px; }
   .aud-body.open { display:block; }
+  .kpi-head, .nb-title, .panel h2 { font-weight:800 !important; color:var(--text) !important; }
   table.aud-tbl th, table.mx th { color:var(--text); font-weight:800; }
   table.aud-tbl th .th-sub, table.mx th .th-sub { font-weight:600; color:var(--muted); }
   td.nm, #taxas-resultado table td.l:first-child { cursor:pointer; }
@@ -2403,14 +2404,6 @@ function audConversao(data) {
   }
   h += cv.length ? `<tr class="total"><td class="l cxk" data-cx="cv" data-ci="-1" data-ck="val" style="cursor:pointer">TOTAL</td><td></td>${cel(tv, -1, 'cv', 'val')}${cel(tg, -1, 'cv', 'gan')}${cel(pct(tg, tv), -1, 'cv', 'gan', true)}</tr>` : `<tr><td colspan="5" class="aud-empty">Nenhum closer no mês.</td></tr>`;
   h += `</table></div><div class="mx-lista" id="cv-lista"></div>`;
-  h += `<div class="kpi-head" style="margin-top:22px">Ganhos do mês vindos de reuniões validadas de OUTROS meses (${ml})</div>`;
-  h += `<div class="muted" style="margin:4px 0 8px;font-size:12px">Negócios do closer <b>ganhos neste mês</b> (data de ganho) cuja reunião feita por ele foi em <b>outro mês</b> (e nenhuma neste mês, que já está na tabela acima), sem estar como “Não” em Reunião Validada?. Conta do painel, não é regra oficial. Não tem taxa. Clique em um número para ver os negócios.</div>`;
-  h += `<div class="mx-wrap"><table class="aud-tbl cxtab"><tr><th class="l">Closer</th><th class="l">Time</th><th>Ganhos este mês (reunião de outro mês)</th></tr>`;
-  const om = lista.map((c, i) => ({ i, c, n: c.orig.outros.length })).sort((a, b) => b.n - a.n || a.c.name.localeCompare(b.c.name));
-  let to = 0;
-  for (const o of om) { to += o.n; h += `<tr><td class="l nm" style="cursor:pointer" title="Destacar este nome nas outras métricas">${o.c.name}</td><td class="l muted">${o.c.time || ''}</td>${cel(o.n, o.i, 'om', 'gan', true)}</tr>`; }
-  h += om.length ? `<tr class="total"><td class="l cxk" data-cx="om" data-ci="-1" data-ck="gan" style="cursor:pointer">TOTAL</td><td></td>${cel(to, -1, 'om', 'gan', true)}</tr>` : `<tr><td colspan="3" class="aud-empty">Nenhum closer no mês.</td></tr>`;
-  h += `</table></div><div class="mx-lista" id="om-lista"></div>`;
   return h;
 }
 

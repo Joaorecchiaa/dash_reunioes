@@ -547,10 +547,13 @@ def _status_rotulo(a, validada, nao_valida, agora):
     return s or "Planejada"
 
 
-def ganhos_do_mes_outras_reunioes(ano, mes, closer_ids):
-    """Painel (nao e regra oficial): deals GANHOS no mes (won_time, Brasilia) de cada closer (dono do deal, M1) cuja
-    reuniao FEITA do proprio closer (campo Reuniao Validada? diferente de "Nao") foi em OUTRO mes: tem reuniao feita
-    fora do mes e nenhuma dentro do mes (quem tem reuniao no mes ja esta na CV2). Devolve uid -> lista de itens."""
+def ganhos_do_mes_por_origem(ano, mes, closer_ids):
+    """Painel (nao e regra oficial): reconcilia as VENDAS do mes de cada closer (deals ganhos no mes, dono do deal, M1)
+    pela reuniao que as originou. Devolve uid -> {"mes": [...], "outros": [...], "sem": [...]}:
+      mes    = reuniao feita do proprio closer NESTE mes (e campo Reuniao Validada? diferente de "Nao")
+      outros = reuniao feita do proprio closer so em OUTRO mes (idem)
+      sem    = o resto, com o motivo: "Reuniao Validada? = Nao" / "Reuniao so em nome de outra pessoa" /
+               "Sem reuniao feita no negocio" (reuniao criada pela IA nao conta, como na RC1)."""
     ids_set = set(closer_ids)
 
     def dono(d):
@@ -563,27 +566,32 @@ def ganhos_do_mes_outras_reunioes(ano, mes, closer_ids):
         if not ganhos:
             return {}
         status = m6.status_dos_deals(ganhos)
-        cand = [d for d in ganhos if status.get(d["id"]) != "nao"]
-        acts = pipedrive.atividades_dos_deals([d["id"] for d in cand], tipos=[tipo_atividade("reuniao")], done=True)
+        acts = pipedrive.atividades_dos_deals([d["id"] for d in ganhos], tipos=[tipo_atividade("reuniao")], done=True)
         out = {}
-        for d in cand:
+        for d in ganhos:
             uid = dono(d)
-            dias = []
-            for a in acts.get(d["id"], []):
-                if feita_crn(a) and responsavel_id(a) == uid and not criada_pela_ia(a):
-                    m = fuso.atividade_momento(a)
-                    if m:
-                        dias.append(m.date())
-            if not dias or any(x.year == ano and x.month == mes for x in dias):
-                continue
+            feitas = [a for a in acts.get(d["id"], []) if feita_crn(a) and not criada_pela_ia(a)]
+            minhas = [a for a in feitas if responsavel_id(a) == uid]
+            dias = [m.date() for m in (fuso.atividade_momento(a) for a in minhas) if m]
             gd = fuso.data_brasil(d.get("won_time"))
-            out.setdefault(uid, []).append({
-                "id": d["id"], "title": d.get("title") or ("Negocio " + str(d["id"])),
-                "url": PIPEDRIVE_BASE_URL + "/deal/" + str(d["id"]),
-                "ganho_em": gd.isoformat() if gd else "", "reuniao_em": max(dias).isoformat(),
-                "validacao": status.get(d["id"]) or ""})
+            it = {"id": d["id"], "title": d.get("title") or ("Negocio " + str(d["id"])),
+                  "url": PIPEDRIVE_BASE_URL + "/deal/" + str(d["id"]),
+                  "valor": d.get("value") or 0,
+                  "ganho_em": gd.isoformat() if gd else "", "reuniao_em": max(dias).isoformat() if dias else "",
+                  "validacao": status.get(d["id"]) or "", "motivo": ""}
+            if status.get(d["id"]) == "nao":
+                bucket, it["motivo"] = "sem", "Reunião Validada? = Não"
+            elif not dias:
+                bucket = "sem"
+                it["motivo"] = "Reunião só em nome de outra pessoa" if feitas else "Sem reunião feita no negócio"
+            elif any(x.year == ano and x.month == mes for x in dias):
+                bucket = "mes"
+            else:
+                bucket = "outros"
+            out.setdefault(uid, {"mes": [], "outros": [], "sem": []})[bucket].append(it)
         return out
-    return _cache_seguro(("ganhos_outras_reunioes", ano, mes), TTL, buscar, tamanho=lambda v: sum(len(x) for x in v.values()))
+    return _cache_seguro(("ganhos_origem", ano, mes), TTL, buscar,
+                         tamanho=lambda v: sum(len(x) for u in v.values() for x in u.values()))
 
 
 def _build_dashboard_generico(pessoas, ano, mes, privilegiado=False, com_validada=False, lideres=None):
@@ -625,9 +633,9 @@ def _build_dashboard_generico(pessoas, ano, mes, privilegiado=False, com_validad
     outras = {}
     if privilegiado and not com_validada:
         try:
-            outras = ganhos_do_mes_outras_reunioes(ano, mes, ids_set)
+            outras = ganhos_do_mes_por_origem(ano, mes, ids_set)
         except Exception as e:           # esta tabela nao pode derrubar o resto do painel
-            print("ganhos_do_mes_outras_reunioes falhou:", repr(e), flush=True)
+            print("ganhos_do_mes_por_origem falhou:", repr(e), flush=True)
 
     combined_days = {d: novo_contador(com_validada) for d in range(1, ultimo + 1)}
     geral_dia = {d: [] for d in range(1, ultimo + 1)}
@@ -736,7 +744,7 @@ def _build_dashboard_generico(pessoas, ano, mes, privilegiado=False, com_validad
             "ganhos_done": cv2.conversao(todas_feitas, status_atual)["ganhas"],
             "ganhos_validada": cv2.conversao(todas_validas, status_atual)["ganhas"],
             "conv_validada": cv2.conversao(todas_validas, status_atual),
-            "ganhos_outros_meses": outras.get(uid, []),
+            "ganhos_origem": outras.get(uid, {"mes": [], "outros": [], "sem": []}),
             "negocios": sorted(({k: v for k, v in n.items() if k != "_rec"} for n in c_negocios_mes.values()),
                                key=lambda x: x["id"]) if privilegiado else [],
             "negocios_dia": ([{"dia": d, "itens": sorted(c_negocios_dia[d], key=lambda x: x["hora"])}

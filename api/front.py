@@ -239,7 +239,7 @@ HTML = r"""<!DOCTYPE html>
   .aud-total b { color:var(--text); font-size:16px; }
   .aud-body { display:none; padding:0 18px 14px; }
   .aud-body.open { display:block; }
-  .kpi-head, .nb-title, .panel h2 { font-weight:800 !important; color:var(--text) !important; }
+  #root-aud .kpi-head, #root-taxas .kpi-head, #root-taxas .nb-title { font-weight:800; color:var(--text); }
   table.aud-tbl th, table.mx th { color:var(--text); font-weight:800; }
   table.aud-tbl th .th-sub, table.mx th .th-sub { font-weight:600; color:var(--muted); }
   td.nm, #taxas-resultado table td.l:first-child { cursor:pointer; }
@@ -1139,7 +1139,7 @@ function renderGenerico(data, cfg) {
       const doTime = linhasDist.filter(c => c.time === time)
         .slice().sort((a,b) => (tp(b)[metricaDist]||0) - (tp(a)[metricaDist]||0));
       const totalTime = doTime.reduce((soma, c) => soma + (tp(c)[metricaDist]||0), 0);
-      html += `<div class="nb-title" style="margin-top:14px">${time} — ${totalTime} reunião(ões) no total</div>
+      html += `<div class="nb-title" style="margin-top:14px;font-size:12px;font-weight:700;color:var(--muted);text-transform:none;letter-spacing:0">${time} — ${totalTime} reunião(ões) no total</div>
         <table class="aud-tbl"><tr><th class="l">${cfg.label}</th><th>Quantidade</th><th>% do time</th><th class="barcell"></th></tr>`;
       for (const c of doTime) {
         const qtd = tp(c)[metricaDist] || 0;

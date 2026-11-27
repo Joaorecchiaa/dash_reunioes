@@ -638,7 +638,8 @@ def _build_dashboard_generico(pessoas, ano, mes, privilegiado=False, com_validad
                     if valida:
                         proprio_val += 1
                         c_met_days[d]["proprio_validada"] += 1
-                if valida:
+                # SDR: validada pela M6 (atribuicao). Closer: reuniao feita cujo deal nao esta como "Nao" (M6: so "Nao" exclui)
+                if valida or (not com_validada and not nao_valida):
                     validas_dia[d].append(a)
 
             if privilegiado:
@@ -689,6 +690,7 @@ def _build_dashboard_generico(pessoas, ano, mes, privilegiado=False, com_validad
             "proprio_validada": proprio_val,
             "ganhos_done": cv2.conversao(todas_feitas, status_atual)["ganhas"],
             "ganhos_validada": cv2.conversao(todas_validas, status_atual)["ganhas"],
+            "conv_validada": cv2.conversao(todas_validas, status_atual),
             "negocios": sorted(({k: v for k, v in n.items() if k != "_rec"} for n in c_negocios_mes.values()),
                                key=lambda x: x["id"]) if privilegiado else [],
             "negocios_dia": ([{"dia": d, "itens": sorted(c_negocios_dia[d], key=lambda x: x["hora"])}

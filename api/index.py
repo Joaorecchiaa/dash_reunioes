@@ -881,11 +881,6 @@ def build_auditoria_sdr(ano, mes, time_filtro=None):
 
     # Conversao por closer (CV2 sobre as validadas do mes) e ganhos do mes vindos de reunioes de OUTROS meses
     rot_neg = {"won": "Ganho", "open": "Aberto", "lost": "Perdido"}
-    try:
-        outras_meses = ganhos_do_mes_por_origem(ano, mes, closer_ids)
-    except Exception as e:                # a tabela nao pode derrubar a auditoria
-        print("ganhos_do_mes_por_origem falhou:", repr(e), flush=True)
-        outras_meses = {}
     nome_closer = {u: users.get(u) or f"user {u}" for u in closer_ids}
     por_closer_deal = defaultdict(dict)   # uid -> deal -> reuniao validada mais recente do mes
     for a in base:
@@ -909,7 +904,7 @@ def build_auditoria_sdr(ano, mes, time_filtro=None):
                           "sn": rot_neg.get(d.get("status"), "")})
         tc = ctx["closers"].get(nome_closer[u]) if isinstance(ctx["closers"], dict) else ""
         conversao.append({"name": nome_closer[u], "time": tc or "", "itens": sorted(itens, key=lambda x: (x["data"], x["hora"], x["id"])),
-                          "orig": {"outros": (outras_meses.get(u) or {}).get("outros", [])}})
+                          "orig": {"outros": []}})
 
     outros = []
     if "__proprio" in agrup:

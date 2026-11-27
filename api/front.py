@@ -1869,7 +1869,7 @@ function renderTaxasAba(resEscala, resDash, resEvolucoes, resNS, rangeNS, mesNS)
   }
 
   // ---- 2) taxa de conversao por closer (mesma conta da aba Reuniões - Closers) ----
-  html += `<div class="nb-title" style="margin-top:22px">Taxa de Conversão por Closer — ${resDash.month_label || ''}</div>`;
+  html += `<div class="nb-title" style="margin-top:22px">Conversão por Closer — ganhos das reuniões validadas DO MÊS (${resDash.month_label || ''})</div><div id="cx-banner"></div>`;
   if (resDash.error || resDash.erro) {
     html += `<div class="warn">Erro: ${resDash.error || resDash.erro}</div>`;
   } else {
@@ -1884,7 +1884,7 @@ function renderTaxasAba(resEscala, resDash, resEvolucoes, resNS, rangeNS, mesNS)
         if (!ns && !val) continue;
         itens.push({ id: it.id, title: it.title, url: it.url, hora: it.hora, data: isoD(nd.dia), st: ns ? 'ns' : 'val', vl: it.validacao || '', sn: it.status_negocio || '' });
       }
-      return { name: c.name, time: c.time, lider: c.lideranca, itens };
+      return { name: c.name, time: c.time, lider: c.lideranca, itens, outros: c.ganhos_outros_meses || [] };
     });
     CX_D = { lista, mes: mesNS };
     const cvn = c => c.itens.filter(x => x.st === 'val');
@@ -1894,12 +1894,12 @@ function renderTaxasAba(resEscala, resDash, resEvolucoes, resNS, rangeNS, mesNS)
     const cel = (txt, i, tab, k, bold) => `<td class="qtd cxk" data-cx="${tab}" data-ci="${i}" data-ck="${k}" style="cursor:pointer">${bold ? '<b>' + txt + '</b>' : txt}</td>`;
     const pct = (a, b) => b ? (a / b * 100).toFixed(1).replace('.', ',') + '%' : '—';
     html += `<div class="muted" style="margin-bottom:8px">Só reuniões validadas (M6) · negócios com reunião validada no mês e quantos estão ganhos hoje (CV2, cada negócio conta uma vez) · visão safra: sobe conforme os negócios ganham · clique em um número ou no nome do closer para ver os negócios (link do Pipedrive e Excel)</div>`;
-    html += `<table class="aud-tbl"><tr><th class="l">Closer</th><th class="l">Time</th>
-      <th>Validadas</th><th>Ganhos</th><th>Taxa de conversão</th></tr>`;
+    html += `<table class="aud-tbl cxtab"><tr><th class="l">Closer</th><th class="l">Time</th>
+      <th>Validadas no mês</th><th>Ganhos dessas reuniões</th><th>Taxa de conversão</th></tr>`;
     let tv = 0, tg = 0;
     for (const o of cvDados) {
       tv += o.val; tg += o.gan;
-      html += `<tr><td class="l cxk" data-cx="cv" data-ci="${o.i}" data-ck="val" style="cursor:pointer">${o.c.name}</td><td class="l muted">${o.c.time||''}</td>
+      html += `<tr data-cr="${o.i}"><td class="l cxk cxn" data-cx="cv" data-ci="${o.i}" data-ck="val" style="cursor:pointer" title="Filtrar todas as taxas por este closer">${o.c.name}</td><td class="l muted">${o.c.time||''}</td>
         ${cel(o.val, o.i, 'cv', 'val')}${cel(o.gan, o.i, 'cv', 'gan')}${cel(pct(o.gan, o.val), o.i, 'cv', 'gan', true)}</tr>`;
     }
     if (!cvDados.length) {
@@ -1909,16 +1909,30 @@ function renderTaxasAba(resEscala, resDash, resEvolucoes, resNS, rangeNS, mesNS)
     }
     html += `</table><div class="mx-lista" id="cv-lista"></div>`;
 
+    // ---- ganhos do mês vindos de reuniões validadas de OUTROS meses ----
+    html += `<div class="nb-title" style="margin-top:22px">Ganhos do mês vindos de reuniões validadas de OUTROS meses (${resDash.month_label || ''})</div>`;
+    html += `<div class="muted" style="margin-bottom:8px">Negócios do closer <b>ganhos neste mês</b> (data de ganho) cuja reunião feita por ele foi em <b>outro mês</b> (e nenhuma neste mês, que já está na tabela acima), sem estar como “Não” em Reunião Validada?. Conta do painel, não é regra oficial. Não tem taxa: o que se compara com esse ganho não está neste mês. Clique em um número ou no nome do closer para ver os negócios.</div>`;
+    html += `<table class="aud-tbl cxtab"><tr><th class="l">Closer</th><th class="l">Time</th><th>Ganhos este mês (reunião de outro mês)</th></tr>`;
+    let to = 0;
+    const omDados = lista.map((c, i) => ({ i, c, n: c.outros.length })).sort((a, b) => b.n - a.n || a.c.name.localeCompare(b.c.name));
+    for (const o of omDados) {
+      to += o.n;
+      html += `<tr data-cr="${o.i}"><td class="l cxk cxn" data-cx="om" data-ci="${o.i}" data-ck="gan" style="cursor:pointer" title="Filtrar todas as taxas por este closer">${o.c.name}</td><td class="l muted">${o.c.time||''}</td>${cel(o.n, o.i, 'om', 'gan', true)}</tr>`;
+    }
+    if (!omDados.length) html += `<tr><td colspan="3" class="aud-empty">Nenhum closer no mês.</td></tr>`;
+    else html += `<tr class="total"><td class="l cxk" data-cx="om" data-ci="-1" data-ck="gan" style="cursor:pointer">TOTAL</td><td></td>${cel(to, -1, 'om', 'gan', true)}</tr>`;
+    html += `</table><div class="mx-lista" id="om-lista"></div>`;
+
     // ---- taxa de no-show dos closers: no-show ÷ (validadas + no-show), mês todo ----
     html += `<div class="nb-title" style="margin-top:22px">Taxa de No-show por Closer — ${resDash.month_label || ''}</div>`;
     html += `<div class="muted" style="margin-bottom:8px">No-show ÷ (validadas + no-show) de cada closer (FR3: atividade de no-show do responsável), no mês todo. Reagendadas ficam fora. Clique em um número ou no nome do closer para ver os negócios.</div>`;
-    html += `<table class="aud-tbl"><tr><th class="l">Closer</th><th class="l">Time</th><th>Validadas</th><th>No-show</th><th>Validadas + No-show</th><th>Taxa de no-show</th></tr>`;
+    html += `<table class="aud-tbl cxtab"><tr><th class="l">Closer</th><th class="l">Time</th><th>Validadas</th><th>No-show</th><th>Validadas + No-show</th><th>Taxa de no-show</th></tr>`;
     let gv = 0, gn = 0;
     const nsDados = lista.map((c, i) => ({ i, c, v: c.itens.filter(x => x.st === 'val').length, n: c.itens.filter(x => x.st === 'ns').length }))
       .sort((a, b) => (!!a.c.lider - !!b.c.lider) || a.c.name.localeCompare(b.c.name));
     for (const o of nsDados) {
       gv += o.v; gn += o.n;
-      html += `<tr><td class="l cxk" data-cx="ns" data-ci="${o.i}" data-ck="tot" style="cursor:pointer">${o.c.name}</td><td class="l muted">${o.c.time||''}</td>
+      html += `<tr data-cr="${o.i}"><td class="l cxk cxn" data-cx="ns" data-ci="${o.i}" data-ck="tot" style="cursor:pointer" title="Filtrar todas as taxas por este closer">${o.c.name}</td><td class="l muted">${o.c.time||''}</td>
         ${cel(o.v, o.i, 'ns', 'val')}${cel(o.n, o.i, 'ns', 'ns')}${cel(o.v + o.n, o.i, 'ns', 'tot')}${cel(pct(o.n, o.v + o.n), o.i, 'ns', 'tot', true)}</tr>`;
     }
     if (!nsDados.length) {
@@ -1946,6 +1960,7 @@ function renderTaxasAba(resEscala, resDash, resEvolucoes, resNS, rangeNS, mesNS)
 
   html += taxaNoShowSemanal(resNS, rangeNS, mesNS);
 
+  CX_F = null;
   $('taxas-resultado').innerHTML = html;
 }
 
@@ -2111,7 +2126,9 @@ function cxItens(tab, ci, k) {
   CX_D.lista.forEach((c, i) => {
     if (ci !== -1 && ci !== i) return;
     let its = c.itens;
-    if (tab === 'cv') {                                   // um registro por negócio (reunião validada mais recente)
+    if (tab === 'om') {
+      its = c.outros.map(g => ({ id: g.id, title: g.title, url: g.url, hora: '', data: g.reuniao_em, st: 'val', vl: g.validacao, sn: 'Ganho em ' + (g.ganho_em ? g.ganho_em.slice(8, 10) + '/' + g.ganho_em.slice(5, 7) : '—') }));
+    } else if (tab === 'cv') {                                   // um registro por negócio (reunião validada mais recente)
       const m = new Map();
       its.filter(x => x.st === 'val').forEach(x => { const o = m.get(x.id); if (!o || (x.data + x.hora) > (o.data + o.hora)) m.set(x.id, x); });
       its = [...m.values()];
@@ -2122,16 +2139,16 @@ function cxItens(tab, ci, k) {
   return out.sort((a, b) => (a.data + a.hora).localeCompare(b.data + b.hora) || a.id - b.id);
 }
 function cxMostra(tab, ci, k) {
-  const box = $(tab === 'cv' ? 'cv-lista' : 'cn-lista'); if (!box) return;
+  const box = $({ cv: 'cv-lista', om: 'om-lista', ns: 'cn-lista' }[tab]); if (!box) return;
   const itens = cxItens(tab, ci, k);
   const quem = ci === -1 ? 'Todos os closers' : CX_D.lista[ci].name;
-  const rot = CX_K[k] + (tab === 'cv' ? ' · conversão' : '');
+  const rot = tab === 'om' ? 'ganhos de reuniões de outros meses' : CX_K[k] + (tab === 'cv' ? ' · conversão' : '');
   const ids = itens.map(n => n.id).join(', ');
   const ehNs = n => n.st === 'ns' ? 'No-show' : 'Validada';
-  box.innerHTML = `<details open class="mx-det"><summary><b>${quem} · ${rot}</b> · ${itens.length} ${tab === 'cv' ? (itens.length === 1 ? 'negócio' : 'negócios') : (itens.length === 1 ? 'reunião' : 'reuniões')} <span class="muted">(clique para recolher / abrir)</span></summary>
+  box.innerHTML = `<details open class="mx-det"><summary><b>${quem} · ${rot}</b> · ${itens.length} ${tab !== 'ns' ? (itens.length === 1 ? 'negócio' : 'negócios') : (itens.length === 1 ? 'reunião' : 'reuniões')} <span class="muted">(clique para recolher / abrir)</span></summary>
     <div class="cab"><button class="grf-btn" data-cxb="copia">Copiar IDs</button><button class="grf-btn" data-cxb="xlsx">Exportar Excel</button></div>
-    <div class="rol"><table><tr><th>ID</th><th class="hide-m">Negócio</th><th>Data / hora</th><th>Closer</th><th>${tab === 'cv' ? 'Negócio hoje' : 'Status'}</th><th>Reunião Validada?</th></tr>${
-      itens.map(n => `<tr><td><a href="${n.url}" target="_blank" rel="noopener">#${n.id}</a></td><td class="hide-m">${n.title || ''}</td><td>${nsDH(n)}</td><td>${n.closer}</td><td>${tab === 'cv' ? (n.sn || '—') : ehNs(n)}</td><td>${audVRot(n.vl)}</td></tr>`).join('')
+    <div class="rol"><table><tr><th>ID</th><th class="hide-m">Negócio</th><th>${tab === 'om' ? 'Reunião (data)' : 'Data / hora'}</th><th>Closer</th><th>${tab === 'cv' ? 'Negócio hoje' : (tab === 'om' ? 'Ganho' : 'Status')}</th><th>Reunião Validada?</th></tr>${
+      itens.map(n => `<tr><td><a href="${n.url}" target="_blank" rel="noopener">#${n.id}</a></td><td class="hide-m">${n.title || ''}</td><td>${nsDH(n)}</td><td>${n.closer}</td><td>${tab !== 'ns' ? (n.sn || '—') : ehNs(n)}</td><td>${audVRot(n.vl)}</td></tr>`).join('')
       || '<tr><td colspan="6" class="aud-empty">Nenhum negócio.</td></tr>'}</table></div></details>`;
   box.querySelector('[data-cxb=copia]').addEventListener('click', ev => {
     const b = ev.currentTarget;
@@ -2140,9 +2157,9 @@ function cxMostra(tab, ci, k) {
   });
   box.querySelector('[data-cxb=xlsx]').addEventListener('click', () => {
     const slug = t => String(t).normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-zA-Z0-9]+/g, '_').replace(/^_|_$/g, '').toLowerCase();
-    const nome = `${tab === 'cv' ? 'conversao' : 'noshow'}_closers_${CX_D.mes}_${slug(quem)}_${slug(CX_K[k])}`;
-    const linhas = [['ID', 'Negócio', 'Data da reunião', 'Hora', 'Closer', tab === 'cv' ? 'Negócio hoje' : 'Status', 'Reunião Validada?', 'Link Pipedrive']]
-      .concat(itens.map(n => [n.id, n.title || '', n.data, n.hora || '', n.closer, tab === 'cv' ? (n.sn || '') : ehNs(n), audVRot(n.vl), n.url]));
+    const nome = `${{ cv: 'conversao', om: 'ganhos_outros_meses', ns: 'noshow' }[tab]}_closers_${CX_D.mes}_${slug(quem)}_${slug(CX_K[k])}`;
+    const linhas = [['ID', 'Negócio', 'Data da reunião', 'Hora', 'Closer', tab === 'ns' ? 'Status' : 'Negócio', 'Reunião Validada?', 'Link Pipedrive']]
+      .concat(itens.map(n => [n.id, n.title || '', n.data, n.hora || '', n.closer, tab !== 'ns' ? (n.sn || '') : ehNs(n), audVRot(n.vl), n.url]));
     if (window.XLSX) {
       const ws = XLSX.utils.aoa_to_sheet(linhas);
       ws['!cols'] = [{ wch: 10 }, { wch: 45 }, { wch: 14 }, { wch: 8 }, { wch: 22 }, { wch: 14 }, { wch: 16 }, { wch: 48 }];
@@ -2155,9 +2172,27 @@ function cxMostra(tab, ci, k) {
     a.download = nome + '.csv'; document.body.appendChild(a); a.click(); a.remove();
   });
 }
+let CX_F = null;   // índice do closer filtrado nas tabelas de closers (Taxas)
+function cxFiltra() {
+  document.querySelectorAll('#taxas-resultado table.cxtab tr[data-cr]').forEach(tr => {
+    tr.style.display = CX_F === null || Number(tr.dataset.cr) === CX_F ? '' : 'none';
+    tr.style.background = CX_F !== null && Number(tr.dataset.cr) === CX_F ? 'rgba(255,200,0,.35)' : '';
+  });
+  document.querySelectorAll('#taxas-resultado table.cxtab tr.total').forEach(tr => { tr.style.display = CX_F === null ? '' : 'none'; });
+  const b = document.getElementById('cx-banner');
+  if (b) b.innerHTML = CX_F === null ? '' : `<div style="background:#fff4c2;border:1px solid #d9a400;border-radius:6px;padding:6px 10px;margin:6px 0;font-size:13px">Filtro ativo: <b>${(CX_D.lista[CX_F] || {}).name}</b> · todas as taxas dos closers abaixo (conversão, ganhos de outros meses e no-show) <a href="#" data-cxlimpa="1" style="margin-left:8px">× limpar filtro</a></div>`;
+}
 document.addEventListener('click', ev => {
+  if (ev.target.closest('[data-cxlimpa]')) { ev.preventDefault(); CX_F = null; cxFiltra(); ['cv-lista', 'om-lista', 'cn-lista'].forEach(i => { const e = $(i); if (e) e.innerHTML = ''; }); return; }
   const el = ev.target.closest('#taxas-resultado [data-cx]');
   if (!el) return;
+  if (el.classList.contains('cxn')) {                  // nome do closer: liga/desliga o filtro das três tabelas
+    const i = Number(el.dataset.ci);
+    CX_F = CX_F === i ? null : i;
+    ['cv-lista', 'om-lista', 'cn-lista'].forEach(id => { const e = $(id); if (e) e.innerHTML = ''; });
+    cxFiltra();
+    if (CX_F === null) return;
+  }
   cxMostra(el.dataset.cx, Number(el.dataset.ci), el.dataset.ck);
 });
 

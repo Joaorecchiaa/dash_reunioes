@@ -630,12 +630,6 @@ def _build_dashboard_generico(pessoas, ano, mes, privilegiado=False, com_validad
     else:
         val_por_resp = {}
     status_atual = {did: d.get("status") for did, d in P["deals"].items()}
-    outras = {}
-    if privilegiado and not com_validada:
-        try:
-            outras = ganhos_do_mes_por_origem(ano, mes, ids_set)
-        except Exception as e:           # esta tabela nao pode derrubar o resto do painel
-            print("ganhos_do_mes_por_origem falhou:", repr(e), flush=True)
 
     combined_days = {d: novo_contador(com_validada) for d in range(1, ultimo + 1)}
     geral_dia = {d: [] for d in range(1, ultimo + 1)}
@@ -744,7 +738,6 @@ def _build_dashboard_generico(pessoas, ano, mes, privilegiado=False, com_validad
             "ganhos_done": cv2.conversao(todas_feitas, status_atual)["ganhas"],
             "ganhos_validada": cv2.conversao(todas_validas, status_atual)["ganhas"],
             "conv_validada": cv2.conversao(todas_validas, status_atual),
-            "ganhos_origem": outras.get(uid, {"mes": [], "outros": [], "sem": []}),
             "negocios": sorted(({k: v for k, v in n.items() if k != "_rec"} for n in c_negocios_mes.values()),
                                key=lambda x: x["id"]) if privilegiado else [],
             "negocios_dia": ([{"dia": d, "itens": sorted(c_negocios_dia[d], key=lambda x: x["hora"])}
@@ -886,6 +879,38 @@ def build_auditoria_sdr(ano, mes, time_filtro=None):
     motivos = [{"motivo": m, "qtd": len(v), "itens": sorted(v, key=lambda x: (x["data"], x["hora"], x["id"]))}
                for m, v in sorted(mot.items(), key=lambda x: (-len(x[1]), x[0]))]
 
+    # Conversao por closer (CV2 sobre as validadas do mes) e ganhos do mes vindos de reunioes de OUTROS meses
+    rot_neg = {"won": "Ganho", "open": "Aberto", "lost": "Perdido"}
+    try:
+        outras_meses = ganhos_do_mes_por_origem(ano, mes, closer_ids)
+    except Exception as e:                # a tabela nao pode derrubar a auditoria
+        print("ganhos_do_mes_por_origem falhou:", repr(e), flush=True)
+        outras_meses = {}
+    nome_closer = {u: users.get(u) or f"user {u}" for u in closer_ids}
+    por_closer_deal = defaultdict(dict)   # uid -> deal -> reuniao validada mais recente do mes
+    for a in base:
+        did = a.get("deal_id")
+        if P["status_do_deal"].get(did) == "nao":
+            continue
+        chave_rec = (str(a.get("due_date")), str(a.get("due_time") or ""), a.get("id") or 0)
+        u = responsavel_id(a)
+        atual = por_closer_deal[u].get(did)
+        if atual is None or chave_rec > atual[0]:
+            por_closer_deal[u][did] = (chave_rec, a)
+    conversao = []
+    for u in sorted(closer_ids, key=lambda x: nome_closer[x]):
+        itens = []
+        for did, (_, a) in por_closer_deal.get(u, {}).items():
+            d = P["deals"].get(did) or {}
+            dia = fuso.atividade_dia(a)
+            itens.append({"id": did, "title": d.get("title") or ("Negocio " + str(did)),
+                          "url": PIPEDRIVE_BASE_URL + "/deal/" + str(did), "hora": _hora(a),
+                          "data": str(dia) if dia else "", "st": "val", "vl": P["status_do_deal"].get(did) or "",
+                          "sn": rot_neg.get(d.get("status"), "")})
+        tc = ctx["closers"].get(nome_closer[u]) if isinstance(ctx["closers"], dict) else ""
+        conversao.append({"name": nome_closer[u], "time": tc or "", "itens": sorted(itens, key=lambda x: (x["data"], x["hora"], x["id"])),
+                          "orig": {"outros": (outras_meses.get(u) or {}).get("outros", [])}})
+
     outros = []
     if "__proprio" in agrup:
         outros.append(pessoa("Próprio closer", "", "__proprio"))
@@ -899,6 +924,7 @@ def build_auditoria_sdr(ano, mes, time_filtro=None):
         "outros": outros,
         "validacao": validacao,
         "motivos": motivos,
+        "conversao": conversao,
     }
 
 
